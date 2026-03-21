@@ -1,131 +1,50 @@
 [English](README.md)
 
-# OpenYak
+<p align="center">
+  <img src="OpenYak-Logo/mascot.png" width="200" alt="OpenYak 吉祥物" />
+</p>
 
-**你的本地 AI 助手 — 私密、强大、个性化。**
+<h1 align="center">Yak is all you need.</h1>
 
-OpenYak 是一个全功能桌面 AI 助手，为开源模型带来 Claude Code 级别的 agentic 能力。本地优先、隐私至上，支持多 agent 协作、工具调用、推理链和完整的权限管理系统。
+<p align="center"><strong>你的本地 AI 助手 — 私密、强大、个性化。</strong></p>
 
-<!-- ![OpenYak 截图](docs/screenshot.png) -->
+<p align="center">
+  OpenYak 是一个开源桌面 AI 助手，完全在你的本地运行。<br/>
+  管理文件、分析数据、起草文档、自动化办公流程 — 无需上传任何文件到云端。
+</p>
 
-## 功能特性
+---
 
-- **多 Agent 系统** — 7 个内置 agent（build、plan、explore、general、compaction、title、summary），可配置系统提示词和权限规则
-- **21+ 内置工具** — 文件读写编辑、bash 执行、glob/grep 搜索、网页抓取/搜索、子任务派发、待办管理、Artifact 存储等
-- **实时流式传输** — 可恢复的 SSE 流，支持断线重连、心跳检测和事件回放
-- **4 层权限引擎** — 全局 → Agent → 用户 → 会话，支持 allow/deny/ask 三种规则
-- **推理能力** — 扩展思维链，可折叠推理块，token 用量追踪
-- **上下文管理** — 两阶段上下文压缩（裁剪 + LLM 摘要）、doom loop 检测、输出截断
-- **桌面应用** — 原生 Tauri 2 应用，系统集成、深度链接、NSIS 安装包
-- **多模型支持** — 通过 OpenRouter 接入任意模型（含推理模型），动态模型列表
-- **响应式 UI** — 桌面端固定侧边栏、平板可折叠、移动端抽屉模式
-- **暗色/亮色主题** — 跟随系统的主题切换，基于 CSS 变量体系
-- **全文搜索** — SQLite FTS5 搜索会话和消息内容
-- **插件与技能系统** — 支持项目级插件、内置技能和 MCP 集成
+## 应用场景
 
-## 技术栈
+**办公自动化** — 批量重命名、整理、清理文件夹中的文件，生成可审计的变更日志。告别手动分类。
 
-| 层 | 技术 |
-|----|------|
-| **前端** | Next.js 15, React 19, TypeScript, Tailwind CSS 4, shadcn/ui, Zustand, TanStack Query |
-| **后端** | Python 3.12+, FastAPI, SQLAlchemy 2.0 (async), SQLite WAL, OpenAI SDK |
-| **桌面端** | Tauri 2 (Rust), NSIS 安装包 |
-| **LLM 提供者** | OpenRouter（主要）, OpenAI 兼容接口 |
+**数据分析** — 在本地解析 XLSX、CSV 和文档数据。发现异常、追踪趋势、导出决策就绪报告 — 无需上传任何文件。
 
-## 快速开始
+**内容写作** — 将粗略笔记转化为精炼文档。起草内部通知、政策更新和专业沟通文档，保持统一的公司语调。
 
-### 前置要求
+**团队运营** — 将 PDF、DOCX、CSV 中的笔记合并为结构化简报。自动提取行动项并分配负责人，追踪截止日期。
 
-- **Node.js** 18+
-- **Python** 3.12+
-- **npm** 9+
-- **OpenRouter API 密钥**（[获取地址](https://openrouter.ai/keys)）
+**远程工作流** — 在桌面开始，用手机继续。一键安全隧道，扫描二维码即可从任何设备接续工作。
 
-### 安装与运行
+## 为什么选择 OpenYak
 
-```bash
-# 1. 克隆仓库
-git clone https://github.com/aspect-build/openyak.git
-cd openyak
+- **100% 本地优先** — 数据存储在本地。无云端存储、无遥测追踪，每一次对话都只属于你。
+- **100+ AI 模型** — 通过 OpenRouter 接入最新模型 — Claude Opus 4.6 & Sonnet 4.6、DeepSeek V3.2、Gemini 3 Flash、GPT-4.1、MiniMax M2.5、Step 3.5 Flash、MiMo-V2-Pro 等。
+- **ChatGPT 订阅直连** — 已经订阅了 ChatGPT？直接接入你的 ChatGPT 订阅，无需额外 API 费用。
+- **16+ 内置工具** — 文件读写编辑、Bash 执行、glob/grep 搜索、网络请求等。
+- **7 种 Agent 模式** — 构建、规划、探索等专用 Agent，支持多步骤工具调用和子 Agent 嵌套。
+- **免费起步** — 每周免费 100 万 Token。按 OpenRouter 原价计费，零加价。或使用你自己的 API 密钥。
 
-# 2. 安装前端依赖
-cd frontend && npm install && cd ..
+## 开始使用
 
-# 3. 安装后端依赖
-cd backend && pip install -e ".[dev]" && cd ..
+1. **下载** [Windows 或 macOS 安装包](https://open-yak.com/download/)
+2. **连接模型** — 即刻使用免费模型，充值使用高级模型，或接入你自己的 OpenRouter API 密钥
+3. **开始工作** — 管理文件、分析数据、生成办公文档
 
-# 4. 配置环境变量
-cd backend && cp .env.example .env
-# 编辑 .env，填入 OPENYAK_OPENROUTER_API_KEY
-cd ..
+## 开发者
 
-# 5. 一键启动前后端
-npm run dev:all
-```
-
-浏览器打开 http://localhost:3000 即可使用。
-
-### 桌面模式
-
-```bash
-# 需要 Rust 工具链 + Tauri CLI
-npm run dev:desktop
-```
-
-## 项目结构
-
-```
-openyak/
-├── frontend/           # Next.js 15 React 前端
-├── backend/            # Python FastAPI 后端
-├── desktop-tauri/      # Tauri 2 桌面端封装（Rust）
-├── scripts/            # 构建与同步脚本
-└── package.json        # 根工作区（开发脚本）
-```
-
-详细文档请参阅 [frontend/README.zh-CN.md](frontend/README.zh-CN.md) 和 [backend/README.zh-CN.md](backend/README.zh-CN.md)。
-
-## 开发脚本
-
-| 脚本 | 说明 |
-|------|------|
-| `npm run dev:frontend` | 启动前端开发服务器（端口 3000） |
-| `npm run dev:backend` | 启动后端开发服务器（端口 8000） |
-| `npm run dev:all` | 同时启动前后端 |
-| `npm run dev:desktop` | 同时启动前后端 + Tauri 开发模式 |
-| `npm run build:frontend` | 生产构建（桌面端静态导出） |
-| `npm run build:backend` | 使用 PyInstaller 打包后端 |
-| `npm run build:desktop` | 构建 Tauri 桌面安装包 |
-
-## 环境变量
-
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `OPENYAK_OPENROUTER_API_KEY` | OpenRouter API 密钥 | （必填） |
-| `OPENYAK_DATABASE_URL` | 数据库连接字符串 | `sqlite+aiosqlite:///./data/openyak.db` |
-| `OPENYAK_HOST` | 后端监听地址 | `0.0.0.0` |
-| `OPENYAK_PORT` | 后端监听端口 | `8000` |
-| `OPENYAK_DEBUG` | 调试模式 | `false` |
-| `NEXT_PUBLIC_API_URL` | 前端连接后端地址 | `http://localhost:8000` |
-
-## 生产构建
-
-### Web 部署
-
-```bash
-# 构建前端
-npm run build:frontend
-
-# 打包后端（独立可执行文件）
-npm run build:backend
-```
-
-### 桌面端（Windows）
-
-```bash
-# 构建 Tauri 安装包（.msi / .exe）
-npm run build:desktop
-```
+需要技术细节、项目结构或开发环境配置？请参阅 [frontend/README.zh-CN.md](frontend/README.zh-CN.md) 和 [backend/README.zh-CN.md](backend/README.zh-CN.md)。
 
 ## 许可证
 

@@ -1,131 +1,50 @@
 [中文](README.zh-CN.md)
 
-# OpenYak
+<p align="center">
+  <img src="OpenYak-Logo/mascot.png" width="200" alt="OpenYak Mascot" />
+</p>
 
-**Your local AI assistant — private, powerful, personal.**
+<h1 align="center">Yak is all you need.</h1>
 
-OpenYak is a full-featured desktop AI assistant that brings Claude Code-like agentic capabilities to open-source models. It's a local-first, privacy-focused alternative to proprietary AI assistants, with multi-agent support, tool calling, reasoning, and a complete permission system.
+<p align="center"><strong>Your local AI agent — private, powerful, personal.</strong></p>
 
-<!-- ![OpenYak Screenshot](docs/screenshot.png) -->
+<p align="center">
+  OpenYak is an open-source desktop AI assistant that runs entirely on your machine.<br/>
+  Manage files, analyze data, draft documents, and automate office workflows — all without uploading anything to the cloud.
+</p>
 
-## Features
+---
 
-- **Multi-Agent System** — 7 built-in agents (build, plan, explore, general, compaction, title, summary) with configurable system prompts and permissions
-- **21+ Built-in Tools** — File read/write/edit, bash execution, glob/grep search, web fetch/search, subtask spawning, todo management, artifact storage, and more
-- **Real-time Streaming** — Resumable SSE streams with reconnection support, heartbeats, and event replay
-- **4-Layer Permission Engine** — Global → Agent → User → Session permission hierarchy with allow/deny/ask rules
-- **Reasoning Support** — Extended thinking with collapsible reasoning blocks and token tracking
-- **Context Management** — Two-stage context compression (trim + LLM summarization), doom loop detection, output truncation
-- **Desktop Application** — Native Tauri 2 app with system integration, deep linking, and NSIS installer
-- **Multi-Model Support** — Any model via OpenRouter, including reasoning models, with dynamic model listing
-- **Responsive UI** — Desktop sidebar, tablet collapsible, mobile sheet drawer
-- **Dark/Light Theme** — System-aware theming with CSS variable architecture
-- **Full-Text Search** — SQLite FTS5 for searching sessions and message content
-- **Plugin & Skill System** — Extensible with project-scoped plugins, bundled skills, and MCP integration
+## What You Can Do
 
-## Tech Stack
+**Office Automation** — Batch rename, sort, and clean up files across folders with auditable change logs. No more manual filing.
 
-| Layer | Technology |
-|-------|-----------|
-| **Frontend** | Next.js 15, React 19, TypeScript, Tailwind CSS 4, shadcn/ui, Zustand, TanStack Query |
-| **Backend** | Python 3.12+, FastAPI, SQLAlchemy 2.0 (async), SQLite WAL, OpenAI SDK |
-| **Desktop** | Tauri 2 (Rust), NSIS installer |
-| **LLM Provider** | OpenRouter (primary), OpenAI-compatible providers |
+**Data Analysis** — Parse spreadsheets, CSVs, and documents locally. Spot anomalies, track trends, and export decision-ready reports — without uploading a single file.
 
-## Quick Start
+**Content & Writing** — Turn rough notes into polished documents. Draft memos, policy updates, and professional communications in a consistent company tone.
 
-### Prerequisites
+**Team Operations** — Merge notes from PDFs, DOCX, and CSVs into structured briefings. Auto-extract action items, assign owners, and track deadlines.
 
-- **Node.js** 18+
-- **Python** 3.12+
-- **npm** 9+
-- An **OpenRouter API key** ([get one here](https://openrouter.ai/keys))
+**Remote Workflows** — Start on your desktop, continue on your phone. One-click secure tunnel with QR code access from any device.
 
-### Install & Run
+## Why OpenYak
 
-```bash
-# 1. Clone the repo
-git clone https://github.com/aspect-build/openyak.git
-cd openyak
+- **100% Local-First** — Your data stays on your machine. No cloud storage, no telemetry. Every conversation is yours alone.
+- **100+ AI Models** — Access the latest models through OpenRouter — Claude Opus 4.6 & Sonnet 4.6, DeepSeek V3.2, Gemini 3 Flash, GPT-4.1, MiniMax M2.5, Step 3.5 Flash, MiMo-V2-Pro, and more.
+- **ChatGPT Subscription** — Already paying for ChatGPT? Connect your ChatGPT subscription directly — no extra API costs.
+- **16+ Built-in Tools** — File read/write/edit, bash execution, glob/grep search, web fetch, and more.
+- **7 Agent Modes** — Specialized agents for building, planning, exploring, and more — with multi-step tool calling and sub-agent nesting.
+- **Free to Start** — 1M tokens/week on free models. Pay-as-you-go at OpenRouter prices with zero markup. Or bring your own API key.
 
-# 2. Install frontend dependencies
-cd frontend && npm install && cd ..
+## Get Started
 
-# 3. Install backend dependencies
-cd backend && pip install -e ".[dev]" && cd ..
+1. **Download** the installer for [Windows or macOS](https://open-yak.com/download/)
+2. **Connect a model** — use free models instantly, top up for premium models, or bring your own OpenRouter API key
+3. **Start working** — manage files, analyze local data, and generate office-ready outputs
 
-# 4. Configure environment
-cd backend && cp .env.example .env
-# Edit .env — set OPENYAK_OPENROUTER_API_KEY
-cd ..
+## For Developers
 
-# 5. Start both frontend and backend
-npm run dev:all
-```
-
-Open http://localhost:3000 in your browser.
-
-### Desktop Mode
-
-```bash
-# Requires Rust toolchain + Tauri CLI
-npm run dev:desktop
-```
-
-## Project Structure
-
-```
-openyak/
-├── frontend/           # Next.js 15 React frontend
-├── backend/            # Python FastAPI backend
-├── desktop-tauri/      # Tauri 2 desktop wrapper (Rust)
-├── scripts/            # Build & sync scripts
-└── package.json        # Root workspace (dev scripts)
-```
-
-See [frontend/README.md](frontend/README.md) and [backend/README.md](backend/README.md) for detailed documentation.
-
-## Development Scripts
-
-| Script | Description |
-|--------|-------------|
-| `npm run dev:frontend` | Start frontend dev server (port 3000) |
-| `npm run dev:backend` | Start backend dev server (port 8000) |
-| `npm run dev:all` | Start frontend + backend concurrently |
-| `npm run dev:desktop` | Start frontend + backend + Tauri dev |
-| `npm run build:frontend` | Production build (static export for desktop) |
-| `npm run build:backend` | Bundle backend with PyInstaller |
-| `npm run build:desktop` | Build Tauri desktop installer |
-
-## Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `OPENYAK_OPENROUTER_API_KEY` | OpenRouter API key | (required) |
-| `OPENYAK_DATABASE_URL` | Database connection string | `sqlite+aiosqlite:///./data/openyak.db` |
-| `OPENYAK_HOST` | Backend listen address | `0.0.0.0` |
-| `OPENYAK_PORT` | Backend listen port | `8000` |
-| `OPENYAK_DEBUG` | Debug mode | `false` |
-| `NEXT_PUBLIC_API_URL` | Frontend → Backend API URL | `http://localhost:8000` |
-
-## Building for Production
-
-### Web
-
-```bash
-# Build frontend
-npm run build:frontend
-
-# Build backend (standalone executable)
-npm run build:backend
-```
-
-### Desktop (Windows)
-
-```bash
-# Build Tauri installer (.msi / .exe)
-npm run build:desktop
-```
+Looking for technical details, project structure, or development setup? See [frontend/README.md](frontend/README.md) and [backend/README.md](backend/README.md).
 
 ## License
 
