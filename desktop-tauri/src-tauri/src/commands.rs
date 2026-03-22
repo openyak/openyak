@@ -60,24 +60,34 @@ pub fn open_external(app: AppHandle, url: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-/// Download a file from a URL and save it via a native save dialog.
+/// Save a file via a native save dialog.
 ///
+/// Accepts either a `url` (fetched via GET) or raw `data` bytes.
 /// WebView2 does not support blob-URL downloads triggered by `<a>.click()`,
-/// so we handle PDF (and other file) exports through Tauri IPC instead.
+/// so we handle file exports through Tauri IPC instead.
 #[tauri::command]
 pub async fn download_and_save(
     app: AppHandle,
-    url: String,
+    url: Option<String>,
+    data: Option<Vec<u8>>,
     default_name: String,
 ) -> Result<bool, String> {
     use tauri_plugin_dialog::DialogExt;
 
-    // Show native save dialog first (instant — no waiting for download)
+    // Derive filter label + extension from the default filename
+    let ext = default_name
+        .rsplit('.')
+        .next()
+        .unwrap_or("*")
+        .to_string();
+    let label = ext.to_uppercase();
+
+    // Show native save dialog
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog()
         .file()
         .set_file_name(&default_name)
-        .add_filter("PDF", &["pdf"])
+        .add_filter(&label, &[&ext])
         .save_file(move |path| {
             let _ = tx.send(path);
         });
@@ -88,19 +98,26 @@ pub async fn download_and_save(
         None => return Ok(false), // User cancelled
     };
 
-    // Download the file from the local backend
-    let response = reqwest::get(&url)
-        .await
-        .map_err(|e| format!("Download failed: {e}"))?;
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| format!("Failed to read response: {e}"))?;
-
-    // Write to the chosen path
     let real_path = path
         .as_path()
         .ok_or_else(|| "Invalid save path".to_string())?;
+
+    // Get bytes: from provided data or by downloading from URL
+    let bytes = if let Some(raw) = data {
+        raw
+    } else if let Some(download_url) = url {
+        let response = reqwest::get(&download_url)
+            .await
+            .map_err(|e| format!("Download failed: {e}"))?;
+        response
+            .bytes()
+            .await
+            .map_err(|e| format!("Failed to read response: {e}"))?
+            .to_vec()
+    } else {
+        return Err("Either 'url' or 'data' must be provided".into());
+    };
+
     tokio::fs::write(real_path, &bytes)
         .await
         .map_err(|e| format!("Failed to write file: {e}"))?;

@@ -33,7 +33,7 @@ export function ArtifactPanelContent() {
     case "code":
       return <CodeRenderer content={artifact.content} language={artifact.language} />;
     case "markdown":
-      return <MarkdownRenderer content={artifact.content} />;
+      return <MarkdownRenderer content={artifact.content} title={artifact.title} />;
     case "svg":
       return <SvgRenderer content={artifact.content} />;
     case "mermaid":

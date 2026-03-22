@@ -125,6 +125,8 @@ body {{
     font-size: 11pt;
     line-height: 1.6;
     color: #1a1a1a;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
 }}
 
 /* Headings */
@@ -134,7 +136,7 @@ h3 {{ font-size: 13pt; margin-top: 16pt; margin-bottom: 8pt; font-weight: 600; c
 h4, h5, h6 {{ font-size: 11pt; margin-top: 12pt; margin-bottom: 6pt; font-weight: 600; }}
 
 /* Paragraphs */
-p {{ margin-top: 0; margin-bottom: 8pt; }}
+p {{ margin-top: 0; margin-bottom: 8pt; word-wrap: break-word; overflow-wrap: break-word; }}
 
 /* Tables */
 table {{
@@ -156,6 +158,8 @@ td {{
     border: 1pt solid #ddd;
     padding: 5pt 8pt;
     vertical-align: top;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
 }}
 tr {{ page-break-inside: avoid; }}
 

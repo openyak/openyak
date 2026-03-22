@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { Copy, Check, Download, FileDown, FileText, Code, Eye, Loader2, ChevronDown } from "lucide-react";
+import { Copy, Check, Download, FileDown, FileText, Code, Eye, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -11,13 +11,28 @@ import {
 } from "@/components/ui/dropdown-menu";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { API, resolveApiUrl } from "@/lib/constants";
+import { API, IS_DESKTOP, resolveApiUrl } from "@/lib/constants";
 
 interface MarkdownRendererProps {
   content: string;
+  title?: string;
 }
 
-export function MarkdownRenderer({ content }: MarkdownRendererProps) {
+/** Convert a string to a Uint8Array of UTF-8 bytes. */
+function toBytes(text: string): number[] {
+  return Array.from(new TextEncoder().encode(text));
+}
+
+/** Sanitize a title for use as a filename. */
+function toFilename(title: string | undefined, ext: string): string {
+  if (!title) return `document.${ext}`;
+  const safe = title.replace(/[<>:"/\\|?*]/g, "_").trim();
+  // Remove existing extension if it matches
+  const base = safe.replace(/\.(md|pdf)$/i, "");
+  return `${base}.${ext}`;
+}
+
+export function MarkdownRenderer({ content, title }: MarkdownRendererProps) {
   const [copied, setCopied] = useState(false);
   const [showSource, setShowSource] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
@@ -28,32 +43,53 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
     setTimeout(() => setCopied(false), 2000);
   }, [content]);
 
-  const handleDownloadMd = useCallback(() => {
+  const handleDownloadMd = useCallback(async () => {
+    const filename = toFilename(title, "md");
+    if (IS_DESKTOP) {
+      const { desktopAPI } = await import("@/lib/tauri-api");
+      await desktopAPI.downloadAndSave({
+        data: toBytes(content),
+        defaultName: filename,
+      });
+      return;
+    }
     const blob = new Blob([content], { type: "text/markdown" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "document.md";
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  }, [content]);
+  }, [content, title]);
 
   const handleDownloadPdf = useCallback(async () => {
+    const filename = toFilename(title, "pdf");
     setPdfLoading(true);
     try {
       const res = await fetch(resolveApiUrl(API.ARTIFACTS.EXPORT_PDF), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content, title: "document" }),
+        body: JSON.stringify({ content, title: title || "document" }),
       });
       if (!res.ok) throw new Error("PDF export failed");
       const blob = await res.blob();
+
+      if (IS_DESKTOP) {
+        const { desktopAPI } = await import("@/lib/tauri-api");
+        const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
+        await desktopAPI.downloadAndSave({
+          data: bytes,
+          defaultName: filename,
+        });
+        return;
+      }
+
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "document.pdf";
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -64,7 +100,7 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
     } finally {
       setPdfLoading(false);
     }
-  }, [content, handleDownloadMd]);
+  }, [content, title, handleDownloadMd]);
 
   return (
     <div className="flex flex-col h-full">

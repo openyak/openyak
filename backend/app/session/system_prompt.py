@@ -135,10 +135,9 @@ def _skills_section(skill_names: list[str] | None) -> str | None:
     return (
         "# Available Skills\n"
         f"The following skills are available via the `skill` tool: {names}\n\n"
-        "Skills provide detailed workflows, API references, and bundled "
-        "resource files (scripts, templates) for domain-specific tasks.\n"
-        "Load a skill when you need its specialized workflow (e.g. advanced "
-        "table extraction, structured data processing).\n\n"
+        "Before starting a task, check if a relevant skill exists. "
+        "If one looks related, load it first — it may contain useful "
+        "workflows, best practices, or instructions that improve your output.\n\n"
         "IMPORTANT: Do NOT load a skill just to read a file. The `read` tool "
         "already handles ALL file types natively (PDF, DOCX, XLSX, PPTX, images, etc.). "
         "Simply call `read` directly — no skill needed."

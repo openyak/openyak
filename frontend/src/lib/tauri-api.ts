@@ -13,7 +13,7 @@ export interface DesktopAPI {
   getPendingNavigation: () => Promise<string | null>;
   getPlatform: () => Promise<string>;
   openExternal: (url: string) => Promise<void>;
-  downloadAndSave: (url: string, defaultName: string) => Promise<boolean>;
+  downloadAndSave: (opts: { url?: string; data?: number[]; defaultName: string }) => Promise<boolean>;
   minimize: () => Promise<void>;
   maximize: () => Promise<void>;
   close: () => Promise<void>;
@@ -53,7 +53,7 @@ export const desktopAPI: DesktopAPI = {
   getPendingNavigation: () => invoke<string | null>("get_pending_navigation"),
   getPlatform: () => invoke<string>("get_platform"),
   openExternal: (url) => invoke("open_external", { url }),
-  downloadAndSave: (url, defaultName) => invoke<boolean>("download_and_save", { url, defaultName }),
+  downloadAndSave: ({ url, data, defaultName }) => invoke<boolean>("download_and_save", { url, data, defaultName }),
   minimize: () => invoke("window_minimize"),
   maximize: () => invoke("window_maximize"),
   close: () => invoke("window_close"),

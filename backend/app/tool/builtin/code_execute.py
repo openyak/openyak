@@ -1,25 +1,24 @@
-"""Code execution tool — run Python code in a sandboxed subprocess.
+"""Code execution tool — run Python code in-process.
 
-Executes Python code in a temporary directory using the backend's own
-interpreter (so all installed packages like pandas, numpy, matplotlib
-are available). Includes blocked-import checks and output size limits.
+Executes Python code in a background thread using the backend's own
+interpreter. All packages bundled with the backend (pandas, numpy,
+matplotlib, etc.) are available without requiring a separate Python
+installation.
 """
 
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import os
-import re
-import subprocess
 import sys
-import tempfile
-from pathlib import Path
+import traceback
+from contextlib import redirect_stdout, redirect_stderr
 from typing import Any
 
 from app.tool.base import ToolDefinition, ToolResult
 from app.tool.context import ToolContext
-from app.tool.subprocess_compat import get_subprocess_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -27,43 +26,7 @@ DEFAULT_TIMEOUT = 30  # seconds
 MAX_TIMEOUT = 120
 MAX_OUTPUT = 51200  # 50 KB
 
-# Use the same Python that runs the backend → same venv, same packages.
-_PYTHON = sys.executable
 
-# ---------------------------------------------------------------------------
-# Security: blocked imports
-# ---------------------------------------------------------------------------
-_BLOCKED_IMPORTS = {
-    "subprocess",
-    "shutil",
-    "socket",
-    "http.server",
-    "xmlrpc",
-    "ctypes",
-    "multiprocessing",
-    "signal",
-    "importlib",
-    "code",
-    "codeop",
-    "compileall",
-    "py_compile",
-}
-
-_IMPORT_PATTERN = re.compile(r"^\s*(?:import|from)\s+([\w.]+)", re.MULTILINE)
-
-
-def _check_blocked_imports(code: str) -> str | None:
-    """Return an error message if *code* contains a blocked import, else None."""
-    for imp in _IMPORT_PATTERN.findall(code):
-        for blocked in _BLOCKED_IMPORTS:
-            if imp == blocked or imp.startswith(blocked + "."):
-                return f"Import '{imp}' is not allowed in sandboxed execution"
-    return None
-
-
-# ---------------------------------------------------------------------------
-# Tool definition
-# ---------------------------------------------------------------------------
 class CodeExecuteTool(ToolDefinition):
 
     @property
@@ -73,10 +36,10 @@ class CodeExecuteTool(ToolDefinition):
     @property
     def description(self) -> str:
         return (
-            "Execute Python code in a sandboxed subprocess. "
+            "Execute Python code. "
             "The code runs with the backend's Python environment so pandas, "
             "numpy, matplotlib and other installed packages are available. "
-            "IMPORTANT: Each call runs in a fresh, isolated process — no state "
+            "IMPORTANT: Each call runs in a fresh, isolated namespace — no state "
             "(variables, imports, data) persists between calls. You MUST include "
             "all imports and data loading in every call. For multi-step analysis, "
             "put ALL code in a single call rather than splitting across multiple calls."
@@ -106,21 +69,15 @@ class CodeExecuteTool(ToolDefinition):
 
         timeout = min(args.get("timeout", DEFAULT_TIMEOUT), MAX_TIMEOUT)
 
-        # Security check
-        import_error = _check_blocked_imports(code)
-        if import_error:
-            return ToolResult(error=import_error)
-
         try:
-            output, exit_code = await _run_python(code, timeout)
-        except subprocess.TimeoutExpired:
+            output, exit_code = await asyncio.wait_for(
+                asyncio.to_thread(_run_code, code),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
             return ToolResult(
                 error=f"Execution timed out after {timeout}s",
                 metadata={"timeout": True},
-            )
-        except FileNotFoundError:
-            return ToolResult(
-                error=f"Python interpreter not found: '{_PYTHON}'"
             )
         except Exception as exc:
             return ToolResult(error=f"Execution failed: {exc}")
@@ -135,47 +92,45 @@ class CodeExecuteTool(ToolDefinition):
         )
 
 
-# ---------------------------------------------------------------------------
-# Subprocess runner
-# ---------------------------------------------------------------------------
-async def _run_python(code: str, timeout: int) -> tuple[str, int]:
-    """Run *code* in an isolated temp directory and return (output, exit_code)."""
+def _run_code(code: str) -> tuple[str, int]:
+    """Execute *code* in an isolated namespace and return (output, exit_code)."""
+    stdout_buf = io.StringIO()
+    stderr_buf = io.StringIO()
+    exit_code = 0
 
-    def _run() -> tuple[str, int]:
-        with tempfile.TemporaryDirectory(prefix="openyak_exec_") as tmpdir:
-            script = Path(tmpdir) / "script.py"
-            script.write_text(code, encoding="utf-8")
+    # Fresh namespace so each call is isolated.
+    namespace: dict[str, Any] = {"__builtins__": __builtins__}
 
-            env = os.environ.copy()
-            env["PYTHONDONTWRITEBYTECODE"] = "1"
-            env["PYTHONIOENCODING"] = "utf-8"
-            env["PYTHONUTF8"] = "1"
+    # Save/restore cwd so user code can't permanently change it.
+    original_cwd = os.getcwd()
 
-            proc = subprocess.run(
-                [_PYTHON, str(script)],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=timeout,
-                cwd=tmpdir,
-                env=env,
-                **get_subprocess_kwargs(),
-            )
+    try:
+        compiled = compile(code, "<code_execute>", "exec")
+        with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
+            exec(compiled, namespace)
+    except SystemExit as e:
+        # Allow sys.exit() — treat the exit code as the return code.
+        exit_code = e.code if isinstance(e.code, int) else 1
+    except Exception:
+        traceback.print_exc(file=stderr_buf)
+        exit_code = 1
+    finally:
+        try:
+            os.chdir(original_cwd)
+        except OSError:
+            pass
 
-            stdout = (proc.stdout or "")[:MAX_OUTPUT]
-            stderr = (proc.stderr or "")[:MAX_OUTPUT]
+    stdout = stdout_buf.getvalue()[:MAX_OUTPUT]
+    stderr = stderr_buf.getvalue()[:MAX_OUTPUT]
 
-            parts: list[str] = []
-            if stdout:
-                parts.append(stdout)
-            if stderr:
-                parts.append(f"STDERR:\n{stderr}")
+    parts: list[str] = []
+    if stdout:
+        parts.append(stdout)
+    if stderr:
+        parts.append(f"STDERR:\n{stderr}")
 
-            output = "\n".join(parts) if parts else "(no output)"
-            if proc.returncode != 0:
-                output = f"Exit code: {proc.returncode}\n{output}"
+    output = "\n".join(parts) if parts else "(no output)"
+    if exit_code != 0:
+        output = f"Exit code: {exit_code}\n{output}"
 
-            return output, proc.returncode
-
-    return await asyncio.to_thread(_run)
+    return output, exit_code

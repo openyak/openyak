@@ -7,7 +7,7 @@ import pytest
 from app.tool.subprocess_compat import (
     IS_WINDOWS,
     decode_subprocess_output,
-    find_bash_on_windows,
+    find_shell,
     get_subprocess_kwargs,
 )
 
@@ -45,13 +45,18 @@ class TestDecodeSubprocessOutput:
         assert isinstance(result, str)
 
 
-class TestFindBashOnWindows:
-    @pytest.mark.skipif(IS_WINDOWS, reason="Non-Windows only")
-    def test_returns_none_on_non_windows(self):
-        assert find_bash_on_windows() is None
+class TestFindShell:
+    def test_returns_list(self):
+        result = find_shell()
+        assert isinstance(result, list)
+        assert len(result) >= 2
 
     @pytest.mark.skipif(not IS_WINDOWS, reason="Windows-only")
-    def test_returns_path_or_none_on_windows(self):
-        result = find_bash_on_windows()
-        # May or may not find bash — just verify the type
-        assert result is None or isinstance(result, str)
+    def test_windows_uses_powershell(self):
+        result = find_shell()
+        assert result[0] == "powershell.exe"
+
+    @pytest.mark.skipif(IS_WINDOWS, reason="Non-Windows only")
+    def test_non_windows_uses_bash_or_sh(self):
+        result = find_shell()
+        assert "bash" in result[0] or "sh" in result[0]

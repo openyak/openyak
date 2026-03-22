@@ -24,8 +24,8 @@ datas = [
     # Alembic migrations
     (os.path.join(backend_dir, 'alembic'), 'alembic'),
     (os.path.join(backend_dir, 'alembic.ini'), '.'),
-    # Bundled skills
-    (os.path.join(backend_dir, 'data', 'skills'), os.path.join('data', 'skills')),
+    # Bundled data (skills, plugins, connectors)
+    (os.path.join(app_dir, 'data'), os.path.join('app', 'data')),
 ]
 
 # Filter out non-existent paths

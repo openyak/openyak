@@ -194,7 +194,7 @@ export function ToolPartView({ data }: ToolPartViewProps) {
       openArtifact({
         id: `file-${data.call_id}`,
         title: getFileName(filePath) || "File Preview",
-        type: type === "react" || type === "html" || type === "svg" || type === "mermaid" || type === "markdown" ? type : "file-preview",
+        type: "file-preview",
         content: data.tool === "write" ? String(input.content ?? "") : "",
         language: languageFromExtension(filePath),
         filePath,

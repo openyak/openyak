@@ -7,7 +7,6 @@ and creationflags so individual tools don't duplicate this logic.
 from __future__ import annotations
 
 import locale
-import os
 import shutil
 import subprocess
 import sys
@@ -27,27 +26,22 @@ def get_subprocess_kwargs() -> dict[str, Any]:
     return {}
 
 
-def find_bash_on_windows() -> str | None:
-    """Find a bash executable on Windows (e.g. Git Bash).
+def find_shell() -> list[str]:
+    """Return the command prefix for running a shell command on this platform.
 
-    Returns the path to ``bash.exe`` if found, or ``None``.
-    Checks:
-      1. ``shutil.which("bash")`` — finds bash on PATH.
-      2. Common Git for Windows location.
+    On Windows: ``["powershell.exe", "-NoProfile", "-Command"]``
+    On other platforms: ``["bash", "-c"]`` (or ``["sh", "-c"]`` as fallback).
     """
-    if not IS_WINDOWS:
-        return None
+    if IS_WINDOWS:
+        # Prefer PowerShell 7+ (pwsh) if installed, fall back to built-in 5.1
+        pwsh = shutil.which("pwsh")
+        exe = pwsh if pwsh else "powershell.exe"
+        return [exe, "-NoProfile", "-Command"]
 
     bash = shutil.which("bash")
     if bash:
-        return bash
-
-    # Common Git for Windows install path
-    git_bash = r"C:\Program Files\Git\bin\bash.exe"
-    if os.path.isfile(git_bash):
-        return git_bash
-
-    return None
+        return [bash, "-c"]
+    return ["sh", "-c"]
 
 
 def decode_subprocess_output(data: bytes) -> str:

@@ -14,9 +14,8 @@ from typing import Any
 from app.tool.base import ToolDefinition, ToolResult
 from app.tool.context import ToolContext
 from app.tool.subprocess_compat import (
-    IS_WINDOWS,
     decode_subprocess_output,
-    find_bash_on_windows,
+    find_shell,
     get_subprocess_kwargs,
 )
 from app.tool.workspace import WorkspaceViolation, get_default_output_dir, validate_cwd
@@ -82,29 +81,13 @@ class BashTool(ToolDefinition):
                 # If we can't create it, fall back to workspace or None
                 cwd = ctx.workspace or None
 
-        # Build platform-specific subprocess kwargs (creationflags on Windows)
         extra_kwargs = get_subprocess_kwargs()
-
-        # On Windows, prefer bash if available (Git Bash understands Unix commands).
-        # We invoke bash directly with -c instead of using shell=True + executable,
-        # because Windows shell=True formats the command for cmd.exe.
-        bash_path = find_bash_on_windows() if IS_WINDOWS else None
+        shell_prefix = find_shell()
 
         def _run() -> subprocess.CompletedProcess[bytes]:
-            if bash_path:
-                return subprocess.run(
-                    [bash_path, "-c", command],
-                    shell=False,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    cwd=cwd,
-                    timeout=timeout,
-                    env={**os.environ},
-                    **extra_kwargs,
-                )
             return subprocess.run(
-                command,
-                shell=True,
+                [*shell_prefix, command],
+                shell=False,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 cwd=cwd,

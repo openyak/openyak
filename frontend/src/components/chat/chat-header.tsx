@@ -62,7 +62,7 @@ export function ChatHeader({ sessionId }: ChatHeaderProps) {
         // WebView2 does not support blob-URL downloads via <a>.click(),
         // so use a Tauri command with native save dialog instead.
         const { desktopAPI } = await import("@/lib/tauri-api");
-        await desktopAPI.downloadAndSave(exportUrl, "conversation.pdf");
+        await desktopAPI.downloadAndSave({ url: exportUrl, defaultName: "conversation.pdf" });
       } else {
         const res = await fetch(exportUrl);
 

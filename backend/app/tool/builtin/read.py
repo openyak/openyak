@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import logging
 import os
 from pathlib import Path
@@ -15,6 +17,8 @@ from app.tool.workspace import WorkspaceViolation, resolve_and_validate
 logger = logging.getLogger(__name__)
 
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".webp", ".svg"}
+_DATA_EXTENSIONS = {".csv", ".tsv", ".xlsx", ".xls"}
+_DATA_SAMPLE_ROWS = 5
 
 
 class ReadTool(ToolDefinition):
@@ -73,7 +77,148 @@ class ReadTool(ToolDefinition):
         if ext in _IMAGE_EXTENSIONS:
             return self._read_image(file_path, ctx)
 
+        # Data files: return schema + sample only
+        if ext in _DATA_EXTENSIONS:
+            return self._read_data_file(file_path, ext, ctx)
+
         return await self._filesystem_execute(args, ctx)
+
+    # ------------------------------------------------------------------
+    # Data files: schema + sample (CSV, XLSX)
+    # ------------------------------------------------------------------
+
+    def _read_data_file(self, file_path: str, ext: str, ctx: ToolContext) -> ToolResult:
+        """Return schema and a few sample rows for data files.
+
+        For actual analysis the agent should use code_execute with pandas.
+        """
+        try:
+            resolved = resolve_and_validate(file_path, ctx.workspace)
+        except WorkspaceViolation as e:
+            return ToolResult(error=str(e))
+
+        if not os.path.exists(resolved):
+            return ToolResult(error=f"File not found: {file_path}")
+
+        try:
+            if ext in (".csv", ".tsv"):
+                return self._summarise_csv(resolved, file_path)
+            else:
+                return self._summarise_xlsx(resolved, file_path)
+        except Exception as e:
+            return ToolResult(error=f"Cannot read {os.path.basename(file_path)}: {e}")
+
+    def _summarise_csv(self, resolved: str, file_path: str) -> ToolResult:
+        with open(resolved, "r", encoding="utf-8", errors="replace") as f:
+            # Sniff delimiter
+            sample_text = f.read(8192)
+            f.seek(0)
+            try:
+                dialect = csv.Sniffer().sniff(sample_text)
+                delimiter = dialect.delimiter
+            except csv.Error:
+                delimiter = "," if file_path.lower().endswith(".csv") else "\t"
+
+            reader = csv.reader(f, delimiter=delimiter)
+            rows: list[list[str]] = []
+            for i, row in enumerate(reader):
+                rows.append(row)
+                if i >= _DATA_SAMPLE_ROWS:  # header + N sample rows
+                    break
+
+        if not rows:
+            return ToolResult(output="(Empty file)", title=os.path.basename(file_path))
+
+        headers = rows[0]
+        data_rows = rows[1:]
+
+        # Count total rows without reading everything into memory
+        with open(resolved, "r", encoding="utf-8", errors="replace") as f:
+            total_rows = sum(1 for _ in f) - 1  # minus header
+
+        # Build output
+        parts = [
+            f"File: {os.path.basename(file_path)}",
+            f"Rows: {total_rows:,}  |  Columns: {len(headers)}",
+            "",
+            "Columns: " + ", ".join(headers),
+            "",
+            "Sample rows:",
+        ]
+        # Header
+        parts.append(" | ".join(headers))
+        parts.append(" | ".join(["---"] * len(headers)))
+        for row in data_rows:
+            # Pad/truncate to match header count
+            padded = row[:len(headers)] + [""] * max(0, len(headers) - len(row))
+            parts.append(" | ".join(padded))
+
+        parts.append("")
+        parts.append("Use code_execute for analysis.")
+
+        return ToolResult(
+            output="\n".join(parts),
+            title=os.path.basename(file_path),
+            metadata={
+                "source": "filesystem",
+                "format": "csv",
+                "total_rows": total_rows,
+                "columns": headers,
+            },
+        )
+
+    def _summarise_xlsx(self, resolved: str, file_path: str) -> ToolResult:
+        try:
+            from openpyxl import load_workbook
+        except ImportError:
+            raise ImportError("openpyxl is not installed")
+
+        wb = load_workbook(resolved, read_only=True, data_only=True)
+        parts = [f"File: {os.path.basename(file_path)}", f"Sheets: {', '.join(wb.sheetnames)}", ""]
+
+        all_metadata: dict[str, Any] = {"source": "filesystem", "format": "xlsx", "sheets": {}}
+
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            rows: list[list[str]] = []
+            for i, row in enumerate(ws.iter_rows(values_only=True)):
+                cells = [str(c) if c is not None else "" for c in row]
+                rows.append(cells)
+                if i >= _DATA_SAMPLE_ROWS:
+                    break
+
+            if not rows:
+                parts.append(f"=== {sheet_name}: (empty) ===")
+                continue
+
+            headers = rows[0]
+            data_rows = rows[1:]
+            total_rows = ws.max_row - 1 if ws.max_row else 0
+
+            parts.append(f"=== {sheet_name} ({total_rows:,} rows, {len(headers)} cols) ===")
+            parts.append("Columns: " + ", ".join(headers))
+            parts.append("")
+            parts.append(" | ".join(headers))
+            parts.append(" | ".join(["---"] * len(headers)))
+            for row in data_rows:
+                padded = row[:len(headers)] + [""] * max(0, len(headers) - len(row))
+                parts.append(" | ".join(padded))
+            parts.append("")
+
+            all_metadata["sheets"][sheet_name] = {
+                "total_rows": total_rows,
+                "columns": headers,
+            }
+
+        wb.close()
+
+        parts.append("Use code_execute for analysis.")
+
+        return ToolResult(
+            output="\n".join(parts),
+            title=os.path.basename(file_path),
+            metadata=all_metadata,
+        )
 
     # ------------------------------------------------------------------
     # Image path (base64 for multimodal LLM)

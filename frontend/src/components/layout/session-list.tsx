@@ -307,7 +307,7 @@ export function SessionList() {
 
       if (IS_DESKTOP) {
         const { desktopAPI } = await import("@/lib/tauri-api");
-        await desktopAPI.downloadAndSave(exportUrl, `${title}.pdf`);
+        await desktopAPI.downloadAndSave({ url: exportUrl, defaultName: `${title}.pdf` });
       } else {
         const res = await fetch(exportUrl);
         if (!res.ok) throw new Error("PDF export failed");
