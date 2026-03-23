@@ -41,6 +41,7 @@ export function useAutoDetectProvider(): { hasProvider: boolean } {
   const { data: ollamaRuntimeStatus } = useQuery({
     queryKey: ["ollamaRuntime"],
     queryFn: () => api.get<OllamaRuntimeStatus>(API.OLLAMA.STATUS),
+    refetchInterval: activeProvider === null ? 10_000 : false,
   });
 
   const ollamaConnected = !!ollamaRuntimeStatus?.running;

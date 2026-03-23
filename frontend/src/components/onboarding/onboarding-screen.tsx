@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -60,6 +60,19 @@ export function OnboardingScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resendSuccess, setResendSuccess] = useState(false);
+  const [codeCountdown, setCodeCountdown] = useState(600);
+
+  useEffect(() => {
+    if (!verificationStep) return;
+    setCodeCountdown(600);
+    const timer = setInterval(() => {
+      setCodeCountdown(prev => {
+        if (prev <= 1) { clearInterval(timer); return 0; }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [verificationStep]);
 
   const goTo = (next: Step, dir = 1) => {
     setDirection(dir);
@@ -180,6 +193,7 @@ export function OnboardingScreen() {
         email: emailInput,
       });
       setCodeInput("");
+      setCodeCountdown(600);
       setResendSuccess(true);
     } catch {
       setError("Failed to resend code");
@@ -303,6 +317,12 @@ export function OnboardingScreen() {
                       Code sent to <strong className="text-[var(--text-primary)]">{emailInput}</strong>
                     </span>
                   </div>
+
+                  <p className="text-xs text-[var(--text-tertiary)]">
+                    {codeCountdown > 0
+                      ? `Code expires in ${Math.floor(codeCountdown / 60)}:${String(codeCountdown % 60).padStart(2, '0')}`
+                      : "Code expired \u2014 please resend"}
+                  </p>
 
                   <Input
                     type="text"

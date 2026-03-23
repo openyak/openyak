@@ -60,10 +60,29 @@ export function useDeleteSession() {
 
 export function useRenameSession() {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, title }: { id: string; title: string }) =>
+  return useMutation<SessionResponse, unknown, { id: string; title: string }, { previous?: unknown }>({
+    mutationFn: ({ id, title }) =>
       api.patch<SessionResponse>(API.SESSIONS.DETAIL(id), { title }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.sessions.all }),
+    onMutate: async ({ id, title }) => {
+      await qc.cancelQueries({ queryKey: queryKeys.sessions.all });
+      const previous = qc.getQueryData(queryKeys.sessions.all);
+      qc.setQueryData(queryKeys.sessions.all, (old: any) => {
+        if (!old?.pages) return old;
+        return {
+          ...old,
+          pages: old.pages.map((page: any) =>
+            page.map((s: any) => s.id === id ? { ...s, title } : s)
+          ),
+        };
+      });
+      return { previous };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previous) {
+        qc.setQueryData(queryKeys.sessions.all, context.previous);
+      }
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: queryKeys.sessions.all }),
   });
 }
 

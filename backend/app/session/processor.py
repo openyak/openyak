@@ -102,25 +102,28 @@ _HARD_MAX_STEPS = 50
 _search_quota_date: str = ""
 _search_quota_count: int = 0
 _search_credits_mode: bool = False  # Sticky: True once proxy confirms Credits billing
+_search_quota_lock = asyncio.Lock()
 
 
-def _get_search_quota() -> tuple[int, bool]:
+async def _get_search_quota() -> tuple[int, bool]:
     """Return (count_today, is_credits_mode), resetting if UTC day changed."""
     global _search_quota_date, _search_quota_count
-    today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
-    if _search_quota_date != today:
-        _search_quota_date = today
-        _search_quota_count = 0
-    return _search_quota_count, _search_credits_mode
+    async with _search_quota_lock:
+        today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+        if _search_quota_date != today:
+            _search_quota_date = today
+            _search_quota_count = 0
+        return _search_quota_count, _search_credits_mode
 
 
-def _increment_search_count() -> None:
+async def _increment_search_count() -> None:
     global _search_quota_date, _search_quota_count
-    today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
-    if _search_quota_date != today:
-        _search_quota_date = today
-        _search_quota_count = 0
-    _search_quota_count += 1
+    async with _search_quota_lock:
+        today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+        if _search_quota_date != today:
+            _search_quota_date = today
+            _search_quota_count = 0
+        _search_quota_count += 1
 
 
 def _is_jwt_expired(token: str, margin_seconds: int = 60) -> bool:
@@ -389,9 +392,9 @@ async def run_generation(
             "session_id": job.session_id,
             "finish_reason": "aborted",
         }))
-    except Exception as e:
+    except Exception:
         logger.exception("Generation error for stream %s", job.stream_id)
-        job.publish(SSEEvent(AGENT_ERROR, {"error_message": str(e)}))
+        job.publish(SSEEvent(AGENT_ERROR, {"error_message": "An internal error occurred. Please try again."}))
     finally:
         job.complete()
 
@@ -483,7 +486,7 @@ class SessionProcessor:
                 )
 
                 _exclude_tools: set[str] | None = None
-                _sq_count, _sq_credits = _get_search_quota()
+                _sq_count, _sq_credits = await _get_search_quota()
                 if not _sq_credits and _sq_count >= get_settings().daily_search_limit:
                     _exclude_tools = {"web_search"}
 
@@ -1018,7 +1021,7 @@ class SessionProcessor:
 
                     # Web search quota tracking
                     if tool.id == "web_search" and result.success:
-                        _increment_search_count()
+                        await _increment_search_count()
                         if result.metadata and result.metadata.get("charged"):
                             global _search_credits_mode
                             _search_credits_mode = True
