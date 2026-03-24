@@ -151,7 +151,7 @@ export function HeaderModelDropdown() {
     return (
       <button
         type="button"
-        onClick={() => router.push("/models")}
+        onClick={() => router.push("/settings?tab=providers")}
         className="inline-flex items-center gap-1.5 border-none bg-transparent shadow-none px-3 py-2 text-[15px] font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-secondary)] transition-colors rounded-xl h-auto w-auto max-w-[220px] focus:outline-none cursor-pointer"
       >
         <span className="truncate">{t("setupProvider")}</span>

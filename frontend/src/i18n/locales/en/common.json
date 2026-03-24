@@ -50,5 +50,7 @@
   "plugins": "Plugins",
   "models": "Models",
   "remote": "Remote",
-  "setupProvider": "Set up provider"
+  "setupProvider": "Set up provider",
+  "setUpProvider": "Set up provider",
+  "apiKey": "API Key"
 }

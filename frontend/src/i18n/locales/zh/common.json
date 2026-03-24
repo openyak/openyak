@@ -50,5 +50,7 @@
   "plugins": "插件",
   "models": "服务商",
   "remote": "远程",
-  "setupProvider": "配置服务商"
+  "setupProvider": "配置服务商",
+  "setUpProvider": "配置服务商",
+  "apiKey": "API 密钥"
 }

@@ -198,7 +198,7 @@ export function Landing() {
                 </p>
               </div>
               <Link
-                href="/models"
+                href="/settings?tab=providers"
                 className="shrink-0 inline-flex items-center rounded-lg border border-[var(--border-default)] bg-[var(--surface-primary)] px-3 py-1.5 text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)] transition-colors"
               >
                 {t('configureSettings')}

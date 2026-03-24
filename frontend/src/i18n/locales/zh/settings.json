@@ -97,5 +97,9 @@
   "aboutVersion": "OpenYak v0.0.1",
   "aboutDesc": "你的本地 AI 助手 — 隐私、强大、个性化。",
   "aboutCopyright": "W Aixs Inc. © 2024–2026",
-  "selectWorkspaceDir": "选择工作目录"
+  "selectWorkspaceDir": "选择工作目录",
+  "tabGeneral": "通用",
+  "tabProviders": "服务商",
+  "tabBilling": "计费",
+  "tabUsage": "用量"
 }

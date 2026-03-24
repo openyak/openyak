@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, Timer, Plug, BarChart3, Cpu, Wifi } from "lucide-react";
+import { Search, Timer, Plug, Wifi } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { useSidebarStore } from "@/stores/sidebar-store";
@@ -12,9 +12,7 @@ import { useSidebarStore } from "@/stores/sidebar-store";
 const NAV_ITEMS = [
   { key: "automations", icon: Timer, href: "/automations" },
   { key: "plugins", icon: Plug, href: "/plugins" },
-  { key: "models", icon: Cpu, href: "/models" },
   { key: "remote", icon: Wifi, href: "/remote" },
-  { key: "usage", icon: BarChart3, href: "/usage" },
 ] as const;
 
 export function SidebarNav() {

@@ -202,7 +202,7 @@ export function OnboardingScreen() {
 
   const handleSkip = () => {
     completeOnboarding();
-    router.push("/models");
+    router.push("/settings?tab=providers");
   };
 
   const handleFinish = () => {

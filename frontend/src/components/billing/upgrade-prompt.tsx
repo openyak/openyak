@@ -45,7 +45,7 @@ export function UpgradePrompt() {
         </DialogHeader>
         <div className="flex flex-col gap-2 mt-2">
           <Button asChild>
-            <Link href="/billing" onClick={dismissUpgrade}>
+            <Link href="/settings?tab=billing" onClick={dismissUpgrade}>
               <CreditCard className="h-4 w-4 mr-2" />
               {t('buyCredits')}
             </Link>

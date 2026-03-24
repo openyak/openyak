@@ -97,5 +97,9 @@
   "aboutVersion": "OpenYak v0.0.1",
   "aboutDesc": "Your local AI assistant — private, powerful, personal.",
   "aboutCopyright": "W Aixs Inc. © 2024–2026",
-  "selectWorkspaceDir": "Select workspace directory"
+  "selectWorkspaceDir": "Select workspace directory",
+  "tabGeneral": "General",
+  "tabProviders": "Providers",
+  "tabBilling": "Billing",
+  "tabUsage": "Usage"
 }
