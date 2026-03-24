@@ -374,10 +374,22 @@ class ConnectorRegistry:
         result: dict[str, dict[str, Any]] = {}
         for cid, connector in self._connectors.items():
             runtime = mcp_status.get(cid, {})
+            mcp_connected = runtime.get("status") == "connected"
+            effective_status = runtime.get("status", "disabled" if not connector.enabled else "disconnected")
+
+            # Google Workspace: MCP server can start without OAuth tokens.
+            # Override status to "needs_auth" if user hasn't completed Google login.
+            if cid == "google-workspace" and mcp_connected:
+                from app.api.google_auth import load_google_tokens
+                tokens = load_google_tokens(self._project_dir)
+                if not tokens or not tokens.get("refresh_token"):
+                    mcp_connected = False
+                    effective_status = "needs_auth"
+
             result[cid] = {
                 **connector.to_dict(),
-                "connected": runtime.get("status") == "connected",
-                "status": runtime.get("status", "disabled" if not connector.enabled else "disconnected"),
+                "connected": mcp_connected,
+                "status": effective_status,
                 "error": runtime.get("error"),
                 "tools_count": runtime.get("tools", 0),
             }

@@ -28,16 +28,9 @@ export interface MessageStats {
   hasCompaction: boolean;
 }
 
-// Estimated context limits (approximate, varies by model)
-const CONTEXT_LIMITS: Record<string, number> = {
-  default: 200000, // Default for most modern models
-  "gpt-4": 128000,
-  "gpt-3.5": 16000,
-  "claude-3": 200000,
-  "claude-2": 100000,
-};
+const DEFAULT_CONTEXT_LIMIT = 200_000;
 
-function computeStats(messages: MessageResponse[]): MessageStats {
+function computeStats(messages: MessageResponse[], maxContext?: number): MessageStats {
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
   let totalCacheRead = 0;
@@ -77,9 +70,11 @@ function computeStats(messages: MessageResponse[]): MessageStats {
     }
   }
 
-  const totalTokens = totalInputTokens + totalOutputTokens + totalCacheRead;
-  const estimatedLimit = CONTEXT_LIMITS.default;
-  const percentage = Math.min((totalTokens / estimatedLimit) * 100, 100);
+  // Context occupancy = prompt tokens only (input + cacheRead).
+  // Output tokens are generated outside the context window.
+  const totalTokens = totalInputTokens + totalCacheRead;
+  const contextLimit = maxContext && maxContext > 0 ? maxContext : DEFAULT_CONTEXT_LIMIT;
+  const percentage = Math.min((totalTokens / contextLimit) * 100, 100);
 
   return {
     totalTokens,
@@ -98,7 +93,7 @@ function computeStats(messages: MessageResponse[]): MessageStats {
  * Shares the same infinite query cache as useMessages — no extra network request.
  * Derives stats from the loaded pages using useMemo.
  */
-export function useMessageStats(sessionId: string | undefined) {
+export function useMessageStats(sessionId: string | undefined, maxContext?: number) {
   const query = useInfiniteQuery({
     queryKey: queryKeys.messages.list(sessionId!),
     queryFn: ({ pageParam }: { pageParam: number }) =>
@@ -115,8 +110,8 @@ export function useMessageStats(sessionId: string | undefined) {
 
   const stats = useMemo(() => {
     if (!query.data) return undefined;
-    return computeStats(query.data.pages.flatMap((p) => p.messages));
-  }, [query.data]);
+    return computeStats(query.data.pages.flatMap((p) => p.messages), maxContext);
+  }, [query.data, maxContext]);
 
   return { ...query, data: stats };
 }

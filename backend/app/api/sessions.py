@@ -131,6 +131,49 @@ async def update_session_endpoint(
     return SessionResponse.model_validate(session)
 
 
+@router.get("/sessions/{session_id}/todos")
+async def get_session_todos(
+    session_id: str,
+    request: Request,
+) -> dict:
+    """Get current todo list for a session."""
+    from app.tool.builtin.todo import get_todos
+
+    session_factory = getattr(request.app.state, "session_factory", None)
+    if session_factory is None:
+        return {"todos": []}
+    todos = await get_todos(session_id, session_factory)
+    return {"todos": todos}
+
+
+@router.get("/sessions/{session_id}/files")
+async def get_session_files(
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Get workspace files for a session by scanning openyak_written/ directory."""
+    import os
+    from pathlib import Path
+
+    session = await get_session(db, session_id)
+    if session is None or not session.directory:
+        return {"files": []}
+
+    output_dir = Path(session.directory).resolve() / "openyak_written"
+    if not output_dir.is_dir():
+        return {"files": []}
+
+    files = []
+    for entry in sorted(output_dir.iterdir(), key=lambda e: e.stat().st_mtime):
+        if entry.is_file():
+            files.append({
+                "name": entry.name,
+                "path": str(entry),
+                "type": "generated",
+            })
+    return {"files": files}
+
+
 @router.delete("/sessions/{session_id}")
 async def delete_session_endpoint(
     session_id: str,

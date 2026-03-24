@@ -123,6 +123,8 @@ export const API = {
       `/api/sessions/search?q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}`,
     DETAIL: (id: string) => `/api/sessions/${id}`,
     EXPORT_PDF: (id: string) => `/api/sessions/${id}/export-pdf`,
+    TODOS: (id: string) => `/api/sessions/${id}/todos`,
+    FILES: (id: string) => `/api/sessions/${id}/files`,
   },
   MESSAGES: {
     LIST: (sessionId: string, limit = 50, offset = -1) =>
@@ -232,6 +234,7 @@ export const queryKeys = {
     all: ["sessions"] as const,
     detail: (id: string) => ["sessions", id] as const,
     search: (q: string) => ["sessions", "search", q] as const,
+    todos: (id: string) => ["sessions", id, "todos"] as const,
   },
   messages: {
     list: (sessionId: string) => ["messages", sessionId] as const,
@@ -263,6 +266,7 @@ export const queryKeys = {
 export const SIDEBAR_WIDTH = 280;
 export const ACTIVITY_PANEL_WIDTH = 380;
 export const ARTIFACT_PANEL_WIDTH = 520;
+export const WORKSPACE_PANEL_WIDTH = 320;
 export const MOBILE_BREAKPOINT = 768;
 export const MAX_INPUT_HEIGHT = 200;
 export const SSE_HEARTBEAT_TIMEOUT = 45_000;

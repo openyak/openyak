@@ -64,6 +64,7 @@ class WriteTool(ToolDefinition):
             return ToolResult(
                 output=f"{action} {file_path} ({lines} lines)",
                 title=f"{action} {os.path.basename(file_path)}",
+                metadata={"file_path": file_path},
             )
 
         except PermissionError:

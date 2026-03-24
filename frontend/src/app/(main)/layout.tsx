@@ -11,6 +11,7 @@ import { MobileNav } from "@/components/layout/mobile-nav";
 import { ActivityPanel } from "@/components/activity/activity-panel";
 import { ArtifactPanel } from "@/components/artifacts/artifact-panel";
 import { PlanReviewPanel } from "@/components/plan-review/plan-review-panel";
+import { WorkspacePanel } from "@/components/workspace/workspace-panel";
 import { usePlanReviewStore } from "@/stores/plan-review-store";
 import { ConnectionStatus } from "@/components/layout/connection-status";
 import { RouteProgressBar } from "@/components/layout/route-progress-bar";
@@ -32,6 +33,7 @@ import {
   API,
   SIDEBAR_WIDTH,
   ACTIVITY_PANEL_WIDTH,
+  WORKSPACE_PANEL_WIDTH,
   IS_DESKTOP,
   TITLE_BAR_HEIGHT,
   queryKeys,
@@ -164,14 +166,16 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   }, []);
 
   const marginLeft = isDesktop && !isCollapsed ? SIDEBAR_WIDTH : 0;
+  const overlayWidth = artifactIsOpen
+    ? artifactWidth
+    : planReviewIsOpen
+      ? planReviewWidth
+      : activityIsOpen
+        ? ACTIVITY_PANEL_WIDTH
+        : 0;
+  // Workspace panel is always visible on desktop; overlays cover it
   const marginRight = isDesktop
-    ? artifactIsOpen
-      ? artifactWidth
-      : planReviewIsOpen
-        ? planReviewWidth
-        : activityIsOpen
-          ? ACTIVITY_PANEL_WIDTH
-          : 0
+    ? Math.max(WORKSPACE_PANEL_WIDTH, overlayWidth)
     : 0;
 
   // Add top padding when the desktop title bar is active
@@ -270,7 +274,10 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
         {children}
       </motion.main>
 
-      {/* Right-side panels (mutually exclusive) - conditionally mounted */}
+      {/* Persistent workspace panel — always visible on desktop */}
+      {isDesktop && <WorkspacePanel />}
+
+      {/* Overlay panels (mutually exclusive, z-35) - cover workspace when open */}
       <AnimatePresence mode="wait">
         {activityIsOpen && <ActivityPanel key="activity" />}
         {artifactIsOpen && <ArtifactPanel key="artifact" />}

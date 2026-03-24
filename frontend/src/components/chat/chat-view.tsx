@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useChat } from "@/hooks/use-chat";
 import { useMessages } from "@/hooks/use-messages";
@@ -9,6 +9,7 @@ import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { useChatStore } from "@/stores/chat-store";
 import { useArtifactStore } from "@/stores/artifact-store";
 import { useActivityStore } from "@/stores/activity-store";
+import { useWorkspaceStore } from "@/stores/workspace-store";
 import { api } from "@/lib/api";
 import { API, queryKeys } from "@/lib/constants";
 import { ChatHeader } from "./chat-header";
@@ -56,6 +57,27 @@ export function ChatView({ sessionId }: ChatViewProps) {
     staleTime: 30_000,
   });
 
+  // Auto-fix sessions with default title — set to first user message
+  const qc = useQueryClient();
+  useEffect(() => {
+    if (!session || !messages || messages.length === 0) return;
+    if (session.title && session.title !== "New Session") return;
+    const firstUser = messages.find((m) => m.data?.role === "user");
+    if (!firstUser) return;
+    const textPart = firstUser.parts.find((p) => p.data?.type === "text");
+    const text = (textPart?.data as any)?.text;
+    if (!text) return;
+    const title = text.trim().slice(0, 60);
+    if (!title) return;
+    api.patch(API.SESSIONS.DETAIL(sessionId), { title }).then(() => {
+      qc.invalidateQueries({ queryKey: queryKeys.sessions.all });
+      qc.setQueryData<SessionResponse>(
+        queryKeys.sessions.detail(sessionId),
+        (old) => (old ? { ...old, title } : old),
+      );
+    }).catch(() => {});
+  }, [session, messages, sessionId, qc]);
+
   // Close right-side panels when switching sessions; abort generation if active.
   // We use a ref to track whether we're truly leaving this session vs. React
   // Strict Mode's dev-only double-invoke (mount → unmount → remount).
@@ -63,6 +85,31 @@ export function ChatView({ sessionId }: ChatViewProps) {
   useEffect(() => {
     useArtifactStore.getState().clearAll();
     useActivityStore.getState().close();
+    useWorkspaceStore.getState().resetForSession();
+
+    // Load persisted todos and workspace files for this session
+    api.get<{ todos: Array<{ content: string; status: string; activeForm?: string }> }>(
+      API.SESSIONS.TODOS(sessionId),
+    ).then((res) => {
+      if (res.todos && res.todos.length > 0) {
+        useWorkspaceStore.getState().setTodos(res.todos as any);
+      }
+    }).catch(() => {
+      // Non-critical — todos may not exist yet
+    });
+
+    api.get<{ files: Array<{ name: string; path: string; type: string; tool: string }> }>(
+      API.SESSIONS.FILES(sessionId),
+    ).then((res) => {
+      if (res.files && res.files.length > 0) {
+        useWorkspaceStore.getState().setWorkspaceFiles(
+          res.files.map((f) => ({ name: f.name, path: f.path, type: f.type as any })),
+        );
+      }
+    }).catch(() => {
+      // Non-critical — files may not exist yet
+    });
+
     sessionMountedRef.current = true;
     return () => {
       // Defer the abort check to the next microtask. If this is a React Strict

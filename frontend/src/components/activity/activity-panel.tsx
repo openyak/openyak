@@ -458,7 +458,7 @@ export function ActivityPanel() {
   if (isDesktop) {
     return (
       <motion.aside
-        className="fixed inset-y-0 right-0 z-30 flex flex-col bg-[var(--surface-primary)] border-l border-[var(--border-default)] overflow-hidden"
+        className="fixed inset-y-0 right-0 z-[35] flex flex-col bg-[var(--surface-primary)] border-l border-[var(--border-default)] overflow-hidden"
         style={IS_DESKTOP ? { top: TITLE_BAR_HEIGHT } : undefined}
         initial={{ width: 0, opacity: 0 }}
         animate={{ width: ACTIVITY_PANEL_WIDTH, opacity: 1 }}

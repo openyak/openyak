@@ -182,5 +182,5 @@ class EditTool(ToolDefinition):
         return ToolResult(
             output=diff,
             title=title,
-            metadata={"edits": len(edits), "replacements": total_replacements},
+            metadata={"edits": len(edits), "replacements": total_replacements, "file_path": file_path},
         )

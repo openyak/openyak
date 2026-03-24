@@ -11,8 +11,10 @@ import { SSE_EVENTS } from "@/types/streaming";
 import { useChatStore } from "@/stores/chat-store";
 import { useConnectionStore } from "@/stores/connection-store";
 import { useArtifactStore } from "@/stores/artifact-store";
+import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { proxyApi } from "@/lib/proxy-api";
+import { api } from "@/lib/api";
 import { isPreviewableFile, artifactTypeFromExtension, languageFromExtension } from "@/lib/artifacts";
 import type { SessionResponse } from "@/types/session";
 import type { ArtifactType } from "@/types/artifact";
@@ -232,6 +234,7 @@ export function useSSE(streamId: string | null) {
             });
           }
         }
+
       }
     });
 
@@ -244,6 +247,36 @@ export function useSSE(streamId: string | null) {
           data.title,
           data.metadata,
         );
+
+        // Update workspace panel with todo results
+        if (data.tool === "todo" && data.metadata) {
+          const meta = data.metadata as { todos?: Array<{ content: string; status: string; activeForm?: string }> };
+          if (meta.todos) {
+            useWorkspaceStore.getState().setTodos(meta.todos as any);
+            // Auto-open workspace and switch to progress tab
+            const ws = useWorkspaceStore.getState();
+            if (!ws.isOpen) {
+              ws.open();
+            }
+            ws.expandSection("progress");
+          }
+        }
+
+        // Refresh workspace files from backend after file-modifying tools
+        if (data.tool && ["write", "edit", "bash"].includes(data.tool)) {
+          const sid = store.getState().sessionId;
+          if (sid) {
+            api.get<{ files: Array<{ name: string; path: string; type: string }> }>(
+              API.SESSIONS.FILES(sid),
+            ).then((res) => {
+              if (res.files) {
+                useWorkspaceStore.getState().setWorkspaceFiles(
+                  res.files.map((f) => ({ name: f.name, path: f.path, type: f.type as any })),
+                );
+              }
+            }).catch(() => {});
+          }
+        }
 
         // Update artifact panel for update/rewrite commands
         // (content is computed server-side, not available in TOOL_START args)

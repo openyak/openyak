@@ -127,6 +127,43 @@ async def _increment_search_count(*, charged: bool = False) -> None:
             _search_credits_mode = True
 
 
+async def _track_session_file(
+    session_factory: Any,
+    session_id: str,
+    file_path: str,
+    tool_id: str,
+) -> None:
+    """Persist a file record for the workspace panel (deduplicated by path)."""
+    import os
+    from sqlalchemy import select
+    from app.models.session_file import SessionFile
+    from app.utils.id import generate_ulid
+
+    file_name = os.path.basename(file_path)
+    try:
+        async with session_factory() as db:
+            async with db.begin():
+                # Deduplicate: skip if this exact path is already tracked
+                existing = await db.execute(
+                    select(SessionFile.id).where(
+                        SessionFile.session_id == session_id,
+                        SessionFile.file_path == file_path,
+                    ).limit(1)
+                )
+                if existing.scalar_one_or_none() is not None:
+                    return
+                db.add(SessionFile(
+                    id=generate_ulid(),
+                    session_id=session_id,
+                    file_path=file_path,
+                    file_name=file_name,
+                    tool_id=tool_id,
+                    file_type="generated",
+                ))
+    except Exception:
+        logger.debug("Failed to track session file: %s", file_path, exc_info=True)
+
+
 def _is_jwt_expired(token: str, margin_seconds: int = 60) -> bool:
     """Check if a JWT access token is expired (or nearly so)."""
     import base64
@@ -1024,6 +1061,20 @@ class SessionProcessor:
                     if tool.id == "web_search" and result.success:
                         charged = bool(result.metadata and result.metadata.get("charged"))
                         await _increment_search_count(charged=charged)
+
+                    # Track session files from write/edit tools
+                    if (
+                        tool.id in ("write", "edit")
+                        and result.success
+                        and result.metadata
+                        and result.metadata.get("file_path")
+                    ):
+                        await _track_session_file(
+                            session_factory,
+                            session_id=job.session_id,
+                            file_path=result.metadata["file_path"],
+                            tool_id=tool.id,
+                        )
 
                     # Track todos from todo tool results
                     if tool.id == "todo" and result.metadata and "todos" in result.metadata:

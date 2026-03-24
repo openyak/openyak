@@ -67,6 +67,7 @@ export function useKeyboardShortcuts({
         }
         return;
       }
+
     }
 
     window.addEventListener("keydown", handleKeyDown);

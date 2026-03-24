@@ -4,6 +4,8 @@ import { Info } from "lucide-react";
 import { useTranslation } from 'react-i18next';
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useMessageStats } from "@/hooks/use-message-stats";
+import { useModels } from "@/hooks/use-models";
+import { useSettingsStore } from "@/stores/settings-store";
 
 interface ContextIndicatorProps {
   sessionId: string;
@@ -11,7 +13,10 @@ interface ContextIndicatorProps {
 
 export function ContextIndicator({ sessionId }: ContextIndicatorProps) {
   const { t } = useTranslation('chat');
-  const { data: stats } = useMessageStats(sessionId);
+  const { data: models } = useModels();
+  const selectedModel = useSettingsStore((s) => s.selectedModel);
+  const maxContext = models?.find((m) => m.id === selectedModel)?.capabilities.max_context;
+  const { data: stats } = useMessageStats(sessionId, maxContext);
 
   // Don't show if no stats or no tokens tracked yet
   if (!stats || stats.totalTokens === 0) return null;

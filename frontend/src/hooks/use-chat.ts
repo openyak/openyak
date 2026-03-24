@@ -10,6 +10,7 @@ import { getChatRoute } from "@/lib/routes";
 import { useChatStore } from "@/stores/chat-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useBillingStore } from "@/stores/billing-store";
+import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useSSE } from "./use-sse";
 import { useRemoteGenerationSync } from "./use-remote-generation-sync";
 import type { InfiniteData } from "@tanstack/react-query";
@@ -157,6 +158,15 @@ export function useChat(currentSessionId?: string) {
     // Clean up frontend state immediately — don't wait for backend DONE event
     // (the backend may delay DONE while running post-generation tasks like title generation)
     finishGeneration();
+    // Stop workspace progress spinners — mark in_progress todos as pending
+    const ws = useWorkspaceStore.getState();
+    if (ws.todos.some((t) => t.status === "in_progress")) {
+      ws.setTodos(
+        ws.todos.map((t) =>
+          t.status === "in_progress" ? { ...t, status: "pending" as const, activeForm: undefined } : t,
+        ),
+      );
+    }
     if (sessionId) {
       queryClient.invalidateQueries({ queryKey: queryKeys.messages.list(sessionId) });
     }

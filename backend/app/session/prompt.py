@@ -575,25 +575,8 @@ class SessionPrompt:
                     "Failed to persist cost/tokens on message %s", self.assistant_msg_id
                 )
 
-        # Publish DONE immediately so the frontend unlocks the UI.
-        # Title generation runs *after* DONE — it can take seconds and the frontend
-        # schedules a delayed sessions refetch that picks up the title from DB.
-        self.job.publish(
-            SSEEvent(
-                DONE,
-                {
-                    "session_id": self.job.session_id,
-                    "finish_reason": (
-                        self.finish_reason if not self.job.abort_event.is_set() else "aborted"
-                    ),
-                    "total_cost": self.total_cost,
-                },
-            )
-        )
-
         # Set title on first turn — use first user message directly.
-        # Avoids an extra LLM call that wastes tokens and triggers rate
-        # limits on free-tier models (e.g., MiniMax M2.5:free).
+        # Must happen BEFORE DONE so the SSE client receives TITLE_UPDATE.
         if self.is_first_turn:
             title = self.first_user_text.strip()[:60]
             if title:
@@ -606,6 +589,20 @@ class SessionPrompt:
                     logger.warning(
                         "Failed to persist title for %s", self.job.session_id
                     )
+
+        # Publish DONE to unlock the frontend UI.
+        self.job.publish(
+            SSEEvent(
+                DONE,
+                {
+                    "session_id": self.job.session_id,
+                    "finish_reason": (
+                        self.finish_reason if not self.job.abort_event.is_set() else "aborted"
+                    ),
+                    "total_cost": self.total_cost,
+                },
+            )
+        )
 
     # ------------------------------------------------------------------
     # Shared helpers (called by SessionProcessor on agent switch)
