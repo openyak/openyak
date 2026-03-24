@@ -46,6 +46,15 @@
 
 Looking for technical details, project structure, or development setup? See [frontend/README.md](frontend/README.md) and [backend/README.md](backend/README.md).
 
+## Star History
+
+<a href="https://star-history.com/#openyak/desktop&Date">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=openyak/desktop&type=Date&theme=dark" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=openyak/desktop&type=Date" width="600" />
+ </picture>
+</a>
+
 ## License
 
 [AGPL-3.0](LICENSE)

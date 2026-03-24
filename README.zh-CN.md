@@ -46,6 +46,15 @@
 
 需要技术细节、项目结构或开发环境配置？请参阅 [frontend/README.zh-CN.md](frontend/README.zh-CN.md) 和 [backend/README.zh-CN.md](backend/README.zh-CN.md)。
 
+## Star History
+
+<a href="https://star-history.com/#openyak/desktop&Date">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=openyak/desktop&type=Date&theme=dark" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=openyak/desktop&type=Date" width="600" />
+ </picture>
+</a>
+
 ## 许可证
 
 [AGPL-3.0](LICENSE)
