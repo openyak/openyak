@@ -171,6 +171,9 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   }, []);
 
   const marginLeft = isDesktop && !isCollapsed ? SIDEBAR_WIDTH : 0;
+  const isChatPage = pathname?.startsWith("/c/") ?? false;
+  const isActiveChat = isChatPage && pathname !== "/c/new";
+  const showWorkspace = isDesktop && isActiveChat;
   const overlayWidth = artifactIsOpen
     ? artifactWidth
     : planReviewIsOpen
@@ -178,14 +181,12 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
       : activityIsOpen
         ? ACTIVITY_PANEL_WIDTH
         : 0;
-  // Workspace panel is always visible on desktop; overlays cover it
   const marginRight = isDesktop
-    ? Math.max(WORKSPACE_PANEL_WIDTH, overlayWidth)
+    ? Math.max(showWorkspace ? WORKSPACE_PANEL_WIDTH : 0, overlayWidth)
     : 0;
 
   // Add top padding when the desktop title bar is active
   const titleBarPadding = IS_DESKTOP ? TITLE_BAR_HEIGHT : 0;
-  const isChatPage = pathname?.startsWith("/c/") ?? false;
 
   return (
     <div className="h-full overflow-hidden">
@@ -279,8 +280,8 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
         {children}
       </motion.main>
 
-      {/* Persistent workspace panel — always visible on desktop */}
-      {isDesktop && <WorkspacePanel />}
+      {/* Workspace panel — only on active chat sessions */}
+      {showWorkspace && <WorkspacePanel />}
 
       {/* Overlay panels (mutually exclusive, z-35) - cover workspace when open */}
       <AnimatePresence mode="wait">
