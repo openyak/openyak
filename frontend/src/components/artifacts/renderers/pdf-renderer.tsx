@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Download, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
+import { Download, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { API } from "@/lib/constants";
@@ -24,7 +24,6 @@ export function PdfRenderer({ filePath }: PdfRendererProps) {
   const [error, setError] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string>("");
   const [numPages, setNumPages] = useState(0);
-  const [currentPage, setCurrentPage] = useState(1);
   const [pdfData, setPdfData] = useState<Uint8Array | null>(null);
   const blobRef = useRef<Blob | null>(null);
 
@@ -67,8 +66,8 @@ export function PdfRenderer({ filePath }: PdfRendererProps) {
         // @ts-expect-error -- react-pdf CSS side-effect import
         await import("react-pdf/dist/Page/TextLayer.css");
 
-        // Configure worker
-        reactPdf.pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${reactPdf.pdfjs.version}/build/pdf.worker.min.mjs`;
+        // Use local worker file (CDN URLs blocked by Tauri CSP)
+        reactPdf.pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
         if (cancelled) return;
 
@@ -103,7 +102,6 @@ export function PdfRenderer({ filePath }: PdfRendererProps) {
 
   const onDocumentLoadSuccess = useCallback(({ numPages: n }: { numPages: number }) => {
     setNumPages(n);
-    setCurrentPage(1);
   }, []);
 
   if (error) {
@@ -116,53 +114,27 @@ export function PdfRenderer({ filePath }: PdfRendererProps) {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Toolbar */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border-default)] bg-[var(--surface-tertiary)] shrink-0">
-        <span className="text-[11px] font-medium text-[var(--text-secondary)] uppercase tracking-wide truncate">
-          {fileName || "document.pdf"}
-        </span>
-        <div className="flex items-center gap-1">
-          {/* Page navigation */}
-          {numPages > 1 && (
-            <>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7"
-                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                disabled={currentPage <= 1}
-              >
-                <ChevronLeft className="h-3.5 w-3.5" />
-              </Button>
-              <span className="text-[11px] text-[var(--text-secondary)] tabular-nums whitespace-nowrap">
-                {currentPage} / {numPages}
-              </span>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7"
-                onClick={() => setCurrentPage((p) => Math.min(numPages, p + 1))}
-                disabled={currentPage >= numPages}
-              >
-                <ChevronRight className="h-3.5 w-3.5" />
-              </Button>
-            </>
-          )}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            onClick={handleDownload}
-            disabled={!blobRef.current}
-            title="Download"
-          >
-            <Download className="h-3.5 w-3.5" />
-          </Button>
-        </div>
+      {/* Toolbar — only page count + download, no duplicate filename */}
+      <div className="flex items-center justify-end px-3 py-1.5 border-b border-[var(--border-default)] bg-[var(--surface-tertiary)] shrink-0 gap-2">
+        {numPages > 1 && (
+          <span className="text-[11px] text-[var(--text-tertiary)] tabular-nums">
+            {numPages} pages
+          </span>
+        )}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7"
+          onClick={handleDownload}
+          disabled={!blobRef.current}
+          title="Download"
+        >
+          <Download className="h-3.5 w-3.5" />
+        </Button>
       </div>
 
-      {/* Content */}
-      <div className="flex-1 overflow-auto bg-[var(--surface-secondary)] relative flex justify-center">
+      {/* Content — scroll through all pages */}
+      <div className="flex-1 overflow-auto bg-[var(--surface-secondary)] relative">
         {loading && (
           <div className="absolute inset-0 flex items-center justify-center bg-[var(--surface-primary)]">
             <Loader2 className="h-5 w-5 animate-spin text-[var(--text-tertiary)]" />
@@ -170,16 +142,22 @@ export function PdfRenderer({ filePath }: PdfRendererProps) {
         )}
         {PdfComponents && pdfData && (
           <PdfComponents.Document
-            file={{ data: pdfData }}
+            file={{ data: new Uint8Array(pdfData) }}
             onLoadSuccess={onDocumentLoadSuccess}
+            onLoadError={(err: Error) => setError(err.message)}
             loading=""
           >
-            <PdfComponents.Page
-              pageNumber={currentPage}
-              width={undefined}
-              renderTextLayer={true}
-              renderAnnotationLayer={true}
-            />
+            <div className="flex flex-col items-center gap-4 py-4">
+              {Array.from({ length: numPages }, (_, i) => (
+                <PdfComponents.Page
+                  key={i + 1}
+                  pageNumber={i + 1}
+                  width={undefined}
+                  renderTextLayer={true}
+                  renderAnnotationLayer={true}
+                />
+              ))}
+            </div>
           </PdfComponents.Document>
         )}
       </div>

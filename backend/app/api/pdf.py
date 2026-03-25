@@ -21,26 +21,71 @@ from xhtml2pdf.default import DEFAULT_FONT
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Font discovery & registration (Windows system fonts via ReportLab API)
+# Font discovery & registration (cross-platform system fonts via ReportLab API)
 # ---------------------------------------------------------------------------
+
+import sys as _sys
 
 _WINDOWS_FONT_DIR = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
 
-# Each entry: (filename, is_ttc)
+# Each entry: (font_path, is_ttc)
 # TTC files (TrueType Collections) need subfontIndex=0
-_BODY_FONT_CANDIDATES: list[tuple[str, bool]] = [
-    ("msyh.ttc", True),
-    ("simhei.ttf", False),
-    ("simsun.ttc", True),
-    ("malgun.ttf", False),
-    ("arial.ttf", False),
-]
 
-_MONO_FONT_CANDIDATES: list[tuple[str, bool]] = [
-    ("consola.ttf", False),
-    ("cour.ttf", False),
-    ("lucon.ttf", False),
-]
+def _build_font_candidates() -> tuple[list[tuple[Path, bool]], list[tuple[Path, bool]]]:
+    """Build platform-specific font candidate lists."""
+    body: list[tuple[Path, bool]] = []
+    mono: list[tuple[Path, bool]] = []
+
+    if _sys.platform == "darwin":
+        # macOS CJK body fonts
+        body = [
+            (Path("/System/Library/Fonts/STHeiti Medium.ttc"), True),
+            (Path("/System/Library/Fonts/Supplemental/Songti.ttc"), True),
+            (Path("/System/Library/Fonts/STHeiti Light.ttc"), True),
+            (Path("/Library/Fonts/Arial Unicode.ttf"), False),
+            (Path("/System/Library/Fonts/Supplemental/Arial Unicode.ttf"), False),
+        ]
+        # macOS monospace fonts
+        mono = [
+            (Path("/System/Library/Fonts/Menlo.ttc"), True),
+            (Path("/System/Library/Fonts/Monaco.ttf"), False),
+            (Path("/System/Library/Fonts/Supplemental/Courier New.ttf"), False),
+        ]
+    elif _sys.platform == "win32":
+        # Windows CJK body fonts
+        body = [
+            (_WINDOWS_FONT_DIR / "msyh.ttc", True),
+            (_WINDOWS_FONT_DIR / "simhei.ttf", False),
+            (_WINDOWS_FONT_DIR / "simsun.ttc", True),
+            (_WINDOWS_FONT_DIR / "malgun.ttf", False),
+            (_WINDOWS_FONT_DIR / "arial.ttf", False),
+        ]
+        # Windows monospace fonts
+        mono = [
+            (_WINDOWS_FONT_DIR / "consola.ttf", False),
+            (_WINDOWS_FONT_DIR / "cour.ttf", False),
+            (_WINDOWS_FONT_DIR / "lucon.ttf", False),
+        ]
+    else:
+        # Linux CJK body fonts
+        _linux_font_dirs = [
+            Path("/usr/share/fonts"),
+            Path("/usr/local/share/fonts"),
+            Path(os.path.expanduser("~/.fonts")),
+        ]
+        for d in _linux_font_dirs:
+            for name in ("NotoSansCJK-Regular.ttc", "NotoSansSC-Regular.otf",
+                         "wqy-microhei.ttc", "DroidSansFallbackFull.ttf"):
+                for candidate in d.rglob(name):
+                    body.append((candidate, name.endswith(".ttc")))
+            for name in ("DejaVuSansMono.ttf", "NotoSansMono-Regular.ttf", "LiberationMono-Regular.ttf"):
+                for candidate in d.rglob(name):
+                    mono.append((candidate, False))
+
+    return body, mono
+
+
+_BODY_FONT_CANDIDATES, _MONO_FONT_CANDIDATES = _build_font_candidates()
 
 _BODY_FAMILY = "OpenYakBody"
 _BODY_CSS_NAME = "openyakbody"  # CSS font-family name (lowercase for xhtml2pdf)
@@ -90,8 +135,7 @@ def _register_fonts() -> None:
         return
 
     # Register body font (first available CJK-capable font)
-    for filename, is_ttc in _BODY_FONT_CANDIDATES:
-        font_path = _WINDOWS_FONT_DIR / filename
+    for font_path, is_ttc in _BODY_FONT_CANDIDATES:
         if font_path.exists() and _try_register_font(_BODY_FAMILY, _BODY_CSS_NAME, font_path, is_ttc):
             _body_font_family = _BODY_CSS_NAME
             log.info("PDF body font: %s from %s", _BODY_FAMILY, font_path)
@@ -100,8 +144,7 @@ def _register_fonts() -> None:
         log.warning("No CJK body font found — Chinese/Japanese/Korean text may not render correctly")
 
     # Register monospace font
-    for filename, is_ttc in _MONO_FONT_CANDIDATES:
-        font_path = _WINDOWS_FONT_DIR / filename
+    for font_path, is_ttc in _MONO_FONT_CANDIDATES:
         if font_path.exists() and _try_register_font(_MONO_FAMILY, _MONO_CSS_NAME, font_path, is_ttc):
             _mono_font_family = _MONO_CSS_NAME
             log.info("PDF mono font: %s from %s", _MONO_FAMILY, font_path)

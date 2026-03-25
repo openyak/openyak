@@ -186,8 +186,15 @@ export const useSettingsStore = create<SettingsStore>()(
 
 // Hydration tracking
 const useSettingsHasHydrated = () => {
-  const [hydrated, setHydrated] = useState(useSettingsStore.persist.hasHydrated());
+  const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
+    if (!useSettingsStore.persist) {
+      setHydrated(true);
+      return;
+    }
+    if (useSettingsStore.persist.hasHydrated()) {
+      setHydrated(true);
+    }
     const unsub = useSettingsStore.persist.onFinishHydration(() => setHydrated(true));
     return () => {
       unsub();

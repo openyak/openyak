@@ -137,7 +137,7 @@ function MobileLayoutInner({ children }: { children: React.ReactNode }) {
 
     const init = async () => {
       // Wait for Zustand persist hydration
-      if (!useSettingsStore.persist.hasHydrated()) {
+      if (useSettingsStore.persist && !useSettingsStore.persist.hasHydrated()) {
         await new Promise<void>((resolve) => {
           const unsub = useSettingsStore.persist.onFinishHydration(() => {
             unsub();

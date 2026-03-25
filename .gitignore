@@ -8,7 +8,8 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
-venv/
+venv*/
+.python-*/
 .pytest_cache/
 
 # === Environment & secrets ===
@@ -37,6 +38,9 @@ cowork/
 
 # === Ollama runtime binaries ===
 backend/ollama/
+
+# === Auto-copied vendor files ===
+frontend/public/pdf.worker.min.mjs
 
 # === Build artifacts ===
 dist/

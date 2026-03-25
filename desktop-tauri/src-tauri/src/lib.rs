@@ -86,9 +86,15 @@ pub fn run() {
 
             #[cfg(target_os = "macos")]
             {
+                // macOS: enable native traffic lights with overlay title bar.
+                // Config has decorations=false for Windows/Linux, so we override here.
+                if let Some(window) = app.get_webview_window("main") {
+                    use tauri::TitleBarStyle;
+                    let _ = window.set_decorations(true);
+                    let _ = window.set_title_bar_style(TitleBarStyle::Overlay);
+                }
+
                 // Warn users when launching directly from mounted DMG volume.
-                // Running from /Volumes is not recommended and can cause
-                // read-only filesystem issues for bundled resources.
                 if is_running_from_dmg_volume(app) {
                     app.dialog()
                         .message(
@@ -135,24 +141,22 @@ pub fn run() {
                 menu::handle_menu_event(app_handle, event.id().as_ref());
             });
 
-            // Keep "close to tray" + maximize-change listeners on Windows/Linux only.
-            // On macOS, avoid registering these handlers to prevent style-mask churn.
-            #[cfg(not(target_os = "macos"))]
+            // "Close to tray/dock" — hide window instead of quitting on all platforms.
             if let Some(window) = app.get_webview_window("main") {
                 let win = window.clone();
                 window.on_window_event(move |event| {
-                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                        api.prevent_close();
-                        let _ = win.hide();
-                    }
-                });
-
-                let win_clone = window.clone();
-                window.on_window_event(move |event| {
-                    if let tauri::WindowEvent::Resized(_) = event {
-                        if let Ok(maximized) = win_clone.is_maximized() {
-                            let _ = win_clone.emit("maximize-change", maximized);
+                    match event {
+                        tauri::WindowEvent::CloseRequested { api, .. } => {
+                            api.prevent_close();
+                            let _ = win.hide();
                         }
+                        #[cfg(not(target_os = "macos"))]
+                        tauri::WindowEvent::Resized(_) => {
+                            if let Ok(maximized) = win.is_maximized() {
+                                let _ = win.emit("maximize-change", maximized);
+                            }
+                        }
+                        _ => {}
                     }
                 });
             }
@@ -198,15 +202,26 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
-            if let tauri::RunEvent::ExitRequested { .. } = event {
-                // Gracefully stop backend on exit
-                let handle = app_handle.clone();
-                tauri::async_runtime::block_on(async {
-                    let state = handle.state::<BackendState>();
-                    if let Err(e) = state.stop().await {
-                        error!("Error stopping backend: {e}");
+            match event {
+                tauri::RunEvent::ExitRequested { .. } => {
+                    // Gracefully stop backend on exit
+                    let handle = app_handle.clone();
+                    tauri::async_runtime::block_on(async {
+                        let state = handle.state::<BackendState>();
+                        if let Err(e) = state.stop().await {
+                            error!("Error stopping backend: {e}");
+                        }
+                    });
+                }
+                #[cfg(target_os = "macos")]
+                tauri::RunEvent::Reopen { .. } => {
+                    // macOS: clicking Dock icon re-shows the hidden window
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
                     }
-                });
+                }
+                _ => {}
             }
         });
 }

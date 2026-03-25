@@ -55,57 +55,30 @@ export function TitleBar() {
   const sectionTitle = getSectionTitle(pathname ?? "");
 
   if (isMac) {
+    // macOS: native traffic lights via titleBarStyle="overlay".
+    // We only render a transparent draggable bar for the title text.
     return (
       <div
         data-tauri-drag-region
-        className="fixed top-0 left-0 right-0 z-50 flex items-center select-none"
+        className="fixed top-0 left-0 right-0 z-50 flex items-center select-none pointer-events-none"
         style={{
           height: TITLE_BAR_HEIGHT,
-          backgroundColor: "var(--surface-primary)",
-          borderBottom: "1px solid var(--border-primary)",
         }}
       >
-        {/* macOS traffic-light controls */}
-        <div className="w-[78px] shrink-0 h-full flex items-center justify-center">
-          <div className="flex items-center gap-2 pointer-events-auto">
-            <button
-              onClick={() => desktopAPI.close()}
-              aria-label="Close"
-              className="group relative h-3 w-3 rounded-full bg-[#ff5f57]
-                         shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.25)] hover:brightness-95 transition-all"
-            >
-              <X className="absolute left-1/2 top-1/2 h-[8px] w-[8px] -translate-x-1/2 -translate-y-1/2 text-black/65 opacity-0 group-hover:opacity-100 transition-opacity" />
-            </button>
-            <button
-              onClick={() => desktopAPI.minimize()}
-              aria-label="Minimize"
-              className="group relative h-3 w-3 rounded-full bg-[#febc2e]
-                         shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.25)] hover:brightness-95 transition-all"
-            >
-              <Minus className="absolute left-1/2 top-1/2 h-[8px] w-[8px] -translate-x-1/2 -translate-y-1/2 text-black/65 opacity-0 group-hover:opacity-100 transition-opacity" />
-            </button>
-            <button
-              onClick={() => desktopAPI.maximize()}
-              aria-label="Zoom"
-              className="group relative h-3 w-3 rounded-full bg-[#28c840]
-                         shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.25)] hover:brightness-95 transition-all"
-            >
-              <Plus className="absolute left-1/2 top-1/2 h-[8px] w-[8px] -translate-x-1/2 -translate-y-1/2 text-black/65 opacity-0 group-hover:opacity-100 transition-opacity" />
-            </button>
-          </div>
-        </div>
+        {/* Spacer for native traffic lights area */}
+        <div className="w-[78px] shrink-0" />
 
-        {/* Centered title, mac native style */}
+        {/* Centered title */}
         <div
           data-tauri-drag-region
-          className="flex-1 h-full flex items-center justify-center pointer-events-none"
+          className="flex-1 h-full flex items-center justify-center"
         >
           <span className="text-xs font-medium tracking-wide text-[var(--text-secondary)]">
             {sectionTitle}
           </span>
         </div>
 
-        {/* Symmetric spacer keeps title visually centered */}
+        {/* Symmetric spacer */}
         <div className="w-[78px] shrink-0" />
       </div>
     );

@@ -80,8 +80,15 @@ export const useAuthStore = create<AuthStore>()(
 
 // Hydration tracking
 const useAuthHasHydrated = () => {
-  const [hydrated, setHydrated] = useState(useAuthStore.persist.hasHydrated());
+  const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
+    if (!useAuthStore.persist) {
+      setHydrated(true);
+      return;
+    }
+    if (useAuthStore.persist.hasHydrated()) {
+      setHydrated(true);
+    }
     const unsub = useAuthStore.persist.onFinishHydration(() => setHydrated(true));
     return () => {
       unsub();

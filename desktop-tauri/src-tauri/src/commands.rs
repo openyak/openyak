@@ -34,10 +34,10 @@ pub fn window_maximize(window: WebviewWindow) -> Result<(), String> {
     }
 }
 
-/// Close the window (hides to tray on Windows/Linux).
+/// Close the window (hides to tray/dock on all platforms).
 #[tauri::command]
 pub fn window_close(window: WebviewWindow) -> Result<(), String> {
-    window.close().map_err(|e| e.to_string())
+    window.hide().map_err(|e| e.to_string())
 }
 
 /// Check if window is maximized.
