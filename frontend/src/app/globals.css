@@ -147,22 +147,79 @@
 
   /* ─── Scrollbar Styling ─── */
 
-  ::-webkit-scrollbar {
+  /* Overlay scrollbar (Chromium/Tauri): does not take layout width */
+  .scrollbar-auto::-webkit-scrollbar {
     width: 6px;
     height: 6px;
   }
 
-  ::-webkit-scrollbar-track {
+  .scrollbar-auto::-webkit-scrollbar-track {
     background: transparent;
   }
 
-  ::-webkit-scrollbar-thumb {
-    background: var(--border-heavy);
+  /* Default: scrollbar thumb is invisible with smooth fade-in/out transition */
+  .scrollbar-auto::-webkit-scrollbar-thumb {
+    background: transparent;
     border-radius: 3px;
+    transition: background 0.4s ease;
   }
 
-  ::-webkit-scrollbar-thumb:hover {
-    background: var(--text-tertiary);
+  /* Light theme: thumb visible when scrolling or when hovering over scrollable element */
+  .scrollbar-auto:hover::-webkit-scrollbar-thumb,
+  .scrollbar-auto:focus-within::-webkit-scrollbar-thumb,
+  .scrollbar-auto.scrolling::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.18);
+  }
+
+  .scrollbar-auto:hover::-webkit-scrollbar-thumb:hover,
+  .scrollbar-auto:focus-within::-webkit-scrollbar-thumb:hover,
+  .scrollbar-auto.scrolling::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.35);
+  }
+
+  /* Dark theme: scrollbar colors */
+  .dark .scrollbar-auto:hover::-webkit-scrollbar-thumb,
+  .dark .scrollbar-auto:focus-within::-webkit-scrollbar-thumb,
+  .dark .scrollbar-auto.scrolling::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+  }
+
+  .dark .scrollbar-auto:hover::-webkit-scrollbar-thumb:hover,
+  .dark .scrollbar-auto:focus-within::-webkit-scrollbar-thumb:hover,
+  .dark .scrollbar-auto.scrolling::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.35);
+  }
+
+  /* Firefox: thin semi-transparent scrollbar by default (invisible) */
+  .scrollbar-auto {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+
+  /* Firefox: show scrollbar when element has .scrolling class */
+  .scrollbar-auto:hover,
+  .scrollbar-auto:focus-within,
+  .scrollbar-auto.scrolling {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0, 0, 0, 0.18) transparent;
+  }
+
+  .dark .scrollbar-auto:hover,
+  .dark .scrollbar-auto:focus-within,
+  .dark .scrollbar-auto.scrolling {
+    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+  }
+
+  /* Mobile: hide scrollbar entirely on touch devices */
+  @media (pointer: coarse) {
+    .scrollbar-auto::-webkit-scrollbar {
+      display: none;
+    }
+
+    .scrollbar-auto {
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+    }
   }
 
   /* ─── Focus Ring (Accessibility) ─── */

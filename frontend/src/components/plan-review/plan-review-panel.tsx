@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { X, ClipboardList, FileCode2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/sheet";
 import * as VisuallyHidden from "@radix-ui/react-visually-hidden";
 import { usePlanReviewStore } from "@/stores/plan-review-store";
+import { useScrollbarActivity } from "@/hooks/use-scrollbar-activity";
 
 function useIsDesktop() {
   const [isDesktop, setIsDesktop] = useState(false);
@@ -32,6 +33,9 @@ function useIsDesktop() {
 function PlanReviewContent() {
   const { t } = useTranslation("chat");
   const planData = usePlanReviewStore((s) => s.planData);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useScrollbarActivity(scrollRef);
 
   if (!planData) return null;
 
@@ -66,7 +70,7 @@ function PlanReviewContent() {
       </div>
 
       {/* Plan content */}
-      <div className="flex-1 overflow-y-auto px-5 pb-4">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 pb-4 scrollbar-auto">
         <div className="prose prose-sm prose-invert max-w-none text-[var(--text-primary)] [&>h1]:text-lg [&>h1]:font-semibold [&>h2]:text-base [&>h2]:font-semibold [&>h3]:text-sm [&>h3]:font-semibold [&>p]:text-sm [&>p]:leading-relaxed [&>ul]:text-sm [&>ol]:text-sm [&_li]:leading-relaxed [&_code]:text-xs [&_pre]:text-xs [&_pre]:bg-[var(--surface-secondary)] [&_pre]:rounded-lg [&_pre]:p-3 [&_strong]:text-[var(--text-primary)]">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>
             {planData.plan}

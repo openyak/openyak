@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   X,
   CheckCircle2,
@@ -34,6 +34,7 @@ import { useActivityStore, computeDuration, type ChainItem } from "@/stores/acti
 import { ACTIVITY_PANEL_WIDTH } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { extractSourcesFromTool } from "@/lib/sources";
+import { useScrollbarActivity } from "@/hooks/use-scrollbar-activity";
 import type { ToolPart, StepFinishPart } from "@/types/message";
 
 // -- Helpers --
@@ -326,6 +327,9 @@ function ActivityPanelContent() {
   const { t } = useTranslation("chat");
   const activeData = useActivityStore((s) => s.activeData);
   const close = useActivityStore((s) => s.close);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useScrollbarActivity(scrollRef);
 
   const timelineItems = useMemo(
     () => (activeData?.chain ? buildTimelineItems(activeData.chain) : []),
@@ -377,7 +381,7 @@ function ActivityPanelContent() {
       </div>
 
       {/* Scrollable chain timeline */}
-      <div className="flex-1 overflow-y-auto px-4 py-4">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 scrollbar-auto">
         <div className="relative space-y-4">
           {/* Vertical connector line */}
           {timelineItems.length > 0 && (

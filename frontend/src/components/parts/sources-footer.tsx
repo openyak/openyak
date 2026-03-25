@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ChevronUp } from "lucide-react";
+import { useScrollbarActivity } from "@/hooks/use-scrollbar-activity";
 import { cn } from "@/lib/utils";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import type { Source } from "@/lib/sources";
@@ -12,6 +13,9 @@ interface SourcesFooterProps {
 
 export function SourcesFooter({ sources }: SourcesFooterProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const popoverContentRef = useRef<HTMLDivElement>(null);
+
+  useScrollbarActivity(popoverContentRef);
 
   if (sources.length === 0) return null;
 
@@ -41,11 +45,12 @@ export function SourcesFooter({ sources }: SourcesFooterProps) {
       </PopoverTrigger>
 
       <PopoverContent
+        ref={popoverContentRef}
         side="top"
         align="start"
         sideOffset={8}
         collisionPadding={16}
-        className="w-[320px] max-h-[300px] overflow-y-auto p-2 space-y-0.5"
+        className="w-[320px] max-h-[300px] overflow-y-auto p-2 space-y-0.5 scrollbar-auto"
       >
         {sources.map((source) => (
           <a

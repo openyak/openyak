@@ -230,7 +230,7 @@ export function MessageList({
     // to avoid a jarring skeleton → content transition during page navigation
     if (isGenerating || !!streamId) {
       return (
-        <div ref={scrollRef} className="relative flex-1 overflow-y-auto overscroll-contain">
+        <div ref={scrollRef} className="relative flex-1 overflow-y-auto overscroll-contain scrollbar-auto">
           {/* Show optimistic user bubble during loading so it doesn't flash
               away between navigation and message fetch completion */}
           {pendingUserText && (
@@ -298,7 +298,7 @@ export function MessageList({
 
   return (
     <div className="relative flex-1 overflow-hidden">
-      <div ref={scrollRef} className="h-full overflow-y-auto overscroll-contain">
+      <div ref={scrollRef} className="h-full overflow-y-auto overscroll-contain scrollbar-auto">
         {/* Top sentinel for reverse infinite scroll */}
         <div ref={topSentinelRef} className="h-px" />
         {isFetchingPreviousPage && (

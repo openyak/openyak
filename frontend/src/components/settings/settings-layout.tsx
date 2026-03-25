@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -12,6 +12,7 @@ import { GeneralTab } from "@/components/settings/general-tab";
 import { ProvidersTab } from "@/components/settings/providers-tab";
 import { BillingTab } from "@/components/settings/billing-tab";
 import { UsageSkeleton } from "@/components/settings/usage-tab";
+import { useScrollbarActivity } from "@/hooks/use-scrollbar-activity";
 
 const UsageTab = dynamic(
   () => import("@/components/settings/usage-tab").then((mod) => ({ default: mod.UsageTab })),
@@ -32,6 +33,9 @@ export default function SettingsPageClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const activeTab = (searchParams.get("tab") as TabId) || "general";
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useScrollbarActivity(scrollRef);
 
   const navigateTab = useCallback(
     (tab: string) => {
@@ -41,7 +45,7 @@ export default function SettingsPageClient() {
   );
 
   return (
-    <div className="flex-1 overflow-y-auto">
+    <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-auto">
       <div className="mx-auto max-w-5xl px-4 py-8">
         {/* Header */}
         <div className="flex items-center gap-3 mb-8">

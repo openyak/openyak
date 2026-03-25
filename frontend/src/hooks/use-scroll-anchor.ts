@@ -54,10 +54,18 @@ export function useScrollAnchor() {
     setIsAtBottom(initial);
 
     // --- wheel (desktop) ---
+    let idleTimeoutId = 0;
     const handleWheel = (e: WheelEvent) => {
       if (e.deltaY < 0) {
         userScrolledRef.current = true;
       }
+      // Show scrollbar on wheel event
+      el.classList.add("scrolling");
+      clearTimeout(idleTimeoutId);
+      // Hide after 1.5s of inactivity
+      idleTimeoutId = window.setTimeout(() => {
+        el.classList.remove("scrolling");
+      }, 1500);
     };
 
     // --- touch (mobile) ---
@@ -78,6 +86,7 @@ export function useScrollAnchor() {
     // MutationObserver auto-scroll.
     let scrollRafId = 0;
     let lastScrollTop = el.scrollTop;
+    let scrollIdleTimeoutId = 0;
     const handleScroll = () => {
       if (scrollRafId) return;
       scrollRafId = requestAnimationFrame(() => {
@@ -85,6 +94,14 @@ export function useScrollAnchor() {
         const currentScrollTop = el.scrollTop;
         const scrolledDown = currentScrollTop > lastScrollTop;
         lastScrollTop = currentScrollTop;
+
+        // Show scrollbar on scroll activity
+        el.classList.add("scrolling");
+        clearTimeout(scrollIdleTimeoutId);
+        // Hide after 1.5s of inactivity
+        scrollIdleTimeoutId = window.setTimeout(() => {
+          el.classList.remove("scrolling");
+        }, 1500);
 
         const atBottom = checkAtBottom();
         updateIsAtBottom(atBottom);
@@ -149,6 +166,9 @@ export function useScrollAnchor() {
       el.removeEventListener("scroll", handleScroll);
       if (scrollRafId) cancelAnimationFrame(scrollRafId);
       if (mutationRafId) cancelAnimationFrame(mutationRafId);
+      clearTimeout(idleTimeoutId);
+      clearTimeout(scrollIdleTimeoutId);
+      el.classList.remove("scrolling");
       observer.disconnect();
     };
   }, [updateIsAtBottom]);
