@@ -84,8 +84,24 @@ pub fn create_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     )?;
 
     // Help menu
+    let check_updates = MenuItem::with_id(
+        app,
+        "menu_check_updates",
+        "Check for Updates...",
+        true,
+        None::<&str>,
+    )?;
     let about = PredefinedMenuItem::about(app, Some("About OpenYak"), None)?;
-    let help_menu = Submenu::with_items(app, "Help", true, &[&about])?;
+    let help_menu = Submenu::with_items(
+        app,
+        "Help",
+        true,
+        &[
+            &check_updates,
+            &PredefinedMenuItem::separator(app)?,
+            &about,
+        ],
+    )?;
 
     let menu = Menu::with_items(
         app,
@@ -120,6 +136,9 @@ pub fn handle_menu_event(app: &AppHandle, event_id: &str) {
             } else {
                 window.open_devtools();
             }
+        }
+        "menu_check_updates" => {
+            let _ = window.emit("check-for-updates", ());
         }
         _ => {}
     }

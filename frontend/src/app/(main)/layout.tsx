@@ -17,6 +17,7 @@ import { ConnectionStatus } from "@/components/layout/connection-status";
 import { RouteProgressBar } from "@/components/layout/route-progress-bar";
 import { SplashScreen } from "@/components/layout/splash-screen";
 import { TitleBar } from "@/components/desktop/title-bar";
+import { UpdateBanner } from "@/components/desktop/update-banner";
 import { UpgradePrompt } from "@/components/billing/upgrade-prompt";
 import { OnboardingScreen } from "@/components/onboarding/onboarding-screen";
 import { Button } from "@/components/ui/button";
@@ -287,6 +288,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
         transition={{ type: "spring", damping: 30, stiffness: 300 }}
       >
         <ConnectionStatus />
+        <UpdateBanner />
         {children}
       </motion.main>
 

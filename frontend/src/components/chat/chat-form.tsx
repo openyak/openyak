@@ -237,6 +237,9 @@ export function ChatForm({ isGenerating, onSend, onStop, className, sessionId, d
       const files = attachments;
       setInput("");
       setAttachments([]);
+      // Clear refs immediately so unmount cleanup won't save stale draft
+      inputRef.current = "";
+      attachmentsRef.current = [];
       setMentionActive(false);
       if (ref.current) {
         ref.current.style.height = "auto";

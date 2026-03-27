@@ -120,7 +120,7 @@
   "remoteStep2": "用手机扫描二维码",
   "remoteStep3": "或在手机浏览器中打开隧道链接",
   "about": "关于",
-  "aboutVersion": "OpenYak v0.0.1",
+  "aboutVersion": "OpenYak v{{version}}",
   "aboutDesc": "你的本地 AI 助手 — 隐私、强大、个性化。",
   "aboutCopyright": "W Aixs Inc. © 2024–2026",
   "selectWorkspaceDir": "选择工作目录",
@@ -212,5 +212,12 @@
   "fieldLabel_db_path": "数据库路径（可选）",
   "fieldPlaceholder_discord_token": "粘贴 Discord 机器人令牌",
   "fieldPlaceholder_feishu_app_secret": "输入应用密钥",
-  "fieldPlaceholder_line_token": "粘贴 LINE 频道访问令牌"
+  "fieldPlaceholder_line_token": "粘贴 LINE 频道访问令牌",
+  "updateAvailable": "有新版本",
+  "updateAvailableDesc": "版本 {{version}} 已准备好安装。",
+  "updateNow": "立即更新",
+  "updateLater": "稍后",
+  "updateDownloading": "正在下载更新...",
+  "checkForUpdates": "检查更新",
+  "upToDate": "已是最新版本！"
 }

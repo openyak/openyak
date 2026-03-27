@@ -120,7 +120,7 @@
   "remoteStep2": "Scan the QR code with your phone camera",
   "remoteStep3": "Or open the tunnel URL in your phone browser",
   "about": "About",
-  "aboutVersion": "OpenYak v0.0.1",
+  "aboutVersion": "OpenYak v{{version}}",
   "aboutDesc": "Your local AI assistant — private, powerful, personal.",
   "aboutCopyright": "W Aixs Inc. © 2024–2026",
   "selectWorkspaceDir": "Select workspace directory",
@@ -212,5 +212,12 @@
   "fieldLabel_db_path": "Database Path (optional)",
   "fieldPlaceholder_discord_token": "Paste Discord bot token",
   "fieldPlaceholder_feishu_app_secret": "Enter app secret",
-  "fieldPlaceholder_line_token": "Paste LINE channel access token"
+  "fieldPlaceholder_line_token": "Paste LINE channel access token",
+  "updateAvailable": "Update Available",
+  "updateAvailableDesc": "Version {{version}} is ready to install.",
+  "updateNow": "Update Now",
+  "updateLater": "Later",
+  "updateDownloading": "Downloading update...",
+  "checkForUpdates": "Check for Updates",
+  "upToDate": "You're up to date!"
 }

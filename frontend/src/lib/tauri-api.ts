@@ -24,6 +24,7 @@ export interface DesktopAPI {
   onBackendCrashLog: (callback: (log: string) => void) => () => void;
   onNavigate: (callback: (path: string) => void) => () => void;
   onToggleSidebar: (callback: () => void) => () => void;
+  onCheckForUpdates: (callback: () => void) => () => void;
 }
 
 /** Helper to turn a Tauri `listen` promise into a sync cleanup function. */
@@ -68,4 +69,5 @@ export const desktopAPI: DesktopAPI = {
     listenSync<string>("backend-crash-log", callback),
   onNavigate: (callback) => listenSync<string>("navigate", callback),
   onToggleSidebar: (callback) => listenSync<void>("toggle-sidebar", callback),
+  onCheckForUpdates: (callback) => listenSync<void>("check-for-updates", callback),
 };

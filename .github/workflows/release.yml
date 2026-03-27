@@ -1,0 +1,157 @@
+name: Release Desktop
+
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+  TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: cd desktop/frontend && npm ci --legacy-peer-deps
+
+      - name: Build backend (PyInstaller)
+        run: |
+          cd desktop/backend
+          pip install -r requirements.txt pyinstaller
+          pyinstaller openyak.spec --noconfirm
+
+      - name: Build frontend
+        run: cd desktop && npm run build:frontend
+
+      - name: Build Tauri
+        run: cd desktop/desktop-tauri && npx @tauri-apps/cli build
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-bundle
+          path: |
+            desktop/desktop-tauri/src-tauri/target/release/bundle/nsis/*.exe
+            desktop/desktop-tauri/src-tauri/target/release/bundle/nsis/*.nsis.zip
+            desktop/desktop-tauri/src-tauri/target/release/bundle/nsis/*.nsis.zip.sig
+
+  build-macos:
+    runs-on: macos-latest
+    env:
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Install frontend dependencies
+        run: cd desktop/frontend && npm ci --legacy-peer-deps
+
+      - name: Build backend (PyInstaller)
+        run: |
+          cd desktop/backend
+          pip install -r requirements.txt pyinstaller
+          pyinstaller openyak.spec --noconfirm
+
+      - name: Build frontend
+        run: cd desktop && npm run build:frontend
+
+      - name: Build Tauri (aarch64)
+        run: cd desktop/desktop-tauri && npx @tauri-apps/cli build --target aarch64-apple-darwin
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-bundle
+          path: |
+            desktop/desktop-tauri/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+            desktop/desktop-tauri/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz
+            desktop/desktop-tauri/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
+
+  publish:
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: |
+            artifacts/windows-bundle/**/*
+            artifacts/macos-bundle/**/*
+
+      - name: Generate update manifest
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+          REPO="${GITHUB_REPOSITORY}"
+
+          # Read signatures
+          WIN_SIG=$(cat artifacts/windows-bundle/*.nsis.zip.sig 2>/dev/null || echo "")
+          MAC_SIG=$(cat artifacts/macos-bundle/*.app.tar.gz.sig 2>/dev/null || echo "")
+
+          # Find artifact filenames
+          WIN_ZIP=$(basename artifacts/windows-bundle/*.nsis.zip 2>/dev/null || echo "")
+          MAC_TAR=$(basename artifacts/macos-bundle/*.app.tar.gz 2>/dev/null | head -1 || echo "")
+
+          cat > latest.json <<MANIFEST
+          {
+            "version": "${VERSION}",
+            "notes": "Release ${TAG}",
+            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "platforms": {
+              "windows-x86_64": {
+                "signature": "${WIN_SIG}",
+                "url": "https://github.com/${REPO}/releases/download/${TAG}/${WIN_ZIP}"
+              },
+              "darwin-aarch64": {
+                "signature": "${MAC_SIG}",
+                "url": "https://github.com/${REPO}/releases/download/${TAG}/${MAC_TAR}"
+              }
+            }
+          }
+          MANIFEST
+
+          echo "Generated latest.json:"
+          cat latest.json
+
+      - name: Upload manifest as release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: latest.json

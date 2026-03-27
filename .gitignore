@@ -55,6 +55,7 @@ build/
 out/
 desktop/release/
 desktop-tauri/src-tauri/target/
+desktop-tauri/src-tauri/gen/schemas/
 
 # === Certificates & keys ===
 *.pem
