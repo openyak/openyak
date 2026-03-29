@@ -96,8 +96,15 @@ export function isPreviewableFile(filePath: string): boolean {
  * non-previewable formats like .exe, .zip, etc.
  */
 export function looksLikeFilePath(text: string): boolean {
+  // Reject if contains spaces (likely prose, not a file path) — unless the path uses separators
+  const hasPathSep = /[/\\]/.test(text);
+  if (!hasPathSep && /\s/.test(text)) return false;
   // Must end with a file extension
   if (!/\.\w{1,10}$/.test(text)) return false;
-  // Must contain a path separator (/ or \)
-  return /[/\\]/.test(text);
+  // Accept if it has a path separator (full path like /home/user/file.txt)
+  if (hasPathSep) return true;
+  // Accept bare filenames: must start with optional dot + word chars, have at least one dot
+  // Matches: report.txt, .env, package.json, styles.module.css
+  // Rejects: single words without extension, sentences, etc.
+  return /^\.?\w[\w.-]*\.\w{1,10}$/.test(text);
 }
