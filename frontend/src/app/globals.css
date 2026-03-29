@@ -423,16 +423,33 @@ pre code {
   margin-bottom: 0.25em;
 }
 
+.prose strong {
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.prose em {
+  font-style: italic;
+  color: var(--text-secondary);
+}
+
 .prose h1, .prose h2, .prose h3, .prose h4 {
-  font-weight: 600;
+  font-weight: 650;
   letter-spacing: -0.02em;
-  margin-top: 1.5em;
-  margin-bottom: 0.5em;
+  margin-top: 1.75em;
+  margin-bottom: 0.6em;
+  color: var(--text-primary);
 }
 
 .prose h1 { font-size: 1.5em; }
-.prose h2 { font-size: 1.25em; }
-.prose h3 { font-size: 1.1em; }
+
+.prose h2 {
+  font-size: 1.2em;
+  padding-bottom: 0.25em;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.prose h3 { font-size: 1.05em; }
 
 .prose pre {
   /* Background and styling handled by code block component */
