@@ -9,6 +9,9 @@ import logging
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
+from sqlalchemy import delete as sa_delete
+
+from app.models.todo import Todo
 from app.schemas.chat import AbortRequest, EditAndResendRequest, PromptRequest, PromptResponse, RespondRequest
 from app.session.manager import delete_messages_after, update_message_file_parts, update_message_text
 from app.session.processor import run_generation
@@ -108,6 +111,8 @@ async def edit_and_resend(request: Request, body: EditAndResendRequest) -> Promp
                 db, body.message_id, body.session_id, body.attachments or []
             )
             await delete_messages_after(db, body.session_id, body.message_id)
+            # Clear stale todos so re-fetches return empty until new generation populates them
+            await db.execute(sa_delete(Todo).where(Todo.session_id == body.session_id))
 
     job = sm.create_job(stream_id=stream_id, session_id=body.session_id)
 

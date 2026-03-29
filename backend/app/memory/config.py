@@ -1,4 +1,4 @@
-"""Memory system configuration."""
+"""Workspace memory system configuration."""
 
 from __future__ import annotations
 
@@ -6,14 +6,11 @@ from pydantic import BaseModel, Field
 
 
 class MemoryConfig(BaseModel):
-    """Configuration for the long-term memory system."""
+    """Configuration for the workspace-scoped memory system."""
 
     enabled: bool = True
-    debounce_seconds: int = Field(default=30, ge=5, le=300)
-    max_facts: int = Field(default=100, ge=10, le=500)
-    fact_confidence_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
-    injection_enabled: bool = True
-    max_injection_tokens: int = Field(default=1500, ge=100, le=8000)
+    max_lines: int = Field(default=200, ge=10, le=500)
+    debounce_seconds: int = Field(default=10, ge=2, le=120)
 
 
 # Module-level default config

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from app.tool.base import ToolDefinition, ToolResult
+from app.tool.builtin.glob_utils import wc_glob_files
 from app.tool.context import ToolContext
 from app.tool.workspace import WorkspaceViolation, resolve_and_validate
 
@@ -103,7 +104,7 @@ class GrepTool(ToolDefinition):
             files = [base]
         elif base.is_dir():
             if file_glob:
-                files = sorted(base.rglob(file_glob))
+                files = sorted(wc_glob_files(base, file_glob, recursive=True))
             else:
                 files = sorted(base.rglob("*"))
             files = [f for f in files if f.is_file()]

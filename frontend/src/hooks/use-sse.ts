@@ -263,7 +263,7 @@ export function useSSE(streamId: string | null) {
         }
 
         // Refresh workspace files from backend after file-modifying tools
-        if (data.tool && ["write", "edit", "bash"].includes(data.tool)) {
+        if (data.tool && ["write", "edit", "bash", "artifact"].includes(data.tool)) {
           const sid = store.getState().sessionId;
           if (sid) {
             api.get<{ files: Array<{ name: string; path: string; type: string }> }>(

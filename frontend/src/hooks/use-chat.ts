@@ -230,6 +230,10 @@ export function useChat(currentSessionId?: string) {
 
         chatState.startGeneration(res.stream_id, res.session_id);
 
+        // Reset workspace sidebar — old progress/files are stale after resend
+        useWorkspaceStore.getState().setTodos([]);
+        useWorkspaceStore.getState().setWorkspaceFiles([]);
+
         // Optimistically trim cached messages: the backend already deleted
         // everything after the edited message and updated its text.
         const trimmed = newText.trim();

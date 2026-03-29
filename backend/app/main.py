@@ -71,6 +71,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Ensure all models are registered with Base.metadata before create_all
     from app.memory import models as _memory_models  # noqa: F401 — registers MemoryFact, MemoryContext
+    from app.memory import workspace_memory_model as _ws_memory_models  # noqa: F401 — registers WorkspaceMemory
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -341,12 +342,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     openclaw_manager = OpenClawManager(data_dir=data_dir)
     app.state.openclaw_manager = openclaw_manager
 
-    # Long-term memory queue (async, debounced extraction)
-    from app.memory.queue import MemoryUpdateQueue, set_memory_queue
+    # Workspace memory queue (async, debounced refresh)
+    from app.memory.workspace_memory_queue import (
+        WorkspaceMemoryUpdateQueue,
+        set_workspace_memory_queue,
+    )
+    from app.memory.config import get_memory_config as _get_mem_cfg
 
-    memory_queue = MemoryUpdateQueue(session_factory, registry)
-    set_memory_queue(memory_queue)
-    app.state.memory_queue = memory_queue
+    _mem_cfg = _get_mem_cfg()
+    ws_memory_queue = WorkspaceMemoryUpdateQueue(
+        session_factory,
+        registry,
+        debounce_seconds=_mem_cfg.debounce_seconds,
+    )
+    set_workspace_memory_queue(ws_memory_queue)
+    app.state.ws_memory_queue = ws_memory_queue
 
     yield
 
@@ -413,7 +423,6 @@ def _register_builtin_tools(
     from app.tool.builtin.glob_tool import GlobTool
     from app.tool.builtin.grep import GrepTool
     from app.tool.builtin.invalid import InvalidTool
-    from app.tool.builtin.memory import MemoryTool
     from app.tool.builtin.plan import PlanTool
     from app.tool.builtin.question import QuestionTool
     from app.tool.builtin.submit_plan import SubmitPlanTool
@@ -428,7 +437,7 @@ def _register_builtin_tools(
     for tool_cls in [
         ReadTool, WriteTool, EditTool, ApplyPatchTool,
         BashTool, CodeExecuteTool,
-        GlobTool, GrepTool, QuestionTool, TodoTool, MemoryTool,
+        GlobTool, GrepTool, QuestionTool, TodoTool,
         TaskTool, WebFetchTool, WebSearchTool, InvalidTool,
         PlanTool, SubmitPlanTool, ArtifactTool,
     ]:

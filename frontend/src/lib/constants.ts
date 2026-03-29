@@ -240,6 +240,12 @@ export const API = {
     CONTEXTS: "/api/memory/contexts",
     CONFIG: "/api/memory/config",
   },
+  WORKSPACE_MEMORY: {
+    BASE: "/api/workspace-memory",
+    LIST: "/api/workspace-memory/list",
+    REFRESH: "/api/workspace-memory/refresh",
+    EXPORT: "/api/workspace-memory/export",
+  },
   HEALTH: "/health",
   REMOTE: {
     ENABLE: "/api/remote/enable",
@@ -288,6 +294,9 @@ export const queryKeys = {
     templates: ["automations", "templates"] as const,
   },
   memory: ["memory"] as const,
+  workspaceMemory: (workspace: string) =>
+    ["workspaceMemory", workspace] as const,
+  workspaceMemoryList: ["workspaceMemoryList"] as const,
   indexStatus: (workspace: string) => ["indexStatus", workspace] as const,
 } as const;
 

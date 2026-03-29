@@ -21,6 +21,8 @@ interface WorkspaceStore {
   todos: WorkspaceTodo[];
   workspaceFiles: WorkspaceFile[];
   scratchpadContent: string;
+  /** Current session's workspace directory (set by ChatView on session load). */
+  activeWorkspacePath: string | null;
 
   toggle: () => void;
   open: () => void;
@@ -31,6 +33,7 @@ interface WorkspaceStore {
   addWorkspaceFile: (file: WorkspaceFile) => void;
   setWorkspaceFiles: (files: WorkspaceFile[]) => void;
   setScratchpadContent: (content: string) => void;
+  setActiveWorkspacePath: (path: string | null) => void;
   resetForSession: () => void;
 }
 
@@ -40,6 +43,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   todos: [],
   workspaceFiles: [],
   scratchpadContent: "",
+  activeWorkspacePath: null,
 
   toggle: () => set((s) => ({ isOpen: !s.isOpen })),
   open: () => set({ isOpen: true }),
@@ -71,6 +75,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
 
   setWorkspaceFiles: (files) => set({ workspaceFiles: files }),
   setScratchpadContent: (content) => set({ scratchpadContent: content }),
+  setActiveWorkspacePath: (path) => set({ activeWorkspacePath: path && path !== "." ? path : null }),
 
   resetForSession: () =>
     set({
@@ -78,5 +83,6 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       workspaceFiles: [],
       scratchpadContent: "",
       collapsedSections: {},
+      activeWorkspacePath: null,
     }),
 }));

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from app.tool.base import ToolDefinition, ToolResult
+from app.tool.builtin.glob_utils import wc_glob_files
 from app.tool.context import ToolContext
 from app.tool.workspace import WorkspaceViolation, resolve_and_validate
 
@@ -59,7 +60,7 @@ class GlobTool(ToolDefinition):
             return ToolResult(error=f"Directory not found: {search_dir}")
 
         try:
-            matches = list(base.glob(pattern))
+            matches = wc_glob_files(base, pattern)
         except ValueError as e:
             return ToolResult(error=f"Invalid glob pattern: {e}")
 

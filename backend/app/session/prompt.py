@@ -99,6 +99,7 @@ class SessionPrompt:
         self.workspace: str | None = None
         self.skill_names: list[str] = []
         self.fts_status: dict[str, Any] | None = None
+        self.workspace_memory_section: str | None = None
         self.system_prompt: str = ""
         self.merged_permissions: list = []
         self.preset_permissions: list = []
@@ -288,14 +289,16 @@ class SessionPrompt:
             except Exception as e:
                 logger.warning("FTS: setup failed for session %s: %s", self.job.session_id, e)
 
-        # --- Load long-term memory for system prompt ---
-        memory_section = None
-        try:
-            from app.memory.injection import build_memory_section
+        # --- Load workspace-scoped memory for system prompt ---
+        if self.workspace and self.workspace != ".":
+            try:
+                from app.memory.injection import build_workspace_memory_section
 
-            memory_section = await build_memory_section(self.session_factory)
-        except Exception:
-            logger.debug("Memory injection skipped", exc_info=True)
+                self.workspace_memory_section = await build_workspace_memory_section(
+                    self.session_factory, self.workspace
+                )
+            except Exception:
+                logger.debug("Workspace memory injection skipped", exc_info=True)
 
         self.system_prompt = build_system_prompt(
             self.agent,
@@ -303,7 +306,7 @@ class SessionPrompt:
             skill_names=self.skill_names if self.skill_names else None,
             workspace=self.workspace,
             fts_status=self.fts_status,
-            memory_section=memory_section,
+            workspace_memory_section=self.workspace_memory_section,
         )
 
         # --- 5. Merge permission rulesets (global → agent → presets → session) ---
@@ -482,28 +485,30 @@ class SessionPrompt:
 
             # Handle processor result
             if result == "compact":
-                # Extract memory BEFORE compaction so important info from
-                # messages about to be pruned/summarized is preserved in
-                # long-term memory.  Uses the session's current model_id.
-                try:
-                    from app.memory.queue import get_memory_queue
+                # Queue workspace memory BEFORE compaction so important info
+                # from messages about to be pruned is preserved in memory.
+                if self.workspace and self.workspace != ".":
+                    try:
+                        from app.memory.workspace_memory_queue import get_workspace_memory_queue
 
-                    _mq = get_memory_queue()
-                    if _mq is not None:
-                        async with self.session_factory() as db:
-                            async with db.begin():
-                                _pre_msgs = await get_message_history_for_llm(
-                                    db, self.job.session_id
-                                )
-                        _mq.add(
-                            self.job.session_id,
-                            _pre_msgs,
-                            model_id=self.model_id,
+                        _ws_mq = get_workspace_memory_queue()
+                        if _ws_mq is not None:
+                            async with self.session_factory() as db:
+                                async with db.begin():
+                                    _pre_msgs = await get_message_history_for_llm(
+                                        db, self.job.session_id
+                                    )
+                            _ws_mq.add(
+                                self.job.session_id,
+                                self.workspace,
+                                _pre_msgs,
+                                model_id=self.model_id,
+                            )
+                    except Exception:
+                        logger.debug(
+                            "Pre-compaction workspace memory queue failed",
+                            exc_info=True,
                         )
-                except Exception:
-                    logger.debug(
-                        "Pre-compaction memory queue failed", exc_info=True
-                    )
 
                 await run_compaction(
                     self.job.session_id,
@@ -684,23 +689,30 @@ class SessionPrompt:
                         "Failed to persist title for %s", self.job.session_id
                     )
 
-        # Queue conversation for async memory extraction
-        if not self.job.abort_event.is_set():
+        # Queue conversation for workspace memory refresh
+        if not self.job.abort_event.is_set() and self.workspace and self.workspace != ".":
             try:
-                from app.memory.queue import get_memory_queue
+                from app.memory.workspace_memory_queue import get_workspace_memory_queue
                 from app.session.manager import get_message_history_for_llm as _get_hist
 
-                queue = get_memory_queue()
-                if queue is None:
-                    logger.warning("Memory: queue not initialized, skipping extraction")
-                else:
+                ws_queue = get_workspace_memory_queue()
+                if ws_queue is not None:
                     async with self.session_factory() as db:
                         async with db.begin():
                             _msgs = await _get_hist(db, self.job.session_id)
-                    queue.add(self.job.session_id, _msgs, model_id=self.model_id)
-                    logger.info("Memory: queued session %s for extraction (%d messages)", self.job.session_id, len(_msgs))
+                    ws_queue.add(
+                        self.job.session_id,
+                        self.workspace,
+                        _msgs,
+                        model_id=self.model_id,
+                    )
+                    logger.info(
+                        "Workspace memory: queued %s for refresh (%d messages)",
+                        self.workspace,
+                        len(_msgs),
+                    )
             except Exception:
-                logger.warning("Memory queue submission failed", exc_info=True)
+                logger.warning("Workspace memory queue submission failed", exc_info=True)
 
         # Publish DONE to unlock the frontend UI.
         self.job.publish(
@@ -736,4 +748,5 @@ class SessionPrompt:
             directory=self.directory,
             workspace=self.workspace,
             fts_status=self.fts_status,
+            workspace_memory_section=self.workspace_memory_section,
         )

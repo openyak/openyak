@@ -709,13 +709,13 @@ pre code {
   user-select: none;
 }
 .csv-table th:hover {
-  background: var(--surface-secondary);
+  background: var(--border-default);
 }
 .csv-table tr:nth-child(even) {
-  background: var(--surface-secondary);
+  background: var(--surface-tertiary);
 }
 .csv-table tbody tr:hover {
-  background: var(--surface-tertiary);
+  background: var(--border-default);
 }
 
 /* ─── Sidebar Title Scroll ─── */

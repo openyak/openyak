@@ -6,7 +6,6 @@ the current agent. The ordering matters and is documented here:
   1. DanglingToolCallMiddleware — must run first to fix message history
   2. LoopDetectionMiddleware — check for loops before tool execution
   3. TodoReminderMiddleware — append reminders after tool execution
-  4. MemoryMiddleware — queue for memory extraction on step complete
 
 Future additions should be inserted at the appropriate position in
 this ordering.
@@ -20,9 +19,6 @@ from app.session.middleware import MiddlewareChain
 from app.session.middlewares.dangling_tool_call import DanglingToolCallMiddleware
 from app.session.middlewares.loop_detection import LoopDetectionMiddleware
 from app.session.middlewares.todo_reminder import TodoReminderMiddleware
-from app.session.middlewares.memory import MemoryMiddleware
-
-
 def build_middleware_chain(
     *,
     get_todos_fn: Callable[[], list[dict[str, Any]]] | None = None,
@@ -43,8 +39,5 @@ def build_middleware_chain(
 
     # 3. Todo reminders after modifying tools
     chain.add(TodoReminderMiddleware(get_todos_fn=get_todos_fn))
-
-    # 4. Memory extraction on step complete
-    chain.add(MemoryMiddleware())
 
     return chain

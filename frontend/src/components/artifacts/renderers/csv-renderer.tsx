@@ -166,7 +166,7 @@ export function CsvRenderer({ content, title }: CsvRendererProps) {
           {content}
         </pre>
       ) : (
-        <div className="flex-1 overflow-auto bg-white">
+        <div className="flex-1 overflow-auto bg-[var(--surface-primary)]">
           {headers.length === 0 ? (
             <div className="flex items-center justify-center h-full text-sm text-[var(--text-tertiary)]">
               No data to display

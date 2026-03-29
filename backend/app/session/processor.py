@@ -164,6 +164,90 @@ async def _track_session_file(
         logger.debug("Failed to track session file: %s", file_path, exc_info=True)
 
 
+# Extension mapping for artifact types
+_ARTIFACT_TYPE_EXT: dict[str, str] = {
+    "markdown": ".md",
+    "html": ".html",
+    "svg": ".svg",
+    "react": ".jsx",
+    "mermaid": ".mmd",
+    "code": ".txt",  # fallback; overridden by language when available
+}
+
+# Language → extension mapping for code artifacts
+_LANG_EXT: dict[str, str] = {
+    "python": ".py",
+    "javascript": ".js",
+    "typescript": ".ts",
+    "java": ".java",
+    "c": ".c",
+    "cpp": ".cpp",
+    "go": ".go",
+    "rust": ".rs",
+    "ruby": ".rb",
+    "php": ".php",
+    "swift": ".swift",
+    "kotlin": ".kt",
+    "css": ".css",
+    "json": ".json",
+    "yaml": ".yaml",
+    "sql": ".sql",
+    "shell": ".sh",
+    "bash": ".sh",
+}
+
+
+async def _save_artifact_as_file(
+    session_factory: Any,
+    session_id: str,
+    workspace: str | None,
+    metadata: dict[str, Any],
+) -> None:
+    """Save artifact content to openyak_written/ and track as a session file."""
+    import re
+    from pathlib import Path
+
+    if not workspace:
+        return
+
+    content = metadata.get("content", "")
+    title = metadata.get("title", "artifact")
+    artifact_type = metadata.get("type", "code")
+    language = metadata.get("language", "")
+
+    # Determine file extension
+    if artifact_type == "code" and language:
+        ext = _LANG_EXT.get(language.lower(), ".txt")
+    else:
+        ext = _ARTIFACT_TYPE_EXT.get(artifact_type, ".txt")
+
+    # Sanitize title for filename: keep alphanumeric, spaces, hyphens, underscores,
+    # and CJK/Unicode letters; replace others with underscore
+    safe_title = re.sub(r'[<>:"/\\|?*]', "_", title).strip()
+    if not safe_title:
+        safe_title = "artifact"
+    # Truncate to reasonable length
+    if len(safe_title) > 100:
+        safe_title = safe_title[:100]
+
+    filename = f"{safe_title}{ext}"
+    output_dir = Path(workspace).resolve() / "openyak_written"
+
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        file_path = output_dir / filename
+        file_path.write_text(content, encoding="utf-8")
+
+        await _track_session_file(
+            session_factory,
+            session_id=session_id,
+            file_path=str(file_path),
+            tool_id="artifact",
+        )
+    except Exception:
+        logger.debug("Failed to save artifact as file: %s", filename, exc_info=True)
+
+
 def _is_jwt_expired(token: str, margin_seconds: int = 60) -> bool:
     """Check if a JWT access token is expired (or nearly so)."""
     import base64
@@ -1111,6 +1195,20 @@ class SessionProcessor:
                             session_id=job.session_id,
                             file_path=result.metadata["file_path"],
                             tool_id=tool.id,
+                        )
+
+                    # Track artifacts as workspace files (save to disk)
+                    if (
+                        tool.id == "artifact"
+                        and result.success
+                        and result.metadata
+                        and result.metadata.get("content")
+                    ):
+                        await _save_artifact_as_file(
+                            session_factory,
+                            session_id=job.session_id,
+                            workspace=sp.workspace,
+                            metadata=result.metadata,
                         )
 
                     # Track todos from todo tool results

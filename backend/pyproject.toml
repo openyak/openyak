@@ -28,6 +28,7 @@ dependencies = [
     "aiofiles>=24.1.0",
     "pyyaml>=6.0",
     "croniter>=2.0.0",
+    "wcmatch>=10.0",
 
     # Web content extraction
     "readabilipy>=0.2.0",
