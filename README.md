@@ -6,15 +6,16 @@
 
 <h1 align="center">Yak is all you need.</h1>
 
-<p align="center"><strong>Your local AI agent — private, powerful, personal.</strong></p>
+<p align="center"><strong>Your desktop AI agent — private, powerful, personal.</strong></p>
 
 <p align="center">
   <img src="OpenYak-Logo/openyak-demo.gif" width="800" alt="OpenYak Demo" />
 </p>
 
 <p align="center">
-  OpenYak is an open-source desktop AI assistant that runs entirely on your machine.<br/>
-  Manage files, analyze data, draft documents, and automate office workflows — all without uploading anything to the cloud.
+  OpenYak is an open-source desktop AI assistant that keeps your data on your machine.<br/>
+  Connect to 100+ cloud models via API, or run open-source models locally through Ollama — your choice.<br/>
+  Manage files, analyze data, draft documents, and automate office workflows — all without uploading your files to the cloud.
 </p>
 
 ---
@@ -37,8 +38,9 @@
 
 ## Why OpenYak
 
-- **100% Local-First** — Your data stays on your machine. No cloud storage, no telemetry. Every conversation is yours alone.
-- **100+ AI Models** — Access the latest models through OpenRouter — Claude Opus 4.6 & Sonnet 4.6, DeepSeek V3.2, Gemini 3 Flash, GPT-4.1, MiniMax M2.5, Step 3.5 Flash, MiMo-V2-Pro, and more.
+- **Your Data Stays Local** — Files, conversations, and memory are stored on your machine. No cloud storage, no telemetry. Nothing leaves your device unless you choose a cloud model.
+- **Ollama Support** — Run open-source models (Llama, DeepSeek, Qwen, Gemma, Mistral, etc.) 100% locally through [Ollama](https://ollama.com). Zero data leaves your machine — true offline-capable AI. Auto-detects your installed models with full tool-calling support.
+- **100+ Cloud Models** — Access the latest models through OpenRouter — Claude Opus 4.6 & Sonnet 4.6, DeepSeek V3.2, Gemini 3 Flash, GPT-4.1, MiniMax M2.5, Step 3.5 Flash, MiMo-V2-Pro, and more.
 - **20+ BYOK Providers** — Bring your own API key for OpenAI, Anthropic, Google, Groq, DeepSeek, Mistral, xAI, and more — including Chinese providers like Qwen, Kimi, MiniMax, and ZhiPu.
 - **ChatGPT Subscription** — Already paying for ChatGPT? Connect your ChatGPT subscription directly — no extra API costs.
 - **20+ Built-in Tools** — File read/write/edit, bash execution, glob/grep search, web fetch, long-term memory, and more.
@@ -50,7 +52,7 @@
 ## Get Started
 
 1. **Download** the installer for [Windows or macOS](https://open-yak.com/download/)
-2. **Connect a model** — use free models instantly, top up for premium models, bring your own API key from 20+ providers, or run locally via Ollama
+2. **Connect a model** — use free cloud models instantly, top up for premium models, bring your own API key from 20+ providers, or run fully local with [Ollama](https://ollama.com)
 3. **Start working** — manage files, analyze local data, and generate office-ready outputs
 
 ## For Developers
