@@ -234,16 +234,9 @@ export const API = {
     OPENCLAW_STOP: "/api/channels/openclaw/stop",
     OPENCLAW_UNINSTALL: "/api/channels/openclaw/uninstall",
   },
-  MEMORY: {
-    BASE: "/api/memory",
-    FACTS: "/api/memory/facts",
-    CONTEXTS: "/api/memory/contexts",
-    CONFIG: "/api/memory/config",
-  },
   WORKSPACE_MEMORY: {
     BASE: "/api/workspace-memory",
     LIST: "/api/workspace-memory/list",
-    REFRESH: "/api/workspace-memory/refresh",
     EXPORT: "/api/workspace-memory/export",
   },
   HEALTH: "/health",

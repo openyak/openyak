@@ -278,6 +278,19 @@ export function useSSE(streamId: string | null) {
           }
         }
 
+        // Refresh workspace memory after memory tool calls
+        if (data.tool === "memory") {
+          const workspacePath = useWorkspaceStore.getState().activeWorkspacePath;
+          if (workspacePath) {
+            queryClient.invalidateQueries({
+              queryKey: queryKeys.workspaceMemory(workspacePath),
+            });
+            queryClient.invalidateQueries({
+              queryKey: queryKeys.workspaceMemoryList,
+            });
+          }
+        }
+
         // Update artifact panel for update/rewrite commands
         // (content is computed server-side, not available in TOOL_START args)
         if (data.tool === "artifact" && data.metadata) {

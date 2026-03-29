@@ -21,12 +21,13 @@ class MemoryTool(ToolDefinition):
     @property
     def description(self) -> str:
         return (
-            "Read or update workspace memory that persists across conversations.\n\n"
+            "Read, update, or delete workspace memory that persists across conversations.\n\n"
             "The workspace memory is shown in your system prompt as <workspace-memory>.\n"
             "Use this tool to save important context for future sessions.\n\n"
             "Commands:\n"
             "- read: Show the current workspace memory\n"
             "- update: Add to or replace the workspace memory\n"
+            "- delete: Remove entries matching a pattern, or clear all memory\n"
         )
 
     def parameters_schema(self) -> dict[str, Any]:
@@ -35,7 +36,7 @@ class MemoryTool(ToolDefinition):
             "properties": {
                 "command": {
                     "type": "string",
-                    "enum": ["read", "update"],
+                    "enum": ["read", "update", "delete"],
                     "description": "The memory operation to perform.",
                 },
                 "content": {
@@ -46,6 +47,10 @@ class MemoryTool(ToolDefinition):
                     "type": "string",
                     "enum": ["append", "replace"],
                     "description": "How to update: 'append' adds to the end (default), 'replace' overwrites entirely.",
+                },
+                "pattern": {
+                    "type": "string",
+                    "description": "Text pattern to match for deletion (delete command). If omitted, clears all memory.",
                 },
             },
             "required": ["command"],
@@ -67,8 +72,10 @@ class MemoryTool(ToolDefinition):
             return await self._read(session_factory, workspace)
         elif command == "update":
             return await self._update(args, session_factory, workspace)
+        elif command == "delete":
+            return await self._delete(args, session_factory, workspace)
         else:
-            return ToolResult(error=f"Unknown command: {command}. Use 'read' or 'update'.")
+            return ToolResult(error=f"Unknown command: {command}. Use 'read', 'update', or 'delete'.")
 
     async def _read(self, session_factory: Any, workspace: str) -> ToolResult:
         from app.memory.workspace_memory_storage import get_workspace_memory
@@ -116,4 +123,49 @@ class MemoryTool(ToolDefinition):
         return ToolResult(
             output=f"{action} workspace memory ({line_count} lines)",
             title=f"Memory {action.lower()}",
+        )
+
+    async def _delete(self, args: dict[str, Any], session_factory: Any, workspace: str) -> ToolResult:
+        from app.memory.workspace_memory_storage import (
+            delete_workspace_memory,
+            get_workspace_memory,
+            upsert_workspace_memory,
+        )
+
+        pattern = (args.get("pattern") or "").strip()
+
+        if not pattern:
+            # Clear all memory
+            removed = await delete_workspace_memory(session_factory, workspace)
+            if removed:
+                logger.info("MemoryTool: cleared all workspace memory for %s", workspace)
+                return ToolResult(output="Cleared all workspace memory.", title="Memory cleared")
+            return ToolResult(output="No workspace memory to clear.", title="Memory: empty")
+
+        # Pattern-based removal: remove lines containing the pattern
+        existing = await get_workspace_memory(session_factory, workspace)
+        if not existing or not existing.strip():
+            return ToolResult(output="No workspace memory to delete from.", title="Memory: empty")
+
+        lines = existing.split("\n")
+        pattern_lower = pattern.lower()
+        kept = [line for line in lines if pattern_lower not in line.lower()]
+
+        removed_count = len(lines) - len(kept)
+        if removed_count == 0:
+            return ToolResult(
+                output=f"No lines matching '{pattern}' found in memory.",
+                title="Memory: no match",
+            )
+
+        new_content = "\n".join(kept).strip()
+        if new_content:
+            await upsert_workspace_memory(session_factory, workspace, new_content)
+        else:
+            await delete_workspace_memory(session_factory, workspace)
+
+        logger.info("MemoryTool: deleted %d lines matching '%s' for %s", removed_count, pattern, workspace)
+        return ToolResult(
+            output=f"Removed {removed_count} line(s) matching '{pattern}'.",
+            title=f"Memory: {removed_count} removed",
         )

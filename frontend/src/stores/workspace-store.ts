@@ -83,6 +83,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       workspaceFiles: [],
       scratchpadContent: "",
       collapsedSections: {},
-      activeWorkspacePath: null,
+      // NOTE: activeWorkspacePath is intentionally NOT cleared here.
+      // It's updated by the session.directory effect in chat-view.tsx.
+      // Clearing it here causes a null→path flicker that unmounts MemoryBlock.
     }),
 }));

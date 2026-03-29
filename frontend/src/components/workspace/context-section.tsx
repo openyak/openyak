@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronDown, Plug, Brain, Pencil, Check, X, Download, RefreshCw } from "lucide-react";
+import { ChevronDown, Plug, Brain, Pencil, Check, X, Download } from "lucide-react";
 import { toast } from "sonner";
 import { useConnectors } from "@/hooks/use-connectors";
 import { useSkills } from "@/hooks/use-plugins";
@@ -10,7 +10,6 @@ import { useWorkspaceStore } from "@/stores/workspace-store";
 import {
   useWorkspaceMemory,
   useUpdateWorkspaceMemory,
-  useRefreshWorkspaceMemory,
   useExportWorkspaceMemory,
 } from "@/hooks/use-workspace-memory";
 import { cn } from "@/lib/utils";
@@ -91,31 +90,20 @@ function SkillsSummary() {
 
 function MemoryBlock() {
   const workspacePath = useWorkspaceStore((s) => s.activeWorkspacePath);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const refreshTimestampRef = useRef<string | null>(null);
-
-  const { data, isLoading } = useWorkspaceMemory(workspacePath, {
-    refetchInterval: isRefreshing ? 3000 : false,
-  });
+  const { data, isLoading } = useWorkspaceMemory(workspacePath);
   const updateMutation = useUpdateWorkspaceMemory();
-  const refreshMutation = useRefreshWorkspaceMemory();
   const exportMutation = useExportWorkspaceMemory();
 
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState("");
 
-  const content = data?.content ?? "";
-
-  // Stop polling when time_updated changes, or after 60s timeout
+  // Reset editing state when workspace changes
   useEffect(() => {
-    if (!isRefreshing) return;
-    if (data?.time_updated && data.time_updated !== refreshTimestampRef.current) {
-      setIsRefreshing(false);
-      return;
-    }
-    const timer = setTimeout(() => setIsRefreshing(false), 60000);
-    return () => clearTimeout(timer);
-  }, [isRefreshing, data?.time_updated]);
+    setIsEditing(false);
+    setEditContent("");
+  }, [workspacePath]);
+
+  const content = data?.content ?? "";
 
   const handleStartEdit = useCallback(() => {
     setEditContent(content);
@@ -140,18 +128,6 @@ function MemoryBlock() {
     setIsEditing(false);
     setEditContent("");
   }, []);
-
-  const handleRefresh = useCallback(() => {
-    if (!workspacePath) return;
-    refreshTimestampRef.current = data?.time_updated ?? null;
-    setIsRefreshing(true);
-    refreshMutation.mutate(workspacePath, {
-      onError: () => {
-        setIsRefreshing(false);
-        toast.error("Failed to refresh memory");
-      },
-    });
-  }, [workspacePath, data?.time_updated, refreshMutation]);
 
   const handleExport = useCallback(() => {
     if (!workspacePath) return;
@@ -194,14 +170,6 @@ function MemoryBlock() {
           ) : (
             <>
               <button
-                onClick={handleRefresh}
-                disabled={isRefreshing}
-                className="rounded p-1 text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-tertiary)] transition-colors disabled:opacity-50"
-                title="Refresh"
-              >
-                <RefreshCw className={cn("h-3 w-3", isRefreshing && "animate-spin")} />
-              </button>
-              <button
                 onClick={handleStartEdit}
                 className="rounded p-1 text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-tertiary)] transition-colors"
                 title="Edit"
@@ -230,7 +198,7 @@ function MemoryBlock() {
             className="w-full min-h-[80px] max-h-[200px] p-2 text-[11px] font-mono rounded-lg border border-[var(--border-default)] bg-[var(--surface-primary)] text-[var(--text-primary)] resize-y focus:outline-none focus:ring-1 focus:ring-[var(--accent-primary)]"
             placeholder="Workspace memory (Markdown)..."
           />
-        ) : isLoading || isRefreshing ? (
+        ) : isLoading ? (
           <div className="space-y-1">
             <div className="h-3 w-3/4 rounded bg-[var(--surface-tertiary)] animate-pulse" />
             <div className="h-3 w-1/2 rounded bg-[var(--surface-tertiary)] animate-pulse" />

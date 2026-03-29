@@ -80,9 +80,7 @@ export function ChatView({ sessionId }: ChatViewProps) {
 
   // Sync session workspace directory to workspace store for MemoryBlock
   useEffect(() => {
-    if (session?.directory) {
-      useWorkspaceStore.getState().setActiveWorkspacePath(session.directory);
-    }
+    useWorkspaceStore.getState().setActiveWorkspacePath(session?.directory ?? null);
   }, [session?.directory]);
 
   // Close right-side panels when switching sessions; abort generation if active.

@@ -416,13 +416,14 @@ def _register_builtin_tools(
     from app.tool.builtin.web_fetch import WebFetchTool
     from app.tool.builtin.web_search import WebSearchTool
     from app.tool.builtin.write import WriteTool
+    from app.tool.builtin.memory import MemoryTool
 
     for tool_cls in [
         ReadTool, WriteTool, EditTool, ApplyPatchTool,
         BashTool, CodeExecuteTool,
         GlobTool, GrepTool, QuestionTool, TodoTool,
         TaskTool, WebFetchTool, WebSearchTool, InvalidTool,
-        PlanTool, SubmitPlanTool, ArtifactTool,
+        PlanTool, SubmitPlanTool, ArtifactTool, MemoryTool,
     ]:
         registry.register(tool_cls())
 
