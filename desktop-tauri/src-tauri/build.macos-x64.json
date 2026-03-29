@@ -1,0 +1,12 @@
+{
+  "build": {
+    "beforeBuildCommand": ""
+  },
+  "bundle": {
+    "targets": ["dmg", "app"],
+    "resources": {
+      "../../backend/dist-x86_64/openyak-backend": "backend",
+      "../../backend/resources/nodejs": "nodejs"
+    }
+  }
+}

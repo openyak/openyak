@@ -1,0 +1,12 @@
+{
+  "build": {
+    "beforeBuildCommand": ""
+  },
+  "bundle": {
+    "targets": ["nsis"],
+    "resources": {
+      "../../backend/dist/openyak-backend": "backend",
+      "../../backend/resources/nodejs": "nodejs"
+    }
+  }
+}

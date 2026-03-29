@@ -49,8 +49,8 @@ backend/openclaw/
 frontend/public/pdf.worker.min.mjs
 
 # === Build artifacts ===
-dist/
-build/
+dist*/
+build*/
 *.egg
 out/
 desktop/release/

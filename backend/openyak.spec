@@ -10,8 +10,14 @@ Build with:
 import os
 import sys
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_all
 
 block_cipher = None
+
+# Collect packages that PyInstaller sometimes misses
+uvicorn_datas, uvicorn_binaries, uvicorn_hiddenimports = collect_all('uvicorn')
+wcmatch_datas, wcmatch_binaries, wcmatch_hiddenimports = collect_all('wcmatch')
+croniter_datas, croniter_binaries, croniter_hiddenimports = collect_all('croniter')
 
 # Resolve paths
 backend_dir = os.path.abspath('.')
@@ -108,6 +114,11 @@ hiddenimports = [
     'anyio',
     'anyio._backends',
     'anyio._backends._asyncio',
+    'wcmatch',
+    'wcmatch.glob',
+    'wcmatch.fnmatch',
+    'wcmatch.pathlib',
+    'croniter',
 
     # App modules
     'app.main',
@@ -172,9 +183,9 @@ hiddenimports = [
 a = Analysis(
     ['run.py'],
     pathex=[backend_dir],
-    binaries=[],
-    datas=datas,
-    hiddenimports=hiddenimports,
+    binaries=uvicorn_binaries + wcmatch_binaries + croniter_binaries,
+    datas=datas + uvicorn_datas + wcmatch_datas + croniter_datas,
+    hiddenimports=hiddenimports + uvicorn_hiddenimports + wcmatch_hiddenimports + croniter_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
