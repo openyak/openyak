@@ -54,3 +54,10 @@ class ScheduledTask(Base, TimestampMixin):
     timeout_seconds: Mapped[int] = mapped_column(
         Integer, nullable=False, default=1800  # 30 minutes
     )
+
+    # Loop configuration (nullable = not a loop task, just a regular automation)
+    loop_max_iterations: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    loop_preset: Mapped[str | None] = mapped_column(String, nullable=True)
+    loop_stop_marker: Mapped[str | None] = mapped_column(
+        String, nullable=True, default="[LOOP_DONE]"
+    )

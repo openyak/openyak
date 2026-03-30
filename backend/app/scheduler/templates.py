@@ -138,6 +138,96 @@ _TEMPLATES: list[dict] = [
         "category": "maintenance",
         "icon": "FolderSync",
     },
+    # --- Loop templates (office / productivity scenarios) ---
+    {
+        "id": "loop-email-batch",
+        "name": {"zh": "批量处理邮件 (循环)", "en": "Batch Process Emails (Loop)"},
+        "description": {
+            "zh": "逐封处理收件箱中的待办邮件，草拟回复或归档",
+            "en": "Process inbox emails one by one — draft replies or archive",
+        },
+        "prompt": {
+            "zh": (
+                "查看收件箱中下一封未处理的邮件。根据内容决定：\n"
+                "- 需要回复的：草拟一封简洁的回复\n"
+                "- 仅供知会的：标记为已读并归档\n"
+                "- 需要跟进的：创建一个待办提醒\n"
+                "如果所有邮件都已处理完毕，输出 [LOOP_DONE]。"
+            ),
+            "en": (
+                "Check the next unprocessed email in the inbox. Based on content:\n"
+                "- Needs reply: draft a concise response\n"
+                "- FYI only: mark as read and archive\n"
+                "- Needs follow-up: create a todo reminder\n"
+                "If all emails are processed, output [LOOP_DONE]."
+            ),
+        },
+        "schedule_config": None,
+        "category": "loop",
+        "icon": "Repeat",
+        "loop_max_iterations": 20,
+        "loop_preset": "email-batch",
+    },
+    {
+        "id": "loop-doc-review",
+        "name": {"zh": "文档逐章审阅 (循环)", "en": "Document Review by Section (Loop)"},
+        "description": {
+            "zh": "逐章审阅长文档，检查逻辑、语法和格式",
+            "en": "Review a long document section by section for logic, grammar, and formatting",
+        },
+        "prompt": {
+            "zh": (
+                "阅读文档的下一个章节，检查以下问题并修正：\n"
+                "1. 逻辑是否连贯，论述是否充分\n"
+                "2. 语法和用词是否准确\n"
+                "3. 格式是否统一\n"
+                "给出修改建议或直接修正。"
+                "如果所有章节都已审阅完毕，输出 [LOOP_DONE]。"
+            ),
+            "en": (
+                "Read the next section of the document and check:\n"
+                "1. Is the logic coherent and reasoning sound?\n"
+                "2. Are grammar and wording accurate?\n"
+                "3. Is formatting consistent?\n"
+                "Suggest edits or fix directly. "
+                "If all sections are reviewed, output [LOOP_DONE]."
+            ),
+        },
+        "schedule_config": None,
+        "category": "loop",
+        "icon": "Repeat",
+        "loop_max_iterations": 15,
+        "loop_preset": "doc-review",
+    },
+    {
+        "id": "loop-data-cleanup",
+        "name": {"zh": "数据批量清洗 (循环)", "en": "Batch Data Cleanup (Loop)"},
+        "description": {
+            "zh": "逐批清洗和标准化表格数据",
+            "en": "Clean and standardize spreadsheet data batch by batch",
+        },
+        "prompt": {
+            "zh": (
+                "检查数据中的下一批记录，执行以下清洗操作：\n"
+                "- 修正格式不一致的字段（日期、电话、地址等）\n"
+                "- 标记或删除重复记录\n"
+                "- 补全缺失的必填字段\n"
+                "如果所有数据都已清洗完毕，输出 [LOOP_DONE]。"
+            ),
+            "en": (
+                "Check the next batch of records and perform cleanup:\n"
+                "- Fix inconsistent formatting (dates, phones, addresses)\n"
+                "- Flag or remove duplicate entries\n"
+                "- Fill in missing required fields\n"
+                "If all data is cleaned, output [LOOP_DONE]."
+            ),
+        },
+        "schedule_config": None,
+        "category": "loop",
+        "icon": "Repeat",
+        "loop_max_iterations": 10,
+        "loop_preset": "data-cleanup",
+    },
 ]
 
 
@@ -148,33 +238,33 @@ def _resolve_lang(value: str | dict, lang: str) -> str:
     return value
 
 
+def _resolve_template(t: dict, lang: str) -> dict:
+    """Resolve a template to the requested language, including loop fields."""
+    result = {
+        "id": t["id"],
+        "name": _resolve_lang(t["name"], lang),
+        "description": _resolve_lang(t["description"], lang),
+        "prompt": _resolve_lang(t["prompt"], lang),
+        "schedule_config": t["schedule_config"],
+        "category": t["category"],
+        "icon": t["icon"],
+    }
+    # Include loop fields if present
+    if "loop_max_iterations" in t:
+        result["loop_max_iterations"] = t["loop_max_iterations"]
+    if "loop_preset" in t:
+        result["loop_preset"] = t["loop_preset"]
+    return result
+
+
 def get_templates(lang: str = "zh") -> list[dict]:
     """Return all built-in automation templates in the requested language."""
-    return [
-        {
-            "id": t["id"],
-            "name": _resolve_lang(t["name"], lang),
-            "description": _resolve_lang(t["description"], lang),
-            "prompt": _resolve_lang(t["prompt"], lang),
-            "schedule_config": t["schedule_config"],
-            "category": t["category"],
-            "icon": t["icon"],
-        }
-        for t in _TEMPLATES
-    ]
+    return [_resolve_template(t, lang) for t in _TEMPLATES]
 
 
 def get_template_by_id(template_id: str, lang: str = "zh") -> dict | None:
     """Look up a template by its id, resolved to the requested language."""
     for t in _TEMPLATES:
         if t["id"] == template_id:
-            return {
-                "id": t["id"],
-                "name": _resolve_lang(t["name"], lang),
-                "description": _resolve_lang(t["description"], lang),
-                "prompt": _resolve_lang(t["prompt"], lang),
-                "schedule_config": t["schedule_config"],
-                "category": t["category"],
-                "icon": t["icon"],
-            }
+            return _resolve_template(t, lang)
     return None

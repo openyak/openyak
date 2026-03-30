@@ -39,12 +39,15 @@ class AutomationCreate(BaseModel):
     name: str
     description: str = ""
     prompt: str
-    schedule_config: ScheduleConfig
+    schedule_config: ScheduleConfig | None = None  # None for loop-only tasks
     agent: str = "build"
     model: str | None = None
     workspace: str | None = None
     template_id: str | None = None
     timeout_seconds: int = 1800  # 30 minutes default
+    # Loop fields (None = single-shot automation)
+    loop_max_iterations: int | None = None
+    loop_preset: str | None = None
 
 
 class AutomationUpdate(BaseModel):
@@ -57,6 +60,8 @@ class AutomationUpdate(BaseModel):
     workspace: str | None = None
     enabled: bool | None = None
     timeout_seconds: int | None = None
+    loop_max_iterations: int | None = None
+    loop_preset: str | None = None
 
 
 class AutomationResponse(BaseModel):
@@ -76,6 +81,9 @@ class AutomationResponse(BaseModel):
     next_run_at: datetime | None
     run_count: int
     timeout_seconds: int
+    loop_max_iterations: int | None = None
+    loop_preset: str | None = None
+    loop_stop_marker: str | None = None
     time_created: datetime
     time_updated: datetime
 
@@ -101,6 +109,8 @@ class TemplateResponse(BaseModel):
     name: str
     description: str
     prompt: str
-    schedule_config: dict[str, Any]
+    schedule_config: dict[str, Any] | None = None
     category: str
     icon: str
+    loop_max_iterations: int | None = None
+    loop_preset: str | None = None

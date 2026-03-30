@@ -18,6 +18,7 @@ import {
   Pencil,
   Play,
   Plus,
+  Repeat,
   Sunrise,
   Timer,
   Trash2,
@@ -58,7 +59,7 @@ import type {
 type Tab = "active" | "all" | "templates";
 
 const ICON_MAP: Record<string, React.ElementType> = {
-  Sunrise, CalendarCheck, Mail, GitPullRequest, FolderSync, Timer, Clock,
+  Sunrise, CalendarCheck, Mail, GitPullRequest, FolderSync, Timer, Clock, Repeat,
 };
 
 /* ------------------------------------------------------------------ */
@@ -156,18 +157,23 @@ function StatusBadge({ status, sessionId, t }: { status: string | null; sessionI
     timeout: { icon: XCircle, color: "text-orange-400", labelKey: "statusTimeout" },
   };
 
-  const c = config[status];
+  // Normalize loop running status (e.g. "running:3/10" → "running")
+  const normalizedStatus = status.startsWith("running") ? "running" : status;
+  const c = config[normalizedStatus];
   if (!c) return null;
   const Icon = c.icon;
+  // Show loop progress in label (e.g. "Running 3/10")
+  const loopMatch = status.match(/^running:(\d+\/\d+)$/);
+  const loopSuffix = loopMatch ? ` ${loopMatch[1]}` : "";
 
   const badge = (
     <span className={`inline-flex items-center gap-1 text-[10px] ${c.color}`}>
-      <Icon className={`h-3 w-3 ${status === "running" ? "animate-spin" : ""}`} />
-      {t(c.labelKey)}
+      <Icon className={`h-3 w-3 ${normalizedStatus === "running" ? "animate-spin" : ""}`} />
+      {t(c.labelKey)}{loopSuffix}
     </span>
   );
 
-  if (status !== "running" && sessionId) {
+  if (normalizedStatus !== "running" && sessionId) {
     return (
       <Link
         href={`/c/${sessionId}`}
@@ -336,7 +342,7 @@ function AutomationCard({ automation: a, onEdit }: { automation: AutomationRespo
     deleteMut.mutate(deleteTarget.id, { onSuccess: () => setDeleteTarget(null) });
   };
 
-  const isRunning = a.last_run_status === "running" || runMut.isPending;
+  const isRunning = (a.last_run_status?.startsWith("running") ?? false) || runMut.isPending;
 
   return (
     <>
@@ -389,8 +395,17 @@ function AutomationCard({ automation: a, onEdit }: { automation: AutomationRespo
         {/* Row 2: Schedule + status meta */}
         <div className="flex items-center gap-3 mt-2 text-[11px] text-[var(--text-tertiary)]">
           <span className="inline-flex items-center gap-1">
-            <Clock className="h-3 w-3" />
-            {humanizeSchedule(a.schedule_config as ScheduleConfig, t)}
+            {a.loop_max_iterations ? (
+              <>
+                <Repeat className="h-3 w-3" />
+                {t("loopIterations", { n: a.loop_max_iterations })}
+              </>
+            ) : (
+              <>
+                <Clock className="h-3 w-3" />
+                {a.schedule_config ? humanizeSchedule(a.schedule_config as ScheduleConfig, t) : "—"}
+              </>
+            )}
           </span>
 
           {a.workspace && (
@@ -529,8 +544,17 @@ function TemplatesTab({ onCreated }: { onCreated: () => void }) {
             </div>
             <p className="text-xs text-[var(--text-tertiary)] line-clamp-2">{tpl.description}</p>
             <div className="flex items-center gap-1 mt-2 text-[10px] text-[var(--text-tertiary)]">
-              <Clock className="h-3 w-3" />
-              <span>{humanizeSchedule(tpl.schedule_config as ScheduleConfig, t)}</span>
+              {tpl.loop_max_iterations ? (
+                <>
+                  <Repeat className="h-3 w-3" />
+                  <span>{t("loopIterations", { n: tpl.loop_max_iterations })}</span>
+                </>
+              ) : (
+                <>
+                  <Clock className="h-3 w-3" />
+                  <span>{tpl.schedule_config ? humanizeSchedule(tpl.schedule_config as ScheduleConfig, t) : "—"}</span>
+                </>
+              )}
             </div>
           </button>
         );
@@ -745,24 +769,30 @@ function CreateAutomationDialog({ onClose }: { onClose: () => void }) {
   const [prompt, setPrompt] = useState("");
   const [modelId, setModelId] = useState(selectedModel || "");
   const [workspace, setWorkspace] = useState(globalWorkspace || "");
+  const [taskMode, setTaskMode] = useState<"scheduled" | "loop">("scheduled");
   const [scheduleType, setScheduleType] = useState<"cron" | "interval">("cron");
   const [cronExpr, setCronExpr] = useState("0 8 * * 1");
   const [intervalHours, setIntervalHours] = useState(1);
+  const [loopIterations, setLoopIterations] = useState(10);
 
   const handleSubmit = () => {
     if (!name.trim() || !prompt.trim()) return;
-    const scheduleConfig: ScheduleConfig =
-      scheduleType === "cron"
-        ? { type: "cron", cron: cronExpr }
-        : { type: "interval", hours: intervalHours };
     const data: AutomationCreate = {
       name: name.trim(),
       description: description.trim(),
       prompt: prompt.trim(),
-      schedule_config: scheduleConfig,
       model: modelId || null,
       workspace: workspace.trim() || null,
     };
+    if (taskMode === "loop") {
+      data.loop_max_iterations = loopIterations;
+      data.schedule_config = null;
+    } else {
+      data.schedule_config =
+        scheduleType === "cron"
+          ? { type: "cron", cron: cronExpr }
+          : { type: "interval", hours: intervalHours };
+    }
     createMut.mutate(data, { onSuccess: () => onClose() });
   };
 
@@ -798,12 +828,54 @@ function CreateAutomationDialog({ onClose }: { onClose: () => void }) {
           />
         </div>
 
-        <ScheduleEditor
-          scheduleType={scheduleType} setScheduleType={setScheduleType}
-          cronExpr={cronExpr} setCronExpr={setCronExpr}
-          intervalHours={intervalHours} setIntervalHours={setIntervalHours}
-          t={t}
-        />
+        {/* Task mode: scheduled vs loop */}
+        <div>
+          <label className="text-xs font-medium text-[var(--text-secondary)] mb-1.5 block">{t("taskMode")}</label>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => setTaskMode("scheduled")}
+              className={`flex-1 h-8 rounded-md text-xs font-medium border transition-colors ${
+                taskMode === "scheduled"
+                  ? "border-[var(--border-focus)] bg-[var(--surface-secondary)] text-[var(--text-primary)]"
+                  : "border-[var(--border-default)] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
+              }`}
+            >
+              <span className="inline-flex items-center gap-1"><Clock className="h-3 w-3" />{t("scheduled")}</span>
+            </button>
+            <button type="button" onClick={() => setTaskMode("loop")}
+              className={`flex-1 h-8 rounded-md text-xs font-medium border transition-colors ${
+                taskMode === "loop"
+                  ? "border-[var(--border-focus)] bg-[var(--surface-secondary)] text-[var(--text-primary)]"
+                  : "border-[var(--border-default)] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
+              }`}
+            >
+              <span className="inline-flex items-center gap-1"><Repeat className="h-3 w-3" />{t("loopMode")}</span>
+            </button>
+          </div>
+        </div>
+
+        {taskMode === "scheduled" ? (
+          <ScheduleEditor
+            scheduleType={scheduleType} setScheduleType={setScheduleType}
+            cronExpr={cronExpr} setCronExpr={setCronExpr}
+            intervalHours={intervalHours} setIntervalHours={setIntervalHours}
+            t={t}
+          />
+        ) : (
+          <div>
+            <label className="text-xs font-medium text-[var(--text-secondary)] mb-1 block">{t("maxIterations")}</label>
+            <div className="flex items-center gap-3">
+              <input
+                type="range" min={1} max={50} value={loopIterations}
+                onChange={(e) => setLoopIterations(Number(e.target.value))}
+                className="flex-1 h-1.5 accent-[var(--text-primary)]"
+              />
+              <span className="text-xs font-mono text-[var(--text-primary)] w-8 text-right">{loopIterations}</span>
+            </div>
+            <p className="text-[10px] text-[var(--text-tertiary)] mt-1">
+              {t("loopHint")}
+            </p>
+          </div>
+        )}
 
         {/* Model */}
         <div>
@@ -812,7 +884,7 @@ function CreateAutomationDialog({ onClose }: { onClose: () => void }) {
             className="w-full h-8 rounded-md border border-[var(--border-default)] bg-transparent px-2 text-xs text-[var(--text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--border-focus)]"
           >
             <option value="">{t("modelAuto")}</option>
-            {(models || []).map((m) => (
+            {(models || []).filter((m, i, arr) => arr.findIndex((x) => x.id === m.id) === i).map((m) => (
               <option key={m.id} value={m.id}>
                 {m.name}{m.provider_id === "openai-subscription" ? " (Subscription)" : ""}
               </option>
@@ -869,35 +941,43 @@ function EditAutomationDialog({ automationId, onClose }: { automationId: string;
   const { data: automations } = useAutomations();
   const updateMut = useUpdateAutomation();
   const { data: models } = useModels();
+  const selectedModel = useSettingsStore((s) => s.selectedModel);
 
   const automation = automations?.find((a) => a.id === automationId);
 
   const [name, setName] = useState(automation?.name || "");
   const [description, setDescription] = useState(automation?.description || "");
   const [prompt, setPrompt] = useState(automation?.prompt || "");
-  const [modelId, setModelId] = useState(automation?.model || "");
+  const [modelId, setModelId] = useState(automation?.model || selectedModel || "");
   const [workspace, setWorkspace] = useState(automation?.workspace || "");
+  const isLoopTask = !!(automation?.loop_max_iterations);
+  const [taskMode, setTaskMode] = useState<"scheduled" | "loop">(isLoopTask ? "loop" : "scheduled");
   const sc = automation?.schedule_config as ScheduleConfig | undefined;
   const [scheduleType, setScheduleType] = useState<"cron" | "interval">(sc?.type || "cron");
   const [cronExpr, setCronExpr] = useState(sc?.cron || "0 8 * * 1");
   const [intervalHours, setIntervalHours] = useState(sc?.hours || 1);
+  const [loopIterations, setLoopIterations] = useState(automation?.loop_max_iterations || 10);
 
   if (!automation) return null;
 
   const handleSave = () => {
     if (!name.trim() || !prompt.trim()) return;
-    const scheduleConfig: ScheduleConfig =
-      scheduleType === "cron"
-        ? { type: "cron", cron: cronExpr }
-        : { type: "interval", hours: intervalHours };
     const data: AutomationUpdate = {
       name: name.trim(),
       description: description.trim(),
       prompt: prompt.trim(),
-      schedule_config: scheduleConfig,
       model: modelId || null,
       workspace: workspace.trim() || null,
     };
+    if (taskMode === "loop") {
+      data.loop_max_iterations = loopIterations;
+    } else {
+      data.schedule_config =
+        scheduleType === "cron"
+          ? { type: "cron", cron: cronExpr }
+          : { type: "interval", hours: intervalHours };
+      data.loop_max_iterations = null;
+    }
     updateMut.mutate({ id: automationId, data }, { onSuccess: () => onClose() });
   };
 
@@ -931,12 +1011,52 @@ function EditAutomationDialog({ automationId, onClose }: { automationId: string;
           />
         </div>
 
-        <ScheduleEditor
-          scheduleType={scheduleType} setScheduleType={setScheduleType}
-          cronExpr={cronExpr} setCronExpr={setCronExpr}
-          intervalHours={intervalHours} setIntervalHours={setIntervalHours}
-          t={t}
-        />
+        {/* Task mode: scheduled vs loop */}
+        <div>
+          <label className="text-xs font-medium text-[var(--text-secondary)] mb-1.5 block">{t("taskMode")}</label>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => setTaskMode("scheduled")}
+              className={`flex-1 h-8 rounded-md text-xs font-medium border transition-colors ${
+                taskMode === "scheduled"
+                  ? "border-[var(--border-focus)] bg-[var(--surface-secondary)] text-[var(--text-primary)]"
+                  : "border-[var(--border-default)] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
+              }`}
+            >
+              <span className="inline-flex items-center gap-1"><Clock className="h-3 w-3" />{t("scheduled")}</span>
+            </button>
+            <button type="button" onClick={() => setTaskMode("loop")}
+              className={`flex-1 h-8 rounded-md text-xs font-medium border transition-colors ${
+                taskMode === "loop"
+                  ? "border-[var(--border-focus)] bg-[var(--surface-secondary)] text-[var(--text-primary)]"
+                  : "border-[var(--border-default)] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
+              }`}
+            >
+              <span className="inline-flex items-center gap-1"><Repeat className="h-3 w-3" />{t("loopMode")}</span>
+            </button>
+          </div>
+        </div>
+
+        {taskMode === "scheduled" ? (
+          <ScheduleEditor
+            scheduleType={scheduleType} setScheduleType={setScheduleType}
+            cronExpr={cronExpr} setCronExpr={setCronExpr}
+            intervalHours={intervalHours} setIntervalHours={setIntervalHours}
+            t={t}
+          />
+        ) : (
+          <div>
+            <label className="text-xs font-medium text-[var(--text-secondary)] mb-1 block">{t("maxIterations")}</label>
+            <div className="flex items-center gap-3">
+              <input
+                type="range" min={1} max={50} value={loopIterations}
+                onChange={(e) => setLoopIterations(Number(e.target.value))}
+                className="flex-1 h-1.5 accent-[var(--text-primary)]"
+              />
+              <span className="text-xs font-mono text-[var(--text-primary)] w-8 text-right">{loopIterations}</span>
+            </div>
+            <p className="text-[10px] text-[var(--text-tertiary)] mt-1">{t("loopHint")}</p>
+          </div>
+        )}
 
         {/* Model */}
         <div>
@@ -945,7 +1065,7 @@ function EditAutomationDialog({ automationId, onClose }: { automationId: string;
             className="w-full h-8 rounded-md border border-[var(--border-default)] bg-transparent px-2 text-xs text-[var(--text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--border-focus)]"
           >
             <option value="">{t("modelAuto")}</option>
-            {(models || []).map((m) => (
+            {(models || []).filter((m, i, arr) => arr.findIndex((x) => x.id === m.id) === i).map((m) => (
               <option key={m.id} value={m.id}>
                 {m.name}{m.provider_id === "openai-subscription" ? " (Subscription)" : ""}
               </option>

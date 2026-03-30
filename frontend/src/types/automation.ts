@@ -12,7 +12,7 @@ export interface AutomationResponse {
   name: string;
   description: string;
   prompt: string;
-  schedule_config: ScheduleConfig;
+  schedule_config: ScheduleConfig | null;
   agent: string;
   model: string | null;
   workspace: string | null;
@@ -24,6 +24,9 @@ export interface AutomationResponse {
   next_run_at: string | null;
   run_count: number;
   timeout_seconds: number;
+  loop_max_iterations: number | null;
+  loop_preset: string | null;
+  loop_stop_marker: string | null;
   time_created: string;
   time_updated: string;
 }
@@ -32,12 +35,14 @@ export interface AutomationCreate {
   name: string;
   description?: string;
   prompt: string;
-  schedule_config: ScheduleConfig;
+  schedule_config?: ScheduleConfig | null;
   agent?: string;
   model?: string | null;
   workspace?: string | null;
   template_id?: string | null;
   timeout_seconds?: number;
+  loop_max_iterations?: number | null;
+  loop_preset?: string | null;
 }
 
 export interface AutomationUpdate {
@@ -50,6 +55,8 @@ export interface AutomationUpdate {
   workspace?: string | null;
   enabled?: boolean;
   timeout_seconds?: number;
+  loop_max_iterations?: number | null;
+  loop_preset?: string | null;
 }
 
 export interface TaskRunResponse {
@@ -69,7 +76,9 @@ export interface TemplateResponse {
   name: string;
   description: string;
   prompt: string;
-  schedule_config: ScheduleConfig;
+  schedule_config: ScheduleConfig | null;
   category: string;
   icon: string;
+  loop_max_iterations?: number | null;
+  loop_preset?: string | null;
 }

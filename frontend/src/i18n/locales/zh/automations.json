@@ -51,6 +51,12 @@
   "everyHM": "每 {{h}}h {{m}}m",
   "everyNHours": "每 {{n}} 小时",
   "everyNMinutes": "每 {{n}} 分钟",
+  "taskMode": "任务类型",
+  "scheduled": "定时执行",
+  "loopMode": "循环执行",
+  "maxIterations": "最大迭代次数",
+  "loopHint": "Agent 将反复执行提示词，每轮使用新的上下文。在输出中包含 [LOOP_DONE] 可提前停止。",
+  "loopIterations": "循环: {{n}} 轮",
   "days": {
     "sun": "周日",
     "mon": "周一",

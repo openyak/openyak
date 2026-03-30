@@ -20,7 +20,7 @@ export function useAutomations() {
     // Poll faster (3s) when any task is running, otherwise every 30s
     refetchInterval: (query) => {
       const data = query.state.data as AutomationResponse[] | undefined;
-      const hasRunning = data?.some((a) => a.last_run_status === "running");
+      const hasRunning = data?.some((a) => a.last_run_status?.startsWith("running"));
       return hasRunning ? 3_000 : 30_000;
     },
   });

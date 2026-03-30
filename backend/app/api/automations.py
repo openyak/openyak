@@ -46,6 +46,16 @@ def _parse_lang(request: Request) -> str:
     return "zh"
 
 
+@router.get("/automations/loop-presets")
+async def list_loop_presets() -> list[dict]:
+    """List built-in loop presets."""
+    from app.scheduler.executor import LOOP_PRESETS
+    return [
+        {"id": k, "name": k.replace("-", " ").title(), "prompt": v}
+        for k, v in LOOP_PRESETS.items()
+    ]
+
+
 @router.get("/automations/templates", response_model=list[TemplateResponse])
 async def list_templates(request: Request) -> list[TemplateResponse]:
     """List built-in automation templates."""
@@ -70,8 +80,10 @@ async def create_from_template(
         name=template["name"],
         description=template["description"],
         prompt=template["prompt"],
-        schedule_config=template["schedule_config"],
+        schedule_config=template["schedule_config"] or {},
         template_id=template_id,
+        loop_max_iterations=template.get("loop_max_iterations"),
+        loop_preset=template.get("loop_preset"),
     )
     db.add(task)
     await db.flush()
@@ -108,17 +120,20 @@ async def create_automation(
     db: AsyncSession = Depends(get_db),
 ) -> AutomationResponse:
     """Create a new scheduled task."""
+    schedule_data = body.schedule_config.model_dump(exclude_none=True) if body.schedule_config else {}
     task = ScheduledTask(
         id=generate_ulid(),
         name=body.name,
         description=body.description,
         prompt=body.prompt,
-        schedule_config=body.schedule_config.model_dump(exclude_none=True),
+        schedule_config=schedule_data,
         agent=body.agent,
         model=body.model,
         workspace=body.workspace,
         template_id=body.template_id,
         timeout_seconds=body.timeout_seconds,
+        loop_max_iterations=body.loop_max_iterations,
+        loop_preset=body.loop_preset,
     )
     db.add(task)
     await db.flush()

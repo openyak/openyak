@@ -222,6 +222,7 @@ export const API = {
     RUNS: (id: string) => `/api/automations/${id}/runs` as const,
     TEMPLATES: "/api/automations/templates",
     FROM_TEMPLATE: "/api/automations/from-template",
+    LOOP_PRESETS: "/api/automations/loop-presets",
   },
   CHANNELS: {
     LIST: "/api/channels",

@@ -51,6 +51,12 @@
   "everyHM": "Every {{h}}h {{m}}m",
   "everyNHours": "Every {{n}} hours",
   "everyNMinutes": "Every {{n}} min",
+  "taskMode": "Task Type",
+  "scheduled": "Scheduled",
+  "loopMode": "Loop",
+  "maxIterations": "Max Iterations",
+  "loopHint": "Agent will repeatedly execute the prompt with fresh context each iteration. Include [LOOP_DONE] in output to stop early.",
+  "loopIterations": "Loop: {{n}} iterations",
   "days": {
     "sun": "Sun",
     "mon": "Mon",
