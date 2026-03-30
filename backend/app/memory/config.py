@@ -21,6 +21,3 @@ def get_memory_config() -> MemoryConfig:
     return _config
 
 
-def set_memory_config(config: MemoryConfig) -> None:
-    global _config
-    _config = config

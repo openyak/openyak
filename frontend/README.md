@@ -165,7 +165,6 @@ src/
 │   ├── use-scroll-anchor.ts      #   Auto-scroll to bottom
 │   ├── use-mobile.ts             #   Mobile breakpoint detection
 │   ├── use-channels.ts           #   OpenClaw channel management
-│   ├── use-memory.ts             #   Memory system queries
 │   ├── use-automations.ts        #   Automation CRUD
 │   ├── use-connectors.ts         #   MCP connector management
 │   ├── use-mcp.ts                #   MCP server status

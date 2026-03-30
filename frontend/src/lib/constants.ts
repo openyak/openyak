@@ -236,12 +236,6 @@ export const API = {
     OPENCLAW_STOP: "/api/channels/openclaw/stop",
     OPENCLAW_UNINSTALL: "/api/channels/openclaw/uninstall",
   },
-  MEMORY: {
-    BASE: "/api/memory",
-    FACTS: "/api/memory/facts",
-    CONTEXTS: "/api/memory/contexts",
-    CONFIG: "/api/memory/config",
-  },
   WORKSPACE_MEMORY: {
     BASE: "/api/workspace-memory",
     LIST: "/api/workspace-memory/list",
@@ -296,7 +290,6 @@ export const queryKeys = {
     runs: (id: string) => ["automations", id, "runs"] as const,
     templates: ["automations", "templates"] as const,
   },
-  memory: ["memory"] as const,
   workspaceMemory: (workspace: string) =>
     ["workspaceMemory", workspace] as const,
   workspaceMemoryList: ["workspaceMemoryList"] as const,

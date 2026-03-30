@@ -71,7 +71,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     set_session_factory(session_factory)
 
     # Ensure all models are registered with Base.metadata before create_all
-    from app.memory import models as _memory_models  # noqa: F401 — registers MemoryFact, MemoryContext
     from app.memory import workspace_memory_model as _ws_memory_models  # noqa: F401 — registers WorkspaceMemory
 
     async with engine.begin() as conn:

@@ -165,7 +165,6 @@ src/
 │   ├── use-scroll-anchor.ts      #   自动滚动到底部
 │   ├── use-mobile.ts             #   移动端断点检测
 │   ├── use-channels.ts           #   OpenClaw 频道管理
-│   ├── use-memory.ts             #   记忆系统查询
 │   ├── use-automations.ts        #   自动化任务 CRUD
 │   ├── use-connectors.ts         #   MCP 连接器管理
 │   ├── use-mcp.ts                #   MCP 服务器状态

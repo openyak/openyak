@@ -1,5 +1,5 @@
-"""Long-term memory system for cross-session fact persistence.
+"""Workspace-scoped memory system.
 
-Extracts user preferences, project context, and factual knowledge from
-conversations and injects relevant facts into future system prompts.
+Provides per-directory memory that persists across sessions via plain-text
+files managed by the workspace memory subsystem.
 """
