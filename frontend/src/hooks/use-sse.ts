@@ -13,6 +13,7 @@ import { useConnectionStore } from "@/stores/connection-store";
 import { useArtifactStore } from "@/stores/artifact-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useAuthStore } from "@/stores/auth-store";
+import { useSettingsStore } from "@/stores/settings-store";
 import { proxyApi } from "@/lib/proxy-api";
 import { api } from "@/lib/api";
 import { isPreviewableFile, artifactTypeFromExtension, languageFromExtension } from "@/lib/artifacts";
@@ -568,6 +569,22 @@ export function useSSE(streamId: string | null) {
           .catch(() => {
             // Silently ignore balance refresh failures
           });
+      }
+
+      // After conversation ends, workspace memory queue processes in background
+      // (10s debounce + LLM call). Invalidate memory query to pick up the update.
+      const workspacePath = useSettingsStore.getState().workspaceDirectory;
+      if (workspacePath) {
+        setTimeout(() => {
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.workspaceMemory(workspacePath),
+          });
+        }, 20_000);
+        setTimeout(() => {
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.workspaceMemory(workspacePath),
+          });
+        }, 40_000);
       }
 
       client.close();

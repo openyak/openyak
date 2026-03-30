@@ -78,13 +78,6 @@ export function ChatView({ sessionId }: ChatViewProps) {
     }).catch(() => {});
   }, [session, messages, sessionId, qc]);
 
-  // Sync session workspace directory to workspace store for MemoryBlock
-  useEffect(() => {
-    if (session?.directory) {
-      useWorkspaceStore.getState().setActiveWorkspacePath(session.directory);
-    }
-  }, [session?.directory]);
-
   // Close right-side panels when switching sessions; abort generation if active.
   // We use a ref to track whether we're truly leaving this session vs. React
   // Strict Mode's dev-only double-invoke (mount → unmount → remount).
@@ -93,6 +86,13 @@ export function ChatView({ sessionId }: ChatViewProps) {
     useArtifactStore.getState().clearAll();
     useActivityStore.getState().close();
     useWorkspaceStore.getState().resetForSession();
+
+    // Sync workspace directory for MemoryBlock
+    api.get<SessionResponse>(API.SESSIONS.DETAIL(sessionId)).then((s) => {
+      if (s.directory) {
+        useWorkspaceStore.getState().setActiveWorkspacePath(s.directory);
+      }
+    }).catch(() => {});
 
     // Load persisted todos and workspace files for this session
     api.get<{ todos: Array<{ content: string; status: string; activeForm?: string }> }>(

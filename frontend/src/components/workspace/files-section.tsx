@@ -5,21 +5,25 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, ChevronRight, FileText, FolderOpen } from "lucide-react";
 import { useWorkspaceStore, type WorkspaceFile } from "@/stores/workspace-store";
 import { useArtifactStore } from "@/stores/artifact-store";
-import { artifactTypeFromExtension } from "@/lib/artifacts";
 import { cn } from "@/lib/utils";
 
 function FileItem({ file }: { file: WorkspaceFile }) {
   const handleClick = () => {
     const store = useArtifactStore.getState();
-    const existing = store.artifacts.find((a) => a.filePath === file.path);
+    // Match by filePath first, then fall back to matching by title (for artifacts
+    // created by the artifact tool which don't have filePath set yet)
+    const baseName = file.name.replace(/\.[^.]+$/, "");
+    const existing = store.artifacts.find(
+      (a) => a.filePath === file.path || (!a.filePath && a.title === baseName),
+    );
     if (existing) {
-      store.openArtifact(existing);
+      // Re-open with filePath set so future lookups match directly
+      store.openArtifact({ ...existing, filePath: file.path });
       return;
     }
-    const detectedType = artifactTypeFromExtension(file.name);
     store.openArtifact({
       id: `workspace-${file.path}`,
-      type: detectedType ?? "file-preview",
+      type: "file-preview",
       title: file.name,
       content: "",
       filePath: file.path,
