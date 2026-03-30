@@ -393,6 +393,19 @@ export function useSSE(streamId: string | null) {
     client.on(SSE_EVENTS.PERMISSION_REQUEST, (data, id) => {
       persistedLastEventId = id;
       if (data.call_id) {
+        // In "auto" mode, auto-approve all permission requests
+        const workMode = useSettingsStore.getState().workMode;
+        if (workMode === "auto") {
+          const streamId = store.getState().streamId;
+          if (streamId) {
+            api.post(API.CHAT.RESPOND, {
+              stream_id: streamId,
+              call_id: data.call_id,
+              response: true,
+            }).catch(() => {});
+            return;
+          }
+        }
         store.getState().setPermissionRequest({
           callId: data.call_id,
           tool: data.tool ?? "",
