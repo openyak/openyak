@@ -34,8 +34,8 @@ from app.streaming.events import (
 from app.streaming.manager import GenerationJob
 from app.utils.token import estimate_tokens
 
-# Re-use cost calculation from processor
-from app.session.processor import _calculate_step_cost
+# Re-use cost calculation from session utils
+from app.session.utils import calculate_step_cost as _calculate_step_cost
 
 logger = logging.getLogger(__name__)
 

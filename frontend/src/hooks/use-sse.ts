@@ -11,7 +11,7 @@ import { SSE_EVENTS } from "@/types/streaming";
 import { useChatStore } from "@/stores/chat-store";
 import { useConnectionStore } from "@/stores/connection-store";
 import { useArtifactStore } from "@/stores/artifact-store";
-import { useWorkspaceStore } from "@/stores/workspace-store";
+import { useWorkspaceStore, type WorkspaceTodo, type WorkspaceFile } from "@/stores/workspace-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { proxyApi } from "@/lib/proxy-api";
@@ -253,7 +253,7 @@ export function useSSE(streamId: string | null) {
         if (data.tool === "todo" && data.metadata) {
           const meta = data.metadata as { todos?: Array<{ content: string; status: string; activeForm?: string }> };
           if (meta.todos) {
-            useWorkspaceStore.getState().setTodos(meta.todos as any);
+            useWorkspaceStore.getState().setTodos(meta.todos as WorkspaceTodo[]);
             // Auto-open workspace and switch to progress tab
             const ws = useWorkspaceStore.getState();
             if (!ws.isOpen) {
@@ -272,10 +272,10 @@ export function useSSE(streamId: string | null) {
             ).then((res) => {
               if (res.files) {
                 useWorkspaceStore.getState().setWorkspaceFiles(
-                  res.files.map((f) => ({ name: f.name, path: f.path, type: f.type as any })),
+                  res.files.map((f) => ({ name: f.name, path: f.path, type: f.type as WorkspaceFile["type"] })),
                 );
               }
-            }).catch(() => {});
+            }).catch((e) => console.warn("[sse] Failed to refresh workspace files:", e));
           }
         }
 
@@ -402,7 +402,7 @@ export function useSSE(streamId: string | null) {
               stream_id: streamId,
               call_id: data.call_id,
               response: true,
-            }).catch(() => {});
+            }).catch((e) => console.warn("[sse] Failed to auto-approve permission:", e));
             return;
           }
         }

@@ -1,4 +1,4 @@
-from app.session.processor import _repair_tool_call_payload
+from app.session.utils import repair_tool_call_payload as _repair_tool_call_payload
 
 
 def test_repair_tool_payload_from_function_array_shape():

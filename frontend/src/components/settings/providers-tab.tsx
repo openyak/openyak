@@ -201,7 +201,7 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
     },
     onError: (err, { id }) => {
       setProviderMutatingId(null);
-      const detail = err instanceof ApiError ? ((err.body as any)?.detail ?? t('failedSaveKey')) : t('failedSaveKey');
+      const detail = err instanceof ApiError ? ((err.body as Record<string, string> | undefined)?.detail ?? t('failedSaveKey')) : t('failedSaveKey');
       setProviderError((prev) => ({ ...prev, [id]: detail }));
     },
   });
@@ -237,7 +237,7 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
       setActiveProvider("local");
     },
     onError: (err) => {
-      const detail = err instanceof ApiError ? ((err.body as any)?.detail ?? t('failedSaveKey')) : t('failedSaveKey');
+      const detail = err instanceof ApiError ? ((err.body as Record<string, string> | undefined)?.detail ?? t('failedSaveKey')) : t('failedSaveKey');
       setLocalError(detail);
     },
   });
@@ -252,7 +252,7 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
       }
     },
     onError: (err) => {
-      const detail = err instanceof ApiError ? ((err.body as any)?.detail ?? t('failedSaveKey')) : t('failedSaveKey');
+      const detail = err instanceof ApiError ? ((err.body as Record<string, string> | undefined)?.detail ?? t('failedSaveKey')) : t('failedSaveKey');
       setLocalError(detail);
     },
   });
@@ -378,7 +378,7 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
                 <Button variant="ghost" size="sm" onClick={() => resendMutation.mutate()} disabled={resendMutation.isPending}>{resendMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><RotateCw className="h-3.5 w-3.5 mr-1" />{t('resend')}</>}</Button>
                 <button onClick={() => { setVerificationStep(false); setCodeInput(""); }} className="text-xs text-[var(--text-tertiary)] hover:underline ml-auto">{t('back')}</button>
               </div>
-              {verifyMutation.isError && <div className="flex items-center gap-1.5 text-xs text-[var(--color-destructive)]"><AlertCircle className="h-3.5 w-3.5 shrink-0" /><span>{verifyMutation.error instanceof ProxyApiError ? ((verifyMutation.error.body as any)?.detail ?? t('verificationFailed')) : t('verificationFailed')}</span></div>}
+              {verifyMutation.isError && <div className="flex items-center gap-1.5 text-xs text-[var(--color-destructive)]"><AlertCircle className="h-3.5 w-3.5 shrink-0" /><span>{verifyMutation.error instanceof ProxyApiError ? ((verifyMutation.error.body as Record<string, string> | undefined)?.detail ?? t('verificationFailed')) : t('verificationFailed')}</span></div>}
               {resendMutation.isSuccess && <div className="flex items-center gap-1.5 text-xs text-[var(--color-success)]"><Check className="h-3.5 w-3.5 shrink-0" /><span>{t('newCodeSent')}</span></div>}
             </div>
           ) : (
@@ -389,7 +389,7 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
                 <Button variant="default" size="sm" onClick={() => loginMutation.mutate()} disabled={!emailInput || !passwordInput || loginMutation.isPending}>{loginMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : authMode === "login" ? t('signIn') : t('createAccount')}</Button>
                 <button onClick={() => setAuthMode(authMode === "login" ? "register" : "login")} className="text-xs text-[var(--brand-primary)] hover:underline">{authMode === "login" ? t('createAccountLink') : t('alreadyHaveAccount')}</button>
               </div>
-              {loginMutation.isError && <div className="flex items-center gap-1.5 text-xs text-[var(--color-destructive)]"><AlertCircle className="h-3.5 w-3.5 shrink-0" /><span>{loginMutation.error instanceof ProxyApiError ? ((loginMutation.error.body as any)?.detail ?? t('authFailed')) : t('connectionFailed')}</span></div>}
+              {loginMutation.isError && <div className="flex items-center gap-1.5 text-xs text-[var(--color-destructive)]"><AlertCircle className="h-3.5 w-3.5 shrink-0" /><span>{loginMutation.error instanceof ProxyApiError ? ((loginMutation.error.body as Record<string, string> | undefined)?.detail ?? t('authFailed')) : t('connectionFailed')}</span></div>}
             </div>
           )}
         </div>

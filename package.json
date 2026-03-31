@@ -5,7 +5,7 @@
   "description": "OpenYak — Your local AI assistant",
   "scripts": {
     "dev:frontend": "cd frontend && npm run dev",
-    "dev:backend": "cd backend && python -m uvicorn app.main:create_app --factory --reload --reload-dir app --host 0.0.0.0 --port 8000",
+    "dev:backend": "cd backend && ./venv/bin/python -m uvicorn app.main:create_app --factory --reload --reload-dir app --host 0.0.0.0 --port 8000",
     "dev:all": "concurrently -k -n backend,frontend -c blue,green \"npm run dev:backend\" \"npm run dev:frontend\"",
     "dev:desktop": "node scripts/dev-desktop.mjs",
     "build:frontend": "cd frontend && cross-env DESKTOP_BUILD=true NEXT_PUBLIC_DESKTOP_BUILD=true npm run build",

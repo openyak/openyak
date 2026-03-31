@@ -9,7 +9,7 @@ import {
   saveRemoteProvider,
   type RemoteProvider,
 } from "@/lib/remote-connection";
-import { useSettingsStore } from "@/stores/settings-store";
+import { useSettingsStore, type ActiveProvider } from "@/stores/settings-store";
 import { api } from "@/lib/api";
 import { API } from "@/lib/constants";
 import type { ModelInfo } from "@/types/model";
@@ -73,7 +73,7 @@ async function syncProviderAndModel(): Promise<void> {
   const zustandValue = ZUSTAND_PROVIDER_MAP[provider] ?? "byok";
   const store = useSettingsStore.getState();
   if (store.activeProvider !== zustandValue) {
-    store.setActiveProvider(zustandValue as any);
+    store.setActiveProvider(zustandValue as ActiveProvider);
   }
 
   // 4. Ensure selectedModel belongs to the correct provider

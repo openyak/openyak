@@ -25,23 +25,16 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agent.agent import AgentRegistry
 from app.agent.permission import (
-    GLOBAL_DEFAULTS,
     RejectedError,
     evaluate,
-    merge_rulesets,
 )
 from app.provider.registry import ProviderRegistry
 from app.schemas.chat import PromptRequest
 from app.session.llm import stream_llm
-from app.models.message import Message
 from app.session.manager import (
-    create_message,
     create_part,
-    get_message_history_for_llm,
     get_messages,
-    get_session,
     update_part_data,
-    update_session_title,
 )
 from app.session.retry import (
     MAX_RETRIES,
@@ -50,7 +43,6 @@ from app.session.retry import (
     retry_delay,
     sleep_with_abort,
 )
-from app.session.system_prompt import build_system_prompt
 from app.streaming.events import (
     AGENT_ERROR,
     DONE,
@@ -69,6 +61,12 @@ from app.streaming.manager import GenerationJob
 from app.tool.context import ToolContext
 from app.tool.registry import ToolRegistry
 from app.config import get_settings
+from app.session.utils import (
+    calculate_step_cost as _calculate_step_cost,
+    compute_safe_max_tokens as _compute_safe_max_tokens,
+    repair_tool_call_payload as _repair_tool_call_payload,
+    strip_image_content as _strip_image_content,
+)
 from app.utils.id import generate_ulid
 
 if TYPE_CHECKING:
@@ -92,33 +90,40 @@ def _cfg():
 
 
 # --- Daily web_search quota tracking (single-user desktop app) ---
-_search_quota_date: str = ""
-_search_quota_count: int = 0
-_search_credits_mode: bool = False  # Sticky: True once proxy confirms Credits billing
-_search_quota_lock = asyncio.Lock()
 
+class SearchQuotaTracker:
+    """Tracks daily web_search usage with automatic UTC-day reset.
 
-async def _get_search_quota() -> tuple[int, bool]:
-    """Return (count_today, is_credits_mode), resetting if UTC day changed."""
-    global _search_quota_date, _search_quota_count
-    async with _search_quota_lock:
+    Encapsulates mutable quota state behind a lock for thread safety.
+    """
+
+    def __init__(self) -> None:
+        self._date: str = ""
+        self._count: int = 0
+        self._credits_mode: bool = False  # Sticky: True once proxy confirms Credits billing
+        self._lock = asyncio.Lock()
+
+    def _reset_if_new_day(self) -> None:
         today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
-        if _search_quota_date != today:
-            _search_quota_date = today
-            _search_quota_count = 0
-        return _search_quota_count, _search_credits_mode
+        if self._date != today:
+            self._date = today
+            self._count = 0
+
+    async def get_quota(self) -> tuple[int, bool]:
+        """Return (count_today, is_credits_mode), resetting if UTC day changed."""
+        async with self._lock:
+            self._reset_if_new_day()
+            return self._count, self._credits_mode
+
+    async def increment(self, *, charged: bool = False) -> None:
+        async with self._lock:
+            self._reset_if_new_day()
+            self._count += 1
+            if charged:
+                self._credits_mode = True
 
 
-async def _increment_search_count(*, charged: bool = False) -> None:
-    global _search_quota_date, _search_quota_count, _search_credits_mode
-    async with _search_quota_lock:
-        today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
-        if _search_quota_date != today:
-            _search_quota_date = today
-            _search_quota_count = 0
-        _search_quota_count += 1
-        if charged:
-            _search_credits_mode = True
+_search_quota = SearchQuotaTracker()
 
 
 async def _track_session_file(
@@ -240,285 +245,6 @@ async def _save_artifact_as_file(
         )
     except Exception:
         logger.debug("Failed to save artifact as file: %s", filename, exc_info=True)
-
-
-def _is_jwt_expired(token: str, margin_seconds: int = 60) -> bool:
-    """Check if a JWT access token is expired (or nearly so)."""
-    import base64
-    import time
-
-    try:
-        parts = token.split(".")
-        if len(parts) != 3:
-            return False
-        payload_b64 = parts[1] + "=" * (-len(parts[1]) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(payload_b64))
-        exp = payload.get("exp", 0)
-        return time.time() >= (exp - margin_seconds)
-    except Exception:
-        return False
-
-
-def _trim_for_context(text: str, limit: int, kind: str) -> str:
-    if len(text) <= limit:
-        return text
-    head_len = int(limit * 0.75)
-    tail_len = max(0, limit - head_len)
-    head = text[:head_len]
-    tail = text[-tail_len:] if tail_len > 0 else ""
-    return (
-        f"{head}\n\n"
-        f"[{kind} truncated for context: original {len(text)} chars, kept {limit}]\n\n"
-        f"{tail}"
-    )
-
-
-def _patch_dangling_tool_calls(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Inject synthetic tool-result messages for dangling tool calls.
-
-    A dangling tool call occurs when an assistant message contains tool_calls
-    but there is no corresponding tool-result message (e.g., user cancelled
-    mid-generation). This breaks LLMs that expect paired tool_call/tool_result
-    messages (especially Anthropic).
-
-    Patches are inserted immediately after the assistant message that made the
-    dangling call, preserving correct message ordering.
-    """
-    # Collect IDs of all existing tool-result messages
-    existing_ids: set[str] = set()
-    for msg in messages:
-        if msg.get("role") == "tool":
-            tid = msg.get("tool_call_id")
-            if tid:
-                existing_ids.add(tid)
-
-    # Quick check: anything to patch?
-    needs_patch = False
-    for msg in messages:
-        if msg.get("role") != "assistant":
-            continue
-        for tc in msg.get("tool_calls") or []:
-            tc_id = tc.get("id")
-            if tc_id and tc_id not in existing_ids:
-                needs_patch = True
-                break
-        if needs_patch:
-            break
-
-    if not needs_patch:
-        return messages
-
-    # Build patched list with synthetic tool-result messages
-    patched: list[dict[str, Any]] = []
-    patch_count = 0
-    patched_ids: set[str] = set()
-    for msg in messages:
-        patched.append(msg)
-        if msg.get("role") != "assistant":
-            continue
-        for tc in msg.get("tool_calls") or []:
-            tc_id = tc.get("id")
-            if tc_id and tc_id not in existing_ids and tc_id not in patched_ids:
-                fn = tc.get("function") or {}
-                patched.append({
-                    "role": "tool",
-                    "tool_call_id": tc_id,
-                    "content": "[Tool call was interrupted and did not return a result.]",
-                })
-                patched_ids.add(tc_id)
-                patch_count += 1
-
-    logger.warning(
-        "Patched %d dangling tool call(s) with synthetic error responses",
-        patch_count,
-    )
-    return patched
-
-
-def _sanitize_llm_messages_for_request(
-    messages: list[dict[str, Any]],
-    *,
-    session_id: str,
-    model_max_context: int | None = None,
-) -> list[dict[str, Any]]:
-    """Clamp oversized LLM request context to prevent single-turn explosions.
-
-    When *model_max_context* is provided, the character budget scales with the
-    model's actual context window (``tokens * 3.5`` as a rough chars-per-token
-    estimate for mixed English/CJK content). Falls back to the hard-coded
-    160 000 char limit if unknown.
-    """
-    # Fix dangling tool calls before any other processing
-    messages = _patch_dangling_tool_calls(messages)
-
-    # Dynamic char budget based on model context window
-    if model_max_context:
-        max_request_chars = min(int(model_max_context * 3.5), 500_000)
-    else:
-        max_request_chars = _cfg().max_request_context_chars  # 160k fallback
-
-    sanitized: list[dict[str, Any]] = []
-
-    for msg in messages:
-        m = dict(msg)
-        role = str(m.get("role", ""))
-        content = m.get("content")
-        if isinstance(content, str):
-            if role == "tool":
-                m["content"] = _trim_for_context(
-                    content, _cfg().max_tool_output_chars, "tool output"
-                )
-            elif role == "assistant":
-                m["content"] = _trim_for_context(
-                    content, _cfg().max_assistant_content_chars, "assistant content"
-                )
-        sanitized.append(m)
-
-    total_chars = 0
-    for m in sanitized:
-        c = m.get("content")
-        if isinstance(c, str):
-            total_chars += len(c)
-
-    if total_chars <= max_request_chars:
-        return sanitized
-
-    trimmed: list[dict[str, Any]] = []
-    running = 0
-    for m in reversed(sanitized):
-        c = m.get("content")
-        c_len = len(c) if isinstance(c, str) else 0
-        if running + c_len > max_request_chars and trimmed:
-            continue
-        trimmed.append(m)
-        running += c_len
-    trimmed.reverse()
-
-    logger.warning(
-        "Context hard-clamped for session %s: chars=%d -> %d, messages=%d -> %d (budget=%d)",
-        session_id,
-        total_chars,
-        running,
-        len(sanitized),
-        len(trimmed),
-        max_request_chars,
-    )
-    return trimmed
-
-
-def _strip_image_content(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Remove image_url entries from messages when the model doesn't support vision.
-
-    Converts multimodal content arrays back to plain text strings.
-    """
-    result = []
-    for msg in messages:
-        content = msg.get("content")
-        if isinstance(content, list):
-            text_parts = [
-                item.get("text", "")
-                for item in content
-                if isinstance(item, dict) and item.get("type") == "text"
-            ]
-            m = dict(msg)
-            m["content"] = "\n".join(text_parts) if text_parts else "(image)"
-            result.append(m)
-        else:
-            result.append(msg)
-    return result
-
-
-def _estimate_llm_message_tokens(messages: list[dict[str, Any]]) -> int:
-    total_chars = 0
-    for m in messages:
-        c = m.get("content")
-        if isinstance(c, str):
-            total_chars += len(c)
-        elif isinstance(c, list):
-            for item in c:
-                if isinstance(item, dict):
-                    if item.get("type") == "text":
-                        total_chars += len(str(item.get("text", "")))
-                    elif item.get("type") == "image_url":
-                        total_chars += 512
-    return max(1, total_chars // 4)
-
-
-def _compute_safe_max_tokens(
-    messages: list[dict[str, Any]],
-    *,
-    model_max_context: int,
-    model_max_output: int | None,
-) -> int:
-    estimated_input = _estimate_llm_message_tokens(messages)
-    reserved = max(2048, int(model_max_context * 0.08))
-    remaining = model_max_context - estimated_input - reserved
-
-    hard_cap = model_max_output or _cfg().hard_max_output_tokens
-    hard_cap = max(_cfg().min_output_tokens, min(hard_cap, _cfg().hard_max_output_tokens))
-
-    if remaining <= _cfg().min_output_tokens:
-        return _cfg().min_output_tokens
-    return max(_cfg().min_output_tokens, min(hard_cap, remaining))
-
-
-def _repair_tool_call_payload(
-    tool_name: str, tool_args: Any
-) -> tuple[str, dict[str, Any]]:
-    """Repair malformed tool-call payloads emitted by some models."""
-    name = tool_name or ""
-    args: Any = tool_args if tool_args is not None else {}
-
-    if isinstance(args, list) and args and isinstance(args[0], dict):
-        first = args[0]
-        fn = first.get("function") if isinstance(first.get("function"), dict) else None
-        if fn:
-            if not name and isinstance(fn.get("name"), str):
-                name = fn["name"]
-            params = fn.get("parameters")
-            if isinstance(params, dict):
-                args = params
-
-    if isinstance(args, dict) and isinstance(args.get("function"), dict):
-        fn = args["function"]
-        if not name and isinstance(fn.get("name"), str):
-            name = fn["name"]
-        params = fn.get("parameters")
-        if isinstance(params, dict):
-            args = params
-
-    if isinstance(args, dict) and isinstance(args.get("parameters"), dict):
-        args = args["parameters"]
-
-    if not isinstance(args, dict):
-        args = {"_raw": args}
-
-    return name, args
-
-
-def _calculate_step_cost(
-    usage_data: dict[str, Any],
-    model_info: Any,
-) -> float:
-    """Calculate per-step USD cost from canonical token usage."""
-    if not usage_data or not model_info or not model_info.pricing:
-        return 0.0
-
-    prompt_price = model_info.pricing.prompt or 0
-    completion_price = model_info.pricing.completion or 0
-    if prompt_price <= 0 and completion_price <= 0:
-        return 0.0
-
-    input_tokens = usage_data.get("input", 0)
-    output_tokens = usage_data.get("output", 0)
-    reasoning_tokens = usage_data.get("reasoning", 0)
-
-    raw_cost = (
-        input_tokens * prompt_price / 1_000_000
-        + (output_tokens + reasoning_tokens) * completion_price / 1_000_000
-    )
-
-    return raw_cost
 
 
 # ---------------------------------------------------------------------------
@@ -664,7 +390,7 @@ class SessionProcessor:
                 )
 
                 _exclude_tools: set[str] | None = None
-                _sq_count, _sq_credits = await _get_search_quota()
+                _sq_count, _sq_credits = await _search_quota.get_quota()
                 if not _sq_credits and _sq_count >= get_settings().daily_search_limit:
                     _exclude_tools = {"web_search"}
 
@@ -1175,7 +901,7 @@ class SessionProcessor:
                     # Web search quota tracking
                     if tool.id == "web_search" and result.success:
                         charged = bool(result.metadata and result.metadata.get("charged"))
-                        await _increment_search_count(charged=charged)
+                        await _search_quota.increment(charged=charged)
 
                     # Track session files from write/edit tools
                     if (
@@ -1293,59 +1019,23 @@ class SessionProcessor:
                     timeout_msg = f"Tool timed out after {_cfg().tool_timeout}s: {tool.id}"
                     logger.warning(timeout_msg)
                     job.publish(SSEEvent(TOOL_ERROR, {"call_id": call_id, "error": timeout_msg}))
-                    # Update part to error state
-                    async with session_factory() as db:
-                        async with db.begin():
-                            await update_part_data(
-                                db,
-                                tool_part_id,
-                                {
-                                    "type": "tool",
-                                    "tool": tool.id,
-                                    "call_id": call_id,
-                                    "state": {"status": "error", "input": tool_args, "output": timeout_msg},
-                                },
-                            )
+                    await _update_tool_part_error(
+                        session_factory, tool_part_id, tool.id, call_id, tool_args, timeout_msg,
+                    )
                     continue
 
                 except RejectedError as e:
                     rejected_msg = f"Permission denied: {e.permission}"
-                    job.publish(
-                        SSEEvent(TOOL_ERROR, {"call_id": call_id, "error": rejected_msg})
+                    job.publish(SSEEvent(TOOL_ERROR, {"call_id": call_id, "error": rejected_msg}))
+                    await _update_tool_part_error(
+                        session_factory, tool_part_id, tool.id, call_id, tool_args, rejected_msg,
                     )
-                    try:
-                        async with session_factory() as db:
-                            async with db.begin():
-                                await update_part_data(
-                                    db,
-                                    tool_part_id,
-                                    {
-                                        "type": "tool",
-                                        "tool": tool.id,
-                                        "call_id": call_id,
-                                        "state": {"status": "error", "input": tool_args, "output": rejected_msg},
-                                    },
-                                )
-                    except Exception:
-                        logger.warning("Failed to persist RejectedError state for tool %s", tool.id)
                 except Exception as e:
                     logger.exception("Tool execution error: %s", tool.id)
                     job.publish(SSEEvent(TOOL_ERROR, {"call_id": call_id, "error": str(e)}))
-                    try:
-                        async with session_factory() as db:
-                            async with db.begin():
-                                await update_part_data(
-                                    db,
-                                    tool_part_id,
-                                    {
-                                        "type": "tool",
-                                        "tool": tool.id,
-                                        "call_id": call_id,
-                                        "state": {"status": "error", "input": tool_args, "output": str(e)},
-                                    },
-                                )
-                    except Exception:
-                        logger.warning("Failed to persist error state for tool %s", tool.id)
+                    await _update_tool_part_error(
+                        session_factory, tool_part_id, tool.id, call_id, tool_args, str(e),
+                    )
 
         # --- Cost tracking ---
         if self.usage_data and sp.model_info:
@@ -1512,5 +1202,31 @@ async def _persist_tool_error(
                     },
                 },
             )
+
+
+async def _update_tool_part_error(
+    session_factory: async_sessionmaker[AsyncSession],
+    part_id: str,
+    tool_name: str,
+    call_id: str,
+    tool_args: dict[str, Any],
+    error_msg: str,
+) -> None:
+    """Update an existing tool part to error state. Logs warning on failure."""
+    try:
+        async with session_factory() as db:
+            async with db.begin():
+                await update_part_data(
+                    db,
+                    part_id,
+                    {
+                        "type": "tool",
+                        "tool": tool_name,
+                        "call_id": call_id,
+                        "state": {"status": "error", "input": tool_args, "output": error_msg},
+                    },
+                )
+    except Exception:
+        logger.warning("Failed to persist error state for tool %s", tool_name)
 
 

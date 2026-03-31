@@ -10,6 +10,7 @@ import { StreamingMessage } from "./assistant-message";
 import { FileChip } from "@/components/chat/file-chip";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { FileAttachment } from "@/types/chat";
+import { extractTextFromPartResponses } from "@/lib/utils";
 import type { MessageResponse, PartData } from "@/types/message";
 
 /** A user message or a group of consecutive assistant messages. */
@@ -212,10 +213,8 @@ export function MessageList({
     if (messages.length === 0) return true;
     const hasPendingInDb = messages.some((m) => {
       if ((m.data as { role: string }).role !== "user") return false;
-      const texts = m.parts
-        .filter((p) => p.data.type === "text")
-        .map((p) => (p.data as { type: "text"; text: string }).text);
-      return texts.some((t) => t === pendingUserText);
+      const fullText = extractTextFromPartResponses(m.parts);
+      return fullText.includes(pendingUserText);
     });
     return !hasPendingInDb;
   }, [pendingUserText, messages]);

@@ -9,7 +9,7 @@ import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { useChatStore } from "@/stores/chat-store";
 import { useArtifactStore } from "@/stores/artifact-store";
 import { useActivityStore } from "@/stores/activity-store";
-import { useWorkspaceStore } from "@/stores/workspace-store";
+import { useWorkspaceStore, type WorkspaceTodo, type WorkspaceFile } from "@/stores/workspace-store";
 import { api } from "@/lib/api";
 import { API, queryKeys } from "@/lib/constants";
 import { ChatHeader } from "./chat-header";
@@ -65,7 +65,7 @@ export function ChatView({ sessionId }: ChatViewProps) {
     const firstUser = messages.find((m) => m.data?.role === "user");
     if (!firstUser) return;
     const textPart = firstUser.parts.find((p) => p.data?.type === "text");
-    const text = (textPart?.data as any)?.text;
+    const text = textPart?.data?.type === "text" ? (textPart.data as { type: "text"; text: string }).text : undefined;
     if (!text) return;
     const title = text.trim().slice(0, 60);
     if (!title) return;
@@ -75,7 +75,7 @@ export function ChatView({ sessionId }: ChatViewProps) {
         queryKeys.sessions.detail(sessionId),
         (old) => (old ? { ...old, title } : old),
       );
-    }).catch(() => {});
+    }).catch((e) => console.warn("[chat-view] Failed to auto-set title:", e));
   }, [session, messages, sessionId, qc]);
 
   // Close right-side panels when switching sessions; abort generation if active.
@@ -99,7 +99,7 @@ export function ChatView({ sessionId }: ChatViewProps) {
       API.SESSIONS.TODOS(sessionId),
     ).then((res) => {
       if (res.todos && res.todos.length > 0) {
-        useWorkspaceStore.getState().setTodos(res.todos as any);
+        useWorkspaceStore.getState().setTodos(res.todos as WorkspaceTodo[]);
       }
     }).catch(() => {
       // Non-critical — todos may not exist yet
@@ -110,7 +110,7 @@ export function ChatView({ sessionId }: ChatViewProps) {
     ).then((res) => {
       if (res.files && res.files.length > 0) {
         useWorkspaceStore.getState().setWorkspaceFiles(
-          res.files.map((f) => ({ name: f.name, path: f.path, type: f.type as any })),
+          res.files.map((f) => ({ name: f.name, path: f.path, type: f.type as WorkspaceFile["type"] })),
         );
       }
     }).catch(() => {

@@ -348,8 +348,8 @@ class SessionPrompt:
         from app.session.processor import (
             SessionProcessor,
             _delete_empty_assistant_messages,
-            _sanitize_llm_messages_for_request,
         )
+        from app.session.utils import sanitize_llm_messages_for_request as _sanitize_llm_messages_for_request
         from app.session.compaction import run_compaction, should_compact
         from app.session.manager import create_message as _create_message, get_message_history_for_llm
 
@@ -406,7 +406,7 @@ class SessionPrompt:
             if self.step == 1:
                 _settings = get_settings()
                 if _settings.proxy_url and _settings.proxy_refresh_token:
-                    from app.session.processor import _is_jwt_expired
+                    from app.session.utils import is_jwt_expired as _is_jwt_expired
                     _token = getattr(_settings, "proxy_token", "")
                     if _token and _is_jwt_expired(_token):
                         logger.info("Proxy token expired, refreshing before LLM call")

@@ -152,7 +152,8 @@ export default function MobileSettingsPage() {
         await videoRef.current.play();
       }
       if ("BarcodeDetector" in window) {
-        const detector = new (window as any).BarcodeDetector({ formats: ["qr_code"] });
+        // BarcodeDetector is a browser API not yet in TypeScript's lib definitions
+        const detector = new (window as unknown as { BarcodeDetector: new (opts: { formats: string[] }) => { detect: (source: HTMLVideoElement) => Promise<Array<{ rawValue: string }>> } }).BarcodeDetector({ formats: ["qr_code"] });
         const scanLoop = async () => {
           if (!videoRef.current || !scanningRef.current) return;
           try {

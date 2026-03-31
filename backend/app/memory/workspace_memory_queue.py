@@ -271,7 +271,7 @@ class WorkspaceMemoryUpdateQueue:
         """Persist memory-refresh usage as a synthetic assistant message."""
         try:
             from app.session.manager import create_message
-            from app.session.processor import _calculate_step_cost
+            from app.session.utils import calculate_step_cost as _calculate_step_cost
 
             resolved = self._provider_registry.resolve_model(model_id) if model_id else None
             model_info = resolved[1] if resolved else None

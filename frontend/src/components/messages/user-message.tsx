@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { FileChip } from "@/components/chat/file-chip";
 import { uploadFile, browseFiles } from "@/lib/upload";
 import type { FileAttachment } from "@/types/chat";
+import { extractTextFromPartResponses } from "@/lib/utils";
 import type { MessageResponse, FilePart as FilePartType } from "@/types/message";
 
 interface UserMessageProps {
@@ -29,15 +30,11 @@ export function UserMessage({ message, isNew = true, onEditAndResend, isGenerati
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const textParts = message.parts
-    .filter((p) => p.data.type === "text")
-    .map((p) => (p.data as { type: "text"; text: string }).text);
-
   const fileParts = message.parts
     .filter((p) => p.data.type === "file")
     .map((p) => p.data as FilePartType);
 
-  const text = textParts.join("\n") || (fileParts.length > 0 ? "" : "(empty message)");
+  const text = extractTextFromPartResponses(message.parts) || (fileParts.length > 0 ? "" : "(empty message)");
 
   const handleStartEdit = useCallback(() => {
     setEditText(text);

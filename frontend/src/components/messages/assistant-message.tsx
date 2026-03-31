@@ -6,6 +6,7 @@ import { motion } from "framer-motion";
 import { MessageContent } from "./message-content";
 import { MessageActions } from "./message-actions";
 import { useChatStore } from "@/stores/chat-store";
+import { extractTextFromParts } from "@/lib/utils";
 import type { MessageResponse, PartData, ToolPart, StepStartPart, StepFinishPart } from "@/types/message";
 import { computeDuration, type ActivityData, type ChainItem } from "@/stores/activity-store";
 
@@ -23,10 +24,7 @@ export function AssistantMessage({ message, combinedParts, onRegenerate, isNew =
   const parts = combinedParts ?? message.parts.map((p) => p.data as PartData);
 
   // Extract text content for copy
-  const textContent = parts
-    .filter((p) => p.type === "text")
-    .map((p) => (p as { type: "text"; text: string }).text)
-    .join("\n");
+  const textContent = extractTextFromParts(parts);
 
   // Build activity data from parts
   const activityData = useMemo<ActivityData | null>(() => {

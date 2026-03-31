@@ -1,5 +1,6 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
+import type { PartData, TextPart } from "@/types/message";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -29,6 +30,22 @@ export function formatRelativeTime(date: string | Date): string {
 export function truncate(str: string, maxLength: number): string {
   if (str.length <= maxLength) return str;
   return str.slice(0, maxLength - 1) + "\u2026";
+}
+
+/** Extract joined text from an array of PartData (e.g. message.parts.map(p => p.data)). */
+export function extractTextFromParts(parts: PartData[]): string {
+  return parts
+    .filter((p): p is TextPart => p.type === "text")
+    .map((p) => p.text)
+    .join("\n");
+}
+
+/** Extract joined text from PartResponse[] (API response shape with nested .data). */
+export function extractTextFromPartResponses(parts: Array<{ data: PartData }>): string {
+  return parts
+    .filter((p) => p.data.type === "text")
+    .map((p) => (p.data as TextPart).text)
+    .join("\n");
 }
 
 export function groupSessionsByDate<T extends { time_updated: string }>(

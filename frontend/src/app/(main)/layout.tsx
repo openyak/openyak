@@ -41,6 +41,7 @@ import {
 } from "@/lib/constants";
 import { desktopAPI } from "@/lib/tauri-api";
 import { useTranslation } from "react-i18next";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 
 function useIsDesktop() {
   const [isDesktop, setIsDesktop] = useState(false);
@@ -296,11 +297,13 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
       {showWorkspace && <WorkspacePanel />}
 
       {/* Overlay panels (mutually exclusive, z-35) - cover workspace when open */}
-      <AnimatePresence mode="wait">
-        {activityIsOpen && <ActivityPanel key="activity" />}
-        {artifactIsOpen && <ArtifactPanel key="artifact" />}
-        {planReviewIsOpen && <PlanReviewPanel key="plan-review" />}
-      </AnimatePresence>
+      <ErrorBoundary>
+        <AnimatePresence mode="wait">
+          {activityIsOpen && <ActivityPanel key="activity" />}
+          {artifactIsOpen && <ArtifactPanel key="artifact" />}
+          {planReviewIsOpen && <PlanReviewPanel key="plan-review" />}
+        </AnimatePresence>
+      </ErrorBoundary>
 
       {/* Upgrade prompt dialog */}
       <UpgradePrompt />

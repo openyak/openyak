@@ -59,7 +59,7 @@ export function resetBackendUrl(newUrl?: string): void {
 // Auto-register desktop backend event listeners
 if (IS_DESKTOP && typeof window !== "undefined") {
   desktopAPI.onBackendRestart((newUrl) => {
-    console.log("Backend restarted, new URL:", newUrl);
+    // Backend restart detected — update URL for all future API calls.
     resetBackendUrl(newUrl);
   });
   desktopAPI.onBackendCrashLog((log) => {

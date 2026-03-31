@@ -1,7 +1,7 @@
 """Token accounting invariants in session processor."""
 
 from app.schemas.provider import ModelCapabilities, ModelInfo, ModelPricing
-from app.session.processor import _calculate_step_cost
+from app.session.utils import calculate_step_cost as _calculate_step_cost
 
 
 def _model(prompt_per_million: float, completion_per_million: float) -> ModelInfo:

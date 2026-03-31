@@ -4,6 +4,7 @@ import { type ReactNode, useEffect, useState } from "react";
 import { MotionConfig } from "framer-motion";
 import { ThemeProvider } from "./theme-provider";
 import { QueryProvider } from "./query-provider";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { Toaster } from "sonner";
 import { getBackendUrl, IS_DESKTOP } from "@/lib/constants";
 import "@/i18n/config";
@@ -51,7 +52,9 @@ export function AppProviders({ children }: { children: ReactNode }) {
     <ThemeProvider>
       <QueryProvider>
         <LanguageSync />
-        {children}
+        <ErrorBoundary>
+          {children}
+        </ErrorBoundary>
         <Toaster
           position="top-right"
           richColors
