@@ -101,6 +101,40 @@ class Settings(BaseSettings):
     # --- Full-Text Search ---
     fts_enabled: bool = True  # built-in FTS5, enabled by default (zero external deps)
     fts_auto_index: bool = True  # auto-index workspace on first access
+    fts_poll_interval: float = 30.0  # seconds between re-index polls
+    fts_max_file_size: int = 500_000  # bytes — skip files larger than this
+
+    # --- Agent Limits ---
+    max_steps: int = 50  # hard cap on agent loop iterations
+    max_continuation_attempts: int = 10  # max nudges for incomplete todos
+    max_tool_output_chars: int = 20_000  # truncate individual tool results beyond this
+    max_assistant_content_chars: int = 40_000  # truncate accumulated assistant text
+    max_request_context_chars: int = 160_000  # hard cap on total prompt size
+    hard_max_output_tokens: int = 8192  # max tokens the model can generate per step
+    min_output_tokens: int = 256  # minimum output tokens floor
+    tool_timeout: int = 300  # seconds — per-tool execution timeout
+    max_concurrent_generations: int = 20  # max parallel generation jobs
+
+    # --- Tool Limits ---
+    bash_timeout: int = 120  # default bash command timeout (seconds)
+    bash_max_timeout: int = 600  # maximum bash timeout (seconds)
+    subtask_max_depth: int = 3  # max nesting for sub-agent tasks
+    subtask_timeout: int = 600  # seconds — sub-agent task timeout
+
+    # --- Loop Detection ---
+    loop_warn_threshold: int = 3  # warn after N repeated identical tool calls
+    loop_hard_limit: int = 5  # hard-block after N repeated identical tool calls
+
+    # --- Scheduler ---
+    scheduler_poll_interval: int = 30  # seconds between task schedule checks
+    scheduler_max_concurrent: int = 3  # max concurrent scheduled tasks
+
+    # --- Shutdown ---
+    shutdown_timeout: float = 8.0  # seconds to wait for active jobs on shutdown
+
+    # --- Rate Limiting (remote access) ---
+    rate_limit_max_requests: int = 120  # max requests per minute
+    rate_limit_max_failed_auth: int = 5  # max failed auth attempts per minute
 
     # --- OpenClaw Bridge (Messaging Channels) ---
     openclaw_enabled: bool = False  # OPENYAK_OPENCLAW_ENABLED

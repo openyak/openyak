@@ -14,10 +14,18 @@ import logging
 import time
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.dependencies import (
+    AgentRegistryDep,
+    IndexManagerDep,
+    ProviderRegistryDep,
+    SessionFactoryDep,
+    StreamManagerDep,
+    ToolRegistryDep,
+)
 from app.schemas.chat import PromptRequest
 from app.session.manager import create_session, get_session
 from app.session.processor import run_generation
@@ -76,12 +84,6 @@ class ChatCompletionRequest(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _get_stream_manager(request: Request) -> StreamManager:
-    if not hasattr(request.app.state, "stream_manager"):
-        request.app.state.stream_manager = StreamManager()
-    return request.app.state.stream_manager
-
-
 def _resolve_agent(model: str) -> str:
     """Map model ID to agent name. Falls back to 'build'."""
     if model in _AGENT_MODELS:
@@ -91,14 +93,11 @@ def _resolve_agent(model: str) -> str:
     return "build"
 
 
-def _resolve_default_model(request: Request) -> str | None:
+def _resolve_default_model(registry: ProviderRegistryDep) -> str | None:
     """Pick the best model for external API calls (e.g. from OpenClaw).
 
     Priority: subscription > Anthropic > paid OpenRouter > free.
     """
-    registry = getattr(request.app.state, "provider_registry", None)
-    if registry is None:
-        return None
     all_models = registry.all_models()
     if not all_models:
         return None
@@ -264,7 +263,7 @@ async def _run_with_semaphore(sm: StreamManager, job: GenerationJob, coro) -> No
 
 
 async def _get_or_create_session(
-    request: Request,
+    session_factory: SessionFactoryDep,
     channel_user_key: str,
     sender_name: str | None = None,
 ) -> str:
@@ -273,7 +272,6 @@ async def _get_or_create_session(
     Uses a simple lookup: search sessions whose slug matches the channel key.
     The slug field is repurposed as a stable channel identifier.
     """
-    session_factory = request.app.state.session_factory
     async with session_factory() as db:
         from sqlalchemy import select
         from app.models.session import Session
@@ -338,21 +336,27 @@ async def list_models():
 
 
 @router.post("/v1/chat/completions")
-async def chat_completions(request: Request, body: ChatCompletionRequest):
+async def chat_completions(
+    body: ChatCompletionRequest,
+    sm: StreamManagerDep,
+    session_factory: SessionFactoryDep,
+    provider_registry: ProviderRegistryDep,
+    agent_registry: AgentRegistryDep,
+    tool_registry: ToolRegistryDep,
+    index_manager: IndexManagerDep,
+):
     """OpenAI-compatible chat completions endpoint.
 
     Delegates to OpenYak's full agent loop (run_generation) and translates
     SSE events into the OpenAI streaming format.
     """
-    sm = _get_stream_manager(request)
-
     # Extract sender info from OpenClaw's system messages (for session title)
     sender_info = _extract_sender_info(body.messages)
     sender_name = sender_info["name"] or sender_info["label"]
 
     # Resolve session
     if body.user:
-        session_id = await _get_or_create_session(request, body.user, sender_name=sender_name)
+        session_id = await _get_or_create_session(session_factory, body.user, sender_name=sender_name)
     else:
         session_id = generate_ulid()
 
@@ -372,7 +376,7 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
     job.interactive = False
 
     # Use the user's best model (subscription > anthropic > paid > free)
-    model_id = _resolve_default_model(request)
+    model_id = _resolve_default_model(provider_registry)
     logger.info("OpenAI-compat: agent=%s, model=%s", agent, model_id)
 
     prompt_request = PromptRequest(
@@ -385,11 +389,11 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
     coro = run_generation(
         job,
         prompt_request,
-        session_factory=request.app.state.session_factory,
-        provider_registry=request.app.state.provider_registry,
-        agent_registry=request.app.state.agent_registry,
-        tool_registry=request.app.state.tool_registry,
-        index_manager=getattr(request.app.state, "index_manager", None),
+        session_factory=session_factory,
+        provider_registry=provider_registry,
+        agent_registry=agent_registry,
+        tool_registry=tool_registry,
+        index_manager=index_manager,
     )
     task = asyncio.create_task(
         _run_with_semaphore(sm, job, coro),

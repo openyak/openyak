@@ -11,6 +11,14 @@ from fastapi.responses import StreamingResponse
 
 from sqlalchemy import delete as sa_delete
 
+from app.dependencies import (
+    AgentRegistryDep,
+    IndexManagerDep,
+    ProviderRegistryDep,
+    SessionFactoryDep,
+    StreamManagerDep,
+    ToolRegistryDep,
+)
 from app.models.todo import Todo
 from app.schemas.chat import AbortRequest, EditAndResendRequest, PromptRequest, PromptResponse, RespondRequest
 from app.session.manager import delete_messages_after, update_message_file_parts, update_message_text
@@ -25,13 +33,6 @@ router = APIRouter()
 
 # Heartbeat interval (seconds) — prevents proxy/CDN timeout
 _HEARTBEAT_INTERVAL = 15.0
-
-
-def _get_stream_manager(request: Request) -> StreamManager:
-    """Get or create the StreamManager singleton on app state."""
-    if not hasattr(request.app.state, "stream_manager"):
-        request.app.state.stream_manager = StreamManager()
-    return request.app.state.stream_manager
 
 
 def _on_task_done(task: asyncio.Task[None], *, job: GenerationJob) -> None:
@@ -67,10 +68,16 @@ async def _run_with_semaphore(sm: StreamManager, job: GenerationJob, coro) -> No
 
 
 @router.post("/chat/prompt", response_model=PromptResponse)
-async def start_prompt(request: Request, body: PromptRequest) -> PromptResponse:
+async def start_prompt(
+    body: PromptRequest,
+    sm: StreamManagerDep,
+    session_factory: SessionFactoryDep,
+    provider_registry: ProviderRegistryDep,
+    agent_registry: AgentRegistryDep,
+    tool_registry: ToolRegistryDep,
+    index_manager: IndexManagerDep,
+) -> PromptResponse:
     """Start a new generation. Returns stream_id for SSE subscription."""
-    sm = _get_stream_manager(request)
-
     session_id = body.session_id or generate_ulid()
     stream_id = generate_ulid()
 
@@ -80,11 +87,11 @@ async def start_prompt(request: Request, body: PromptRequest) -> PromptResponse:
     coro = run_generation(
         job,
         body,
-        session_factory=request.app.state.session_factory,
-        provider_registry=request.app.state.provider_registry,
-        agent_registry=request.app.state.agent_registry,
-        tool_registry=request.app.state.tool_registry,
-        index_manager=getattr(request.app.state, "index_manager", None),
+        session_factory=session_factory,
+        provider_registry=provider_registry,
+        agent_registry=agent_registry,
+        tool_registry=tool_registry,
+        index_manager=index_manager,
     )
     task = asyncio.create_task(
         _run_with_semaphore(sm, job, coro),
@@ -97,13 +104,19 @@ async def start_prompt(request: Request, body: PromptRequest) -> PromptResponse:
 
 
 @router.post("/chat/edit", response_model=PromptResponse)
-async def edit_and_resend(request: Request, body: EditAndResendRequest) -> PromptResponse:
+async def edit_and_resend(
+    body: EditAndResendRequest,
+    sm: StreamManagerDep,
+    session_factory: SessionFactoryDep,
+    provider_registry: ProviderRegistryDep,
+    agent_registry: AgentRegistryDep,
+    tool_registry: ToolRegistryDep,
+    index_manager: IndexManagerDep,
+) -> PromptResponse:
     """Edit a user message, delete all subsequent messages, and re-generate."""
-    sm = _get_stream_manager(request)
     stream_id = generate_ulid()
 
     # Atomic DB operation: update message text + delete subsequent messages
-    session_factory = request.app.state.session_factory
     async with session_factory() as db:
         async with db.begin():
             await update_message_text(db, body.message_id, body.text)
@@ -132,10 +145,10 @@ async def edit_and_resend(request: Request, body: EditAndResendRequest) -> Promp
         job,
         edit_request,
         session_factory=session_factory,
-        provider_registry=request.app.state.provider_registry,
-        agent_registry=request.app.state.agent_registry,
-        tool_registry=request.app.state.tool_registry,
-        index_manager=getattr(request.app.state, "index_manager", None),
+        provider_registry=provider_registry,
+        agent_registry=agent_registry,
+        tool_registry=tool_registry,
+        index_manager=index_manager,
         skip_user_message=True,
     )
     task = asyncio.create_task(
@@ -149,13 +162,12 @@ async def edit_and_resend(request: Request, body: EditAndResendRequest) -> Promp
 
 
 @router.get("/chat/stream/{stream_id}")
-async def stream_events(request: Request, stream_id: str, last_event_id: int = 0):
+async def stream_events(sm: StreamManagerDep, stream_id: str, last_event_id: int = 0):
     """SSE endpoint. Supports reconnect via ?last_event_id=N.
 
     Includes heartbeat every 15s to prevent proxy/CDN timeouts (matching OpenCode).
     Sets job.interactive=True to enable permission ask and question blocking.
     """
-    sm = _get_stream_manager(request)
     job = sm.get_job(stream_id)
 
     if job is None:
@@ -208,9 +220,8 @@ async def stream_events(request: Request, stream_id: str, last_event_id: int = 0
 
 
 @router.post("/chat/abort")
-async def abort_generation(request: Request, body: AbortRequest) -> dict:
+async def abort_generation(sm: StreamManagerDep, body: AbortRequest) -> dict:
     """Abort an active generation."""
-    sm = _get_stream_manager(request)
     job = sm.get_job(body.stream_id)
     if job is None:
         return {"status": "not_found"}
@@ -219,16 +230,14 @@ async def abort_generation(request: Request, body: AbortRequest) -> dict:
 
 
 @router.get("/chat/active")
-async def list_active(request: Request) -> list[dict[str, str]]:
+async def list_active(sm: StreamManagerDep) -> list[dict[str, str]]:
     """List active generation jobs."""
-    sm = _get_stream_manager(request)
     return sm.active_jobs()
 
 
 @router.post("/chat/respond")
-async def respond_to_prompt(request: Request, body: RespondRequest) -> dict:
+async def respond_to_prompt(request: Request, sm: StreamManagerDep, body: RespondRequest) -> dict:
     """User responds to question tool or permission request."""
-    sm = _get_stream_manager(request)
     job = sm.get_job(body.stream_id)
     if job is None:
         return {"status": "not_found"}

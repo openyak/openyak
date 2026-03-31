@@ -173,12 +173,10 @@ class StreamManager:
     Thread-safe singleton for creating, looking up, and cleaning up jobs.
     """
 
-    # Max number of concurrent generation tasks
-    MAX_CONCURRENT = 20
-
     def __init__(self):
+        from app.config import get_settings as _get_settings
         self._jobs: dict[str, GenerationJob] = {}
-        self._semaphore = asyncio.Semaphore(self.MAX_CONCURRENT)
+        self._semaphore = asyncio.Semaphore(_get_settings().max_concurrent_generations)
 
     def create_job(self, stream_id: str, session_id: str) -> GenerationJob:
         """Create a new generation job and auto-cleanup old completed ones."""

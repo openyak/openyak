@@ -34,6 +34,9 @@ from app.streaming.events import (
 from app.streaming.manager import GenerationJob
 from app.utils.token import estimate_tokens
 
+# Re-use cost calculation from processor
+from app.session.processor import _calculate_step_cost
+
 logger = logging.getLogger(__name__)
 
 # Config
@@ -207,7 +210,7 @@ async def _phase2_summarize(
     if not resolved:
         return None
 
-    provider, _ = resolved
+    provider, model_info = resolved
 
     # Load conversation for summarization
     from app.session.manager import get_message_history_for_llm
@@ -227,6 +230,7 @@ async def _phase2_summarize(
         messages = llm_messages + [{"role": "user", "content": summary_prompt}]
 
         summary = ""
+        usage_data: dict[str, Any] = {}
         last_reported = 0
         async for chunk in provider.stream_chat(
             model_id,
@@ -244,6 +248,31 @@ async def _phase2_summarize(
                         "chars": len(summary),
                     }))
                     last_reported = len(summary)
+            elif chunk.type == "usage":
+                usage_data = chunk.data
+
+        # Persist usage as a synthetic assistant message so the usage API picks it up
+        if usage_data:
+            cost = _calculate_step_cost(usage_data, model_info)
+            async with session_factory() as db:
+                async with db.begin():
+                    await create_message(
+                        db,
+                        session_id=session_id,
+                        data={
+                            "role": "assistant",
+                            "agent": "compaction",
+                            "system": True,
+                            "cost": cost,
+                            "tokens": usage_data,
+                            "model_id": model_id,
+                            "provider_id": provider.id,
+                        },
+                    )
+            logger.info(
+                "Compaction usage: %s tokens, $%.6f (session %s)",
+                usage_data.get("total", 0), cost, session_id,
+            )
 
         return summary.strip() if summary.strip() else None
 

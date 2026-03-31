@@ -584,22 +584,6 @@ export function useSSE(streamId: string | null) {
           });
       }
 
-      // After conversation ends, workspace memory queue processes in background
-      // (10s debounce + LLM call). Invalidate memory query to pick up the update.
-      const workspacePath = useSettingsStore.getState().workspaceDirectory;
-      if (workspacePath) {
-        setTimeout(() => {
-          queryClient.invalidateQueries({
-            queryKey: queryKeys.workspaceMemory(workspacePath),
-          });
-        }, 20_000);
-        setTimeout(() => {
-          queryClient.invalidateQueries({
-            queryKey: queryKeys.workspaceMemory(workspacePath),
-          });
-        }, 40_000);
-      }
-
       client.close();
     });
 

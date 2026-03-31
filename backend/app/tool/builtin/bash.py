@@ -20,8 +20,10 @@ from app.tool.subprocess_compat import (
 )
 from app.tool.workspace import WorkspaceViolation, get_default_output_dir, validate_cwd
 
-DEFAULT_TIMEOUT = 120  # 2 minutes
-MAX_TIMEOUT = 600  # 10 minutes
+def _bash_cfg():
+    from app.config import get_settings
+    s = get_settings()
+    return s.bash_timeout, s.bash_max_timeout
 
 
 class BashTool(ToolDefinition):
@@ -48,8 +50,8 @@ class BashTool(ToolDefinition):
                 },
                 "timeout": {
                     "type": "integer",
-                    "description": "Timeout in seconds (default 120, max 600)",
-                    "default": DEFAULT_TIMEOUT,
+                    "description": "Timeout in seconds",
+                    "default": _bash_cfg()[0],
                 },
                 "cwd": {
                     "type": "string",
@@ -61,7 +63,8 @@ class BashTool(ToolDefinition):
 
     async def execute(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         command = args["command"]
-        timeout = min(args.get("timeout", DEFAULT_TIMEOUT), MAX_TIMEOUT)
+        default_timeout, max_timeout = _bash_cfg()
+        timeout = min(args.get("timeout", default_timeout), max_timeout)
         cwd = args.get("cwd")
 
         # Workspace restriction: validate/default cwd (defaults to openyak_written/)

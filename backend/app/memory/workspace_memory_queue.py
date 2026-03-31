@@ -178,7 +178,7 @@ class WorkspaceMemoryUpdateQueue:
         )
 
         # Call LLM
-        response_text = await self._call_llm(prompt, model_id=ctx.model_id)
+        response_text, usage_data = await self._call_llm(prompt, model_id=ctx.model_id)
         if not response_text:
             logger.warning(
                 "Workspace memory: LLM returned empty response for %s",
@@ -203,13 +203,19 @@ class WorkspaceMemoryUpdateQueue:
                 ctx.workspace_path,
             )
 
+        # Persist usage on the triggering session's assistant message
+        if usage_data and ctx.session_id:
+            await self._persist_usage(ctx.session_id, usage_data, ctx.model_id)
+
     async def _call_llm(
         self, prompt: str, *, model_id: str | None = None
-    ) -> str | None:
+    ) -> tuple[str | None, dict[str, Any]]:
         """Call an LLM for workspace memory refresh.
 
         Uses the caller's model_id so that the refresh runs on the same
         provider the session was already using.
+
+        Returns (response_text, usage_data).
         """
         try:
             effective_model_id = model_id
@@ -221,7 +227,7 @@ class WorkspaceMemoryUpdateQueue:
 
             if not effective_model_id:
                 logger.warning("Workspace memory: no model available")
-                return None
+                return None, {}
 
             resolved = self._provider_registry.resolve_model(effective_model_id)
             if not resolved:
@@ -229,7 +235,7 @@ class WorkspaceMemoryUpdateQueue:
                     "Workspace memory: could not resolve model %s",
                     effective_model_id,
                 )
-                return None
+                return None, {}
 
             provider, _model_info = resolved
 
@@ -241,17 +247,57 @@ class WorkspaceMemoryUpdateQueue:
             )
             messages = [{"role": "user", "content": prompt}]
             response_text = ""
+            usage_data: dict[str, Any] = {}
             async for chunk in provider.stream_chat(
                 effective_model_id, messages, system=system, max_tokens=4000
             ):
                 if chunk.type == "text-delta":
                     response_text += chunk.data.get("text", "")
+                elif chunk.type == "usage":
+                    usage_data = chunk.data
 
-            return response_text if response_text.strip() else None
+            return (response_text if response_text.strip() else None), usage_data
 
         except Exception:
             logger.exception("Workspace memory: LLM call failed")
-            return None
+            return None, {}
+
+    async def _persist_usage(
+        self,
+        session_id: str,
+        usage_data: dict[str, Any],
+        model_id: str | None,
+    ) -> None:
+        """Persist memory-refresh usage as a synthetic assistant message."""
+        try:
+            from app.session.manager import create_message
+            from app.session.processor import _calculate_step_cost
+
+            resolved = self._provider_registry.resolve_model(model_id) if model_id else None
+            model_info = resolved[1] if resolved else None
+            cost = _calculate_step_cost(usage_data, model_info)
+
+            async with self._session_factory() as db:
+                async with db.begin():
+                    await create_message(
+                        db,
+                        session_id=session_id,
+                        data={
+                            "role": "assistant",
+                            "agent": "memory",
+                            "system": True,
+                            "cost": cost,
+                            "tokens": usage_data,
+                            "model_id": model_id,
+                            "provider_id": resolved[0].id if resolved else None,
+                        },
+                    )
+            logger.info(
+                "Memory usage: %s tokens, $%.6f (session %s)",
+                usage_data.get("total", 0), cost, session_id,
+            )
+        except Exception:
+            logger.warning("Failed to persist memory usage for session %s", session_id)
 
     def clear(self) -> None:
         """Clear pending queue without processing."""

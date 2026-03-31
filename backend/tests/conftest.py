@@ -121,7 +121,22 @@ async def app_client(db_engine, session_factory):
     from unittest.mock import AsyncMock, MagicMock
     from app.main import create_app
     from app.config import Settings
-    from app.dependencies import set_session_factory
+    from app.dependencies import (
+        get_db,
+        get_provider_registry,
+        get_settings,
+        get_agent_registry,
+        get_tool_registry,
+        get_skill_registry,
+        get_session_factory,
+        get_stream_manager,
+        set_session_factory,
+        set_settings,
+        set_provider_registry,
+        set_agent_registry,
+        set_tool_registry,
+        set_skill_registry,
+    )
 
     settings = Settings(
         openrouter_api_key="test-key",
@@ -130,8 +145,6 @@ async def app_client(db_engine, session_factory):
     app = create_app(settings)
 
     # Wire up test DB via dependency override
-    from app.dependencies import get_db
-
     async def _override_get_db():
         async with session_factory() as session:
             async with session.begin():
@@ -149,13 +162,25 @@ async def app_client(db_engine, session_factory):
     mock_pr.health = AsyncMock(return_value={})
     app.state.provider_registry = mock_pr
 
-    app.state.agent_registry = MagicMock()
-    app.state.tool_registry = MagicMock()
-    app.state.skill_registry = MagicMock()
+    mock_ar = MagicMock()
+    mock_tr = MagicMock()
+    mock_sr = MagicMock()
+
+    app.state.agent_registry = mock_ar
+    app.state.tool_registry = mock_tr
+    app.state.skill_registry = mock_sr
     app.state.connector_registry = None
     app.state.plugin_manager = None
     app.state.stream_manager = None
     app.state.settings = settings
+
+    # Also set module-level DI globals so Depends() resolves correctly
+    set_session_factory(session_factory)
+    set_settings(settings)
+    set_provider_registry(mock_pr)
+    set_agent_registry(mock_ar)
+    set_tool_registry(mock_tr)
+    set_skill_registry(mock_sr)
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),

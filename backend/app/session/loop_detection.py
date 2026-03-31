@@ -24,9 +24,7 @@ from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
-# Defaults
-_DEFAULT_WARN_THRESHOLD = 3
-_DEFAULT_HARD_LIMIT = 5
+# Defaults — read from Settings when the singleton is created (see bottom of file)
 _DEFAULT_WINDOW_SIZE = 20
 _DEFAULT_MAX_SESSIONS = 200
 
@@ -78,11 +76,17 @@ class LoopDetector:
 
     def __init__(
         self,
-        warn_threshold: int = _DEFAULT_WARN_THRESHOLD,
-        hard_limit: int = _DEFAULT_HARD_LIMIT,
+        warn_threshold: int | None = None,
+        hard_limit: int | None = None,
         window_size: int = _DEFAULT_WINDOW_SIZE,
         max_sessions: int = _DEFAULT_MAX_SESSIONS,
     ) -> None:
+        from app.config import get_settings as _get_settings
+        _s = _get_settings()
+        if warn_threshold is None:
+            warn_threshold = _s.loop_warn_threshold
+        if hard_limit is None:
+            hard_limit = _s.loop_hard_limit
         self.warn_threshold = warn_threshold
         self.hard_limit = hard_limit
         self.window_size = window_size

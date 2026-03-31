@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
 
+from app.config import Settings
+from app.dependencies import ProviderRegistryDep, SettingsDep
+from app.provider.registry import ProviderRegistry
 from app.schemas.provider import ModelInfo
 
 logger = logging.getLogger(__name__)
@@ -13,16 +16,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-async def _refresh_with_token_retry(request: Request) -> dict[str, list]:
+async def _refresh_with_token_retry(
+    registry: ProviderRegistry,
+    settings: Settings,
+) -> dict[str, list]:
     """Refresh models, auto-refreshing the proxy JWT on 401.
 
     If the refresh fails with an auth error (expired JWT) and we have a
     stored refresh token, we transparently refresh the access token and
     retry once — the same pattern used at startup in main.py.
     """
-    registry = request.app.state.provider_registry
-    settings = request.app.state.settings
-
     try:
         return await registry.refresh_models()
     except Exception as e:
@@ -52,28 +55,33 @@ async def _refresh_with_token_retry(request: Request) -> dict[str, list]:
 
 
 @router.get("/models", response_model=list[ModelInfo])
-async def list_models(request: Request) -> list[ModelInfo]:
+async def list_models(
+    registry: ProviderRegistryDep,
+    settings: SettingsDep,
+) -> list[ModelInfo]:
     """List all available models from registered providers.
 
     If the model index is empty (e.g. startup fetch failed), attempts a
     single refresh before returning so users don't see an empty list.
     """
-    registry = request.app.state.provider_registry
     models = registry.all_models()
     if not models:
         logger.info("Model index empty — attempting auto-refresh")
-        await _refresh_with_token_retry(request)
+        await _refresh_with_token_retry(registry, settings)
         models = registry.all_models()
     return models
 
 
 @router.post("/models/refresh")
-async def refresh_models(request: Request) -> dict:
+async def refresh_models(
+    registry: ProviderRegistryDep,
+    settings: SettingsDep,
+) -> dict:
     """Force re-fetch model lists from all providers (also refreshes models.dev)."""
     # Refresh models.dev catalog first so providers pick up latest data
     from app.provider.models_dev import models_dev
     await models_dev.refresh()
 
-    result = await _refresh_with_token_retry(request)
+    result = await _refresh_with_token_retry(registry, settings)
     counts = {pid: len(models) for pid, models in result.items()}
     return {"refreshed": counts}

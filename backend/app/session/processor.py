@@ -85,16 +85,10 @@ _FILE_TOOLS = frozenset({"read", "write", "edit"})
 # Tools that modify state — trigger todo reminders after execution
 _MODIFYING_TOOLS = frozenset({"edit", "write", "bash", "code_execute"})
 
-# Hard context guards for very large single-turn tool results
-_MAX_TOOL_OUTPUT_CHARS = 20_000
-_MAX_ASSISTANT_CONTENT_CHARS = 40_000
-_MAX_REQUEST_CONTEXT_CHARS = 160_000
-_HARD_MAX_OUTPUT_TOKENS = 8192
-_MIN_OUTPUT_TOKENS = 256
-_TOOL_TIMEOUT_SECONDS = 300
-
-# Hard safety cap: exported for use in SessionPrompt
-_HARD_MAX_STEPS = 50
+# Agent limits — read from Settings (user-configurable via env vars).
+# Accessed via _cfg() to avoid stale module-level reads.
+def _cfg():
+    return get_settings()
 
 
 # --- Daily web_search quota tracking (single-user desktop app) ---
@@ -361,7 +355,7 @@ def _sanitize_llm_messages_for_request(
     if model_max_context:
         max_request_chars = min(int(model_max_context * 3.5), 500_000)
     else:
-        max_request_chars = _MAX_REQUEST_CONTEXT_CHARS  # 160k fallback
+        max_request_chars = _cfg().max_request_context_chars  # 160k fallback
 
     sanitized: list[dict[str, Any]] = []
 
@@ -372,11 +366,11 @@ def _sanitize_llm_messages_for_request(
         if isinstance(content, str):
             if role == "tool":
                 m["content"] = _trim_for_context(
-                    content, _MAX_TOOL_OUTPUT_CHARS, "tool output"
+                    content, _cfg().max_tool_output_chars, "tool output"
                 )
             elif role == "assistant":
                 m["content"] = _trim_for_context(
-                    content, _MAX_ASSISTANT_CONTENT_CHARS, "assistant content"
+                    content, _cfg().max_assistant_content_chars, "assistant content"
                 )
         sanitized.append(m)
 
@@ -460,12 +454,12 @@ def _compute_safe_max_tokens(
     reserved = max(2048, int(model_max_context * 0.08))
     remaining = model_max_context - estimated_input - reserved
 
-    hard_cap = model_max_output or _HARD_MAX_OUTPUT_TOKENS
-    hard_cap = max(_MIN_OUTPUT_TOKENS, min(hard_cap, _HARD_MAX_OUTPUT_TOKENS))
+    hard_cap = model_max_output or _cfg().hard_max_output_tokens
+    hard_cap = max(_cfg().min_output_tokens, min(hard_cap, _cfg().hard_max_output_tokens))
 
-    if remaining <= _MIN_OUTPUT_TOKENS:
-        return _MIN_OUTPUT_TOKENS
-    return max(_MIN_OUTPUT_TOKENS, min(hard_cap, remaining))
+    if remaining <= _cfg().min_output_tokens:
+        return _cfg().min_output_tokens
+    return max(_cfg().min_output_tokens, min(hard_cap, remaining))
 
 
 def _repair_tool_call_payload(
@@ -1157,7 +1151,7 @@ class SessionProcessor:
                 try:
                     result = await asyncio.wait_for(
                         tool(tool_args, ctx),
-                        timeout=_TOOL_TIMEOUT_SECONDS,
+                        timeout=_cfg().tool_timeout,
                     )
 
                     if result.error:
@@ -1296,7 +1290,7 @@ class SessionProcessor:
                             logger.info("Agent switched to: %s", sp.agent.name)
 
                 except asyncio.TimeoutError:
-                    timeout_msg = f"Tool timed out after {_TOOL_TIMEOUT_SECONDS}s: {tool.id}"
+                    timeout_msg = f"Tool timed out after {_cfg().tool_timeout}s: {tool.id}"
                     logger.warning(timeout_msg)
                     job.publish(SSEEvent(TOOL_ERROR, {"call_id": call_id, "error": timeout_msg}))
                     # Update part to error state

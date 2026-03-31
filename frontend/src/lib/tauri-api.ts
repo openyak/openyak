@@ -1,8 +1,7 @@
 /**
  * Tauri API bridge — replaces the Electron preload API.
  *
- * Provides the same interface shape as the old `window.electronAPI`
- * but uses Tauri's `invoke` and `listen` under the hood.
+ * Uses Tauri's `invoke` and `listen` under the hood.
  */
 
 import { invoke } from "@tauri-apps/api/core";

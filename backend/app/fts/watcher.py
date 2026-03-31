@@ -15,7 +15,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_POLL_INTERVAL = 30.0  # seconds between re-index polls
+def _poll_interval() -> float:
+    from app.config import get_settings
+    return get_settings().fts_poll_interval
 
 
 class FileWatcher:
@@ -51,7 +53,7 @@ class FileWatcher:
         """Re-index every 30 seconds until stopped."""
         while not self._stop_event.is_set():
             try:
-                await asyncio.wait_for(self._stop_event.wait(), timeout=_POLL_INTERVAL)
+                await asyncio.wait_for(self._stop_event.wait(), timeout=_poll_interval())
                 break
             except asyncio.TimeoutError:
                 pass

@@ -51,11 +51,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Hard safety cap: absolute maximum number of agent loop iterations
-_HARD_MAX_STEPS = 50
-
-# Completion guard: max nudges before giving up on incomplete todos
-MAX_CONTINUATION_ATTEMPTS = 10
+def _cfg():
+    return get_settings()
 
 
 class SessionPrompt:
@@ -364,7 +361,7 @@ class SessionPrompt:
 
             self.step += 1
 
-            if self.step > _HARD_MAX_STEPS:
+            if self.step > _cfg().max_steps:
                 if _hard_cap_final_done:
                     # Already did the forced final step — truly stop now
                     logger.warning(
@@ -378,7 +375,7 @@ class SessionPrompt:
                 _hard_cap_final_done = True
                 logger.warning(
                     "Hard step cap (%d) reached for session %s, requesting final summary",
-                    _HARD_MAX_STEPS,
+                    _cfg().max_steps,
                     self.job.session_id,
                 )
                 async with self.session_factory() as db:
@@ -605,7 +602,7 @@ class SessionPrompt:
                     t for t in self.current_todos
                     if t.get("status") in ("pending", "in_progress")
                 ]
-                if incomplete and self.continuation_attempts < MAX_CONTINUATION_ATTEMPTS:
+                if incomplete and self.continuation_attempts < _cfg().max_continuation_attempts:
                     self.continuation_attempts += 1
                     incomplete_names = ", ".join(
                         t.get("content", "unnamed") for t in incomplete[:5]
@@ -614,7 +611,7 @@ class SessionPrompt:
                         "Completion guard: %d incomplete todo(s), attempt %d/%d",
                         len(incomplete),
                         self.continuation_attempts,
-                        MAX_CONTINUATION_ATTEMPTS,
+                        _cfg().max_continuation_attempts,
                     )
                     async with self.session_factory() as db:
                         async with db.begin():

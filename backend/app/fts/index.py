@@ -38,8 +38,9 @@ _SKIP_EXTENSIONS = {
     ".db", ".sqlite", ".sqlite3",
 }
 
-# Max text content per file (bytes)
-_MAX_TEXT_SIZE = 500_000
+def _max_text_size() -> int:
+    from app.config import get_settings
+    return get_settings().fts_max_file_size
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS fts_files (
@@ -365,8 +366,8 @@ class IndexManager:
                 return
 
             # Truncate very large text
-            if len(text) > _MAX_TEXT_SIZE:
-                text = text[:_MAX_TEXT_SIZE]
+            if len(text) > _max_text_size():
+                text = text[:_max_text_size()]
 
             # Upsert: delete old entry first (FTS5 doesn't support UPDATE)
             await db.execute("DELETE FROM fts_content WHERE path = ?", (rel_path,))

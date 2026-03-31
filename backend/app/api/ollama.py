@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from app.dependencies import ProviderRegistryDep, SettingsDep
 from app.ollama.library import CATEGORIES, get_library as fetch_library
 
 logger = logging.getLogger(__name__)
@@ -93,7 +94,7 @@ async def setup_ollama(request: Request):
         try:
             base_url = await mgr.start()
             # Register as provider
-            await _register_ollama_provider(request, base_url)
+            await _register_ollama_provider(base_url)
             yield f"data: {json.dumps({'status': 'ready', 'base_url': base_url})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
@@ -110,39 +111,39 @@ async def start_ollama(request: Request):
 
     try:
         base_url = await mgr.start()
-        await _register_ollama_provider(request, base_url)
+        await _register_ollama_provider(base_url)
         return {"status": "running", "base_url": base_url}
     except Exception as e:
         raise HTTPException(500, f"Failed to start Ollama: {e}")
 
 
 @router.post("/ollama/stop")
-async def stop_ollama(request: Request):
+async def stop_ollama(request: Request, registry: ProviderRegistryDep):
     """Stop the Ollama server."""
     mgr = _get_manager(request)
     await mgr.stop()
 
     # Unregister provider
-    registry = request.app.state.provider_registry
     registry.unregister("ollama")
 
     return {"status": "stopped"}
 
 
 @router.delete("/ollama/uninstall")
-async def uninstall_ollama(request: Request, delete_models: bool = False):
+async def uninstall_ollama(
+    request: Request, registry: ProviderRegistryDep, settings: SettingsDep,
+    delete_models: bool = False,
+):
     """Uninstall Ollama binary and optionally all models."""
     mgr = _get_manager(request)
 
     result = await mgr.uninstall(delete_models=delete_models)
 
     # Unregister provider and clear config
-    registry = request.app.state.provider_registry
     registry.unregister("ollama")
 
     from app.api.config import _remove_env_key
     _remove_env_key("OPENYAK_OLLAMA_BASE_URL")
-    settings = request.app.state.settings
     settings.ollama_base_url = ""
 
     return {"status": "uninstalled", **result}
@@ -197,7 +198,7 @@ async def get_library(
 
 
 @router.post("/ollama/models/pull")
-async def pull_model(request: Request, body: ModelPullRequest):
+async def pull_model(request: Request, registry: ProviderRegistryDep, body: ModelPullRequest):
     """Pull (download) a model. Returns SSE stream with progress."""
     base_url = _ollama_url(request)
 
@@ -218,7 +219,6 @@ async def pull_model(request: Request, body: ModelPullRequest):
 
         # After pull completes, refresh provider model list
         try:
-            registry = request.app.state.provider_registry
             provider = registry.get_provider("ollama")
             if provider:
                 provider.clear_cache()
@@ -230,7 +230,7 @@ async def pull_model(request: Request, body: ModelPullRequest):
 
 
 @router.delete("/ollama/models/{name:path}")
-async def delete_model(request: Request, name: str):
+async def delete_model(request: Request, registry: ProviderRegistryDep, name: str):
     """Delete a locally installed model."""
     base_url = _ollama_url(request)
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -245,7 +245,6 @@ async def delete_model(request: Request, name: str):
 
     # Refresh provider model list
     try:
-        registry = request.app.state.provider_registry
         provider = registry.get_provider("ollama")
         if provider:
             provider.clear_cache()
@@ -292,13 +291,14 @@ async def model_info(request: Request, name: str):
 # ── Internal helpers ──────────────────────────────────────────────────────
 
 
-async def _register_ollama_provider(request: Request, base_url: str) -> None:
+async def _register_ollama_provider(base_url: str) -> None:
     """Register (or re-register) the Ollama provider in the provider registry."""
     from app.api.config import _update_env_file
+    from app.dependencies import get_provider_registry, get_settings
     from app.provider.ollama import OllamaProvider
 
     provider = OllamaProvider(base_url=base_url)
-    registry = request.app.state.provider_registry
+    registry = get_provider_registry()
     registry.register(provider)
 
     try:
@@ -308,5 +308,5 @@ async def _register_ollama_provider(request: Request, base_url: str) -> None:
 
     # Persist so it auto-starts next time
     _update_env_file("OPENYAK_OLLAMA_BASE_URL", base_url)
-    settings = request.app.state.settings
+    settings = get_settings()
     settings.ollama_base_url = base_url

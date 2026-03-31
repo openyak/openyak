@@ -18,7 +18,18 @@ from app.api.openai_compat import router as openai_compat_router
 from app.api.router import api_router
 from app.auth.middleware import RemoteAuthMiddleware
 from app.config import Settings
-from app.dependencies import set_session_factory
+from app.dependencies import (
+    set_agent_registry,
+    set_connector_registry,
+    set_index_manager,
+    set_plugin_manager,
+    set_provider_registry,
+    set_session_factory,
+    set_settings,
+    set_skill_registry,
+    set_stream_manager,
+    set_tool_registry,
+)
 from app.models.base import Base
 from app.agent.agent import AgentRegistry
 from app.provider.openrouter import OpenRouterProvider
@@ -30,9 +41,6 @@ from app.tool.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
-# Graceful shutdown timeout (seconds) — how long to wait for active jobs.
-# Must be shorter than the desktop force-kill timeout (12s) to allow cleanup.
-_SHUTDOWN_TIMEOUT = 8.0
 
 
 def _asyncio_exception_handler(loop: asyncio.AbstractEventLoop, context: dict) -> None:
@@ -244,17 +252,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.warning("Model refresh failed after provider registration: %s", e)
 
     app.state.provider_registry = registry
+    set_provider_registry(registry)
 
     # Agent registry (built-in + custom agents from config / .openyak/agents/*.md)
     agent_registry = AgentRegistry()
     agent_registry.load_custom_agents(settings.agents, settings.project_dir)
     app.state.agent_registry = agent_registry
+    set_agent_registry(agent_registry)
 
     # Skill registry
     bundled_skills_dir = Path(__file__).parent / "data" / "skills"
     skill_registry = SkillRegistry(bundled_dir=bundled_skills_dir, project_dir=settings.project_dir)
     skill_registry.scan(project_dir=settings.project_dir)
     app.state.skill_registry = skill_registry
+    set_skill_registry(skill_registry)
 
     # Connector registry (manages deduplicated MCP connections)
     from app.connector.registry import ConnectorRegistry
@@ -292,12 +303,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         )
 
     app.state.plugin_manager = plugin_manager
+    set_plugin_manager(plugin_manager)
     if plugin_manager.status():
         logger.info("Plugin manager: %d plugins loaded", len(plugin_manager.status()))
 
     # Start connector connections (MCP servers)
     await connector_registry.startup()
     app.state.connector_registry = connector_registry
+    set_connector_registry(connector_registry)
     # Backward compat: expose mcp_manager for any code that still uses it
     app.state.mcp_manager = connector_registry.mcp_manager
 
@@ -313,6 +326,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.info("MCP integration enabled (%d tools)", len(connector_registry.tools()))
 
     app.state.tool_registry = tool_registry
+    set_tool_registry(tool_registry)
 
     # Clean up stale tool output files (from truncation overflow, 7-day retention)
     from app.tool.truncation import cleanup_old_outputs
@@ -339,6 +353,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         from app.fts import IndexManager
         index_manager = IndexManager()
         app.state.index_manager = index_manager
+        set_index_manager(index_manager)
         logger.info("FTS5 search enabled")
 
     # Task scheduler (cron + interval automations)
@@ -378,13 +393,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if sm is not None:
         aborted = sm.abort_all()
         if aborted:
-            logger.info("Shutdown: aborted %d active generation job(s), waiting up to %.1fs", aborted, _SHUTDOWN_TIMEOUT)
+            logger.info("Shutdown: aborted %d active generation job(s), waiting up to %.1fs", aborted, settings.shutdown_timeout)
             tasks = [
                 j.task for j in sm._jobs.values()
                 if j.task is not None and not j.task.done()
             ]
             if tasks:
-                done, pending = await asyncio.wait(tasks, timeout=_SHUTDOWN_TIMEOUT)
+                done, pending = await asyncio.wait(tasks, timeout=settings.shutdown_timeout)
                 # Force-cancel any tasks that didn't finish in time
                 for t in pending:
                     t.cancel()
@@ -527,6 +542,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     app.state.settings = settings
+    set_settings(settings)
 
     # CORS — permissive for local dev, tighten in production
     app.add_middleware(

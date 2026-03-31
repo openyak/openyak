@@ -165,11 +165,15 @@ pub fn run() {
             // Start backend
             let app_handle = handle.clone();
             if cfg!(debug_assertions) {
-                // Dev mode: backend already running via `npm run dev:backend` on port 8000
-                info!("Dev mode — using existing backend at http://127.0.0.1:8000");
+                // Dev mode: backend already running via dev-desktop.mjs on a dynamic port
+                let dev_port: u16 = std::env::var("DEV_BACKEND_PORT")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(8000);
+                info!("Dev mode — using existing backend at http://127.0.0.1:{dev_port}");
                 tauri::async_runtime::spawn(async move {
                     let state = app_handle.state::<BackendState>();
-                    state.set_dev_port(8000).await;
+                    state.set_dev_port(dev_port).await;
                     if let Some(window) = app_handle.get_webview_window("main") {
                         let _ = window.show();
                     }

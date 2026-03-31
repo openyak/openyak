@@ -5,10 +5,13 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request
+from typing import Any
+
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from urllib.parse import urlparse
 
+from app.dependencies import ProviderRegistryDep, SettingsDep
 from app.provider.catalog import PROVIDER_CATALOG
 from app.provider.factory import create_provider as create_desktop_provider
 from app.provider.local import (
@@ -94,7 +97,7 @@ def _normalize_local_base_url(value: str) -> str:
     return trimmed.rstrip("/")
 
 
-def _local_provider_status(settings, registry) -> LocalProviderStatus:
+def _local_provider_status(settings: Any, registry: Any) -> LocalProviderStatus:
     """Build a status object from the current configuration + registry state."""
     base_url = settings.local_base_url or ""
     provider = registry.get_provider(LOCAL_PROVIDER_ID)
@@ -109,9 +112,8 @@ def _local_provider_status(settings, registry) -> LocalProviderStatus:
 
 
 @router.get("/config/api-key", response_model=ApiKeyStatus)
-async def get_api_key_status(request: Request) -> ApiKeyStatus:
+async def get_api_key_status(registry: ProviderRegistryDep) -> ApiKeyStatus:
     """Get the current API key configuration status."""
-    registry = request.app.state.provider_registry
     provider = registry.get_provider("openrouter")
 
     if provider is None or not getattr(provider, "_api_key", ""):
@@ -124,7 +126,7 @@ async def get_api_key_status(request: Request) -> ApiKeyStatus:
 
 
 @router.post("/config/api-key", response_model=ApiKeyStatus)
-async def update_api_key(request: Request, body: ApiKeyUpdate) -> ApiKeyStatus:
+async def update_api_key(registry: ProviderRegistryDep, body: ApiKeyUpdate) -> ApiKeyStatus:
     """Update the OpenRouter API key, validate it, and re-initialize the provider."""
     api_key = body.api_key.strip()
     if not api_key:
@@ -149,7 +151,6 @@ async def update_api_key(request: Request, body: ApiKeyUpdate) -> ApiKeyStatus:
         )
 
     # Key is valid — replace the provider in the registry
-    registry = request.app.state.provider_registry
     new_provider = OpenRouterProvider(api_key)
     registry.register(new_provider)
 
@@ -170,9 +171,8 @@ async def update_api_key(request: Request, body: ApiKeyUpdate) -> ApiKeyStatus:
 
 
 @router.delete("/config/api-key", response_model=ApiKeyStatus)
-async def delete_api_key(request: Request) -> ApiKeyStatus:
+async def delete_api_key(settings: SettingsDep, registry: ProviderRegistryDep) -> ApiKeyStatus:
     """Delete the stored OpenRouter API key."""
-    settings = request.app.state.settings
     settings.openrouter_api_key = ""
     _remove_env_key("OPENYAK_OPENROUTER_API_KEY")
 
@@ -180,7 +180,6 @@ async def delete_api_key(request: Request) -> ApiKeyStatus:
     # In proxy mode the active "openrouter" provider belongs to the proxy,
     # not the direct API key — don't remove it.
     if not (settings.proxy_url and settings.proxy_token):
-        registry = request.app.state.provider_registry
         registry.unregister("openrouter")
 
     return ApiKeyStatus(is_configured=False)
@@ -205,9 +204,8 @@ class OpenYakAccountDisconnect(BaseModel):
 
 
 @router.get("/config/openyak-account", response_model=OpenYakAccountStatus)
-async def get_openyak_account_status(request: Request) -> OpenYakAccountStatus:
+async def get_openyak_account_status(settings: SettingsDep) -> OpenYakAccountStatus:
     """Check if an OpenYak account is connected (proxy mode active)."""
-    settings = request.app.state.settings
     if settings.proxy_url and settings.proxy_token:
         return OpenYakAccountStatus(
             is_connected=True,
@@ -217,7 +215,9 @@ async def get_openyak_account_status(request: Request) -> OpenYakAccountStatus:
 
 
 @router.post("/config/openyak-account", response_model=OpenYakAccountStatus)
-async def connect_openyak_account(request: Request, body: OpenYakAccountConnect) -> OpenYakAccountStatus:
+async def connect_openyak_account(
+    settings: SettingsDep, registry: ProviderRegistryDep, body: OpenYakAccountConnect,
+) -> OpenYakAccountStatus:
     """Connect an OpenYak account: switch provider to proxy mode.
 
     The local app will now route all LLM requests through the OpenYak
@@ -242,7 +242,6 @@ async def connect_openyak_account(request: Request, body: OpenYakAccountConnect)
         raise HTTPException(400, f"Failed to connect to proxy: {e}")
 
     # Switch the provider registry to use the proxy
-    registry = request.app.state.provider_registry
     new_provider = OpenRouterProvider(token, base_url=proxy_url + "/v1", provider_id="openyak-proxy")
     registry.register(new_provider)
     try:
@@ -253,7 +252,6 @@ async def connect_openyak_account(request: Request, body: OpenYakAccountConnect)
     # Persist to .env and update runtime settings
     _update_env_file("OPENYAK_PROXY_URL", proxy_url)
     _update_env_file("OPENYAK_PROXY_TOKEN", token)
-    settings = request.app.state.settings
     settings.proxy_url = proxy_url
     settings.proxy_token = token
 
@@ -265,10 +263,8 @@ async def connect_openyak_account(request: Request, body: OpenYakAccountConnect)
 
 
 @router.delete("/config/openyak-account", response_model=OpenYakAccountStatus)
-async def disconnect_openyak_account(request: Request) -> OpenYakAccountStatus:
+async def disconnect_openyak_account(settings: SettingsDep, registry: ProviderRegistryDep) -> OpenYakAccountStatus:
     """Disconnect OpenYak account: revert to local API key mode."""
-    settings = request.app.state.settings
-
     # Clear proxy settings
     settings.proxy_url = ""
     settings.proxy_token = ""
@@ -278,7 +274,6 @@ async def disconnect_openyak_account(request: Request) -> OpenYakAccountStatus:
     _remove_env_key("OPENYAK_PROXY_REFRESH_TOKEN")
 
     # Unregister proxy provider
-    registry = request.app.state.provider_registry
     registry.unregister("openyak-proxy")
 
     return OpenYakAccountStatus(is_connected=False)
@@ -299,10 +294,8 @@ class OllamaConnect(BaseModel):
 
 
 @router.get("/config/ollama", response_model=OllamaStatus)
-async def get_ollama_status(request: Request) -> OllamaStatus:
+async def get_ollama_status(settings: SettingsDep, registry: ProviderRegistryDep) -> OllamaStatus:
     """Get the current Ollama configuration status."""
-    settings = request.app.state.settings
-    registry = request.app.state.provider_registry
     provider = registry.get_provider("ollama")
 
     if provider is None or not settings.ollama_base_url:
@@ -319,7 +312,9 @@ async def get_ollama_status(request: Request) -> OllamaStatus:
 
 
 @router.post("/config/ollama", response_model=OllamaStatus)
-async def connect_ollama(request: Request, body: OllamaConnect) -> OllamaStatus:
+async def connect_ollama(
+    settings: SettingsDep, registry: ProviderRegistryDep, body: OllamaConnect,
+) -> OllamaStatus:
     """Connect to an Ollama instance: validate, register provider, persist."""
     from app.provider.ollama import OllamaProvider
 
@@ -337,7 +332,6 @@ async def connect_ollama(request: Request, body: OllamaConnect) -> OllamaStatus:
         )
 
     # Register (replaces any prior Ollama provider)
-    registry = request.app.state.provider_registry
     registry.register(test_provider)
     try:
         await registry.refresh_models()
@@ -346,7 +340,6 @@ async def connect_ollama(request: Request, body: OllamaConnect) -> OllamaStatus:
 
     # Persist to .env and runtime settings
     _update_env_file("OPENYAK_OLLAMA_BASE_URL", base_url)
-    settings = request.app.state.settings
     settings.ollama_base_url = base_url
 
     return OllamaStatus(
@@ -357,13 +350,11 @@ async def connect_ollama(request: Request, body: OllamaConnect) -> OllamaStatus:
 
 
 @router.delete("/config/ollama", response_model=OllamaStatus)
-async def disconnect_ollama(request: Request) -> OllamaStatus:
+async def disconnect_ollama(settings: SettingsDep, registry: ProviderRegistryDep) -> OllamaStatus:
     """Disconnect Ollama: remove provider and clear config."""
-    settings = request.app.state.settings
     settings.ollama_base_url = ""
     _remove_env_key("OPENYAK_OLLAMA_BASE_URL")
 
-    registry = request.app.state.provider_registry
     registry.unregister("ollama")
 
     return OllamaStatus(is_configured=False)
@@ -372,15 +363,13 @@ async def disconnect_ollama(request: Request) -> OllamaStatus:
 # ── Generic Multi-Provider API ─────────────────────────────────────────────
 
 
-def _get_disabled_set(settings: Any) -> set[str]:
+def _get_disabled_set(settings) -> set[str]:
     return {s.strip() for s in settings.disabled_providers.split(",") if s.strip()}
 
 
 @router.get("/config/providers", response_model=list[ProviderInfo])
-async def list_providers(request: Request) -> list[ProviderInfo]:
+async def list_providers(settings: SettingsDep, registry: ProviderRegistryDep) -> list[ProviderInfo]:
     """List all BYOK providers with their configuration status."""
-    settings = request.app.state.settings
-    registry = request.app.state.provider_registry
     disabled = _get_disabled_set(settings)
 
     result: list[ProviderInfo] = []
@@ -432,7 +421,7 @@ async def list_providers(request: Request) -> list[ProviderInfo]:
 
 @router.post("/config/providers/{provider_id}/key", response_model=ProviderInfo)
 async def set_provider_key(
-    provider_id: str, body: ProviderKeyUpdate, request: Request,
+    provider_id: str, body: ProviderKeyUpdate, settings: SettingsDep, registry: ProviderRegistryDep,
 ) -> ProviderInfo:
     """Set/update API key for a provider. Validates, registers, and persists."""
     pdef = PROVIDER_CATALOG.get(provider_id)
@@ -445,7 +434,6 @@ async def set_provider_key(
 
     # Azure needs a base_url from the request body or existing settings
     extra_kwargs: dict[str, str] = {}
-    settings = request.app.state.settings
     if pdef.kind == "openai_compat_azure":
         azure_url = getattr(body, "base_url", None) or getattr(settings, "azure_openai_base_url", "")
         if not azure_url:
@@ -466,7 +454,6 @@ async def set_provider_key(
         raise HTTPException(400, f"API key validation failed: {e}")
 
     # Register in the registry (replaces any existing instance)
-    registry = request.app.state.provider_registry
     new_provider = create_desktop_provider(provider_id, api_key, **extra_kwargs)
     registry.register(new_provider)
 
@@ -496,14 +483,15 @@ async def set_provider_key(
 
 
 @router.delete("/config/providers/{provider_id}/key", response_model=ProviderInfo)
-async def delete_provider_key(provider_id: str, request: Request) -> ProviderInfo:
+async def delete_provider_key(
+    provider_id: str, settings: SettingsDep, registry: ProviderRegistryDep,
+) -> ProviderInfo:
     """Remove API key for a provider."""
     pdef = PROVIDER_CATALOG.get(provider_id)
     if not pdef:
         raise HTTPException(404, f"Unknown provider: {provider_id}")
 
     # Clear runtime settings
-    settings = request.app.state.settings
     setattr(settings, pdef.settings_key, "")
 
     # Remove from .env
@@ -511,7 +499,6 @@ async def delete_provider_key(provider_id: str, request: Request) -> ProviderInf
     _remove_env_key(env_key)
 
     # Unregister provider
-    registry = request.app.state.provider_registry
     registry.unregister(provider_id)
 
     return ProviderInfo(
@@ -523,14 +510,13 @@ async def delete_provider_key(provider_id: str, request: Request) -> ProviderInf
 
 
 @router.post("/config/providers/{provider_id}/toggle", response_model=ProviderInfo)
-async def toggle_provider(provider_id: str, request: Request) -> ProviderInfo:
+async def toggle_provider(
+    provider_id: str, settings: SettingsDep, registry: ProviderRegistryDep,
+) -> ProviderInfo:
     """Enable or disable a provider. Disabled providers keep their key but aren't used."""
     pdef = PROVIDER_CATALOG.get(provider_id)
     if not pdef:
         raise HTTPException(404, f"Unknown provider: {provider_id}")
-
-    settings = request.app.state.settings
-    registry = request.app.state.provider_registry
     disabled = _get_disabled_set(settings)
 
     api_key = getattr(settings, pdef.settings_key, "")
@@ -582,15 +568,15 @@ async def toggle_provider(provider_id: str, request: Request) -> ProviderInfo:
 
 
 @router.get("/config/local", response_model=LocalProviderStatus)
-async def get_local_provider(request: Request) -> LocalProviderStatus:
+async def get_local_provider(settings: SettingsDep, registry: ProviderRegistryDep) -> LocalProviderStatus:
     """Return the stored local endpoint configuration."""
-    settings = request.app.state.settings
-    registry = request.app.state.provider_registry
     return _local_provider_status(settings, registry)
 
 
 @router.post("/config/local", response_model=LocalProviderStatus)
-async def set_local_provider(request: Request, body: LocalProviderUpdate) -> LocalProviderStatus:
+async def set_local_provider(
+    settings: SettingsDep, registry: ProviderRegistryDep, body: LocalProviderUpdate,
+) -> LocalProviderStatus:
     """Register a locally-hosted OpenAI-compatible endpoint."""
     base_url = _normalize_local_base_url(body.base_url)
     try:
@@ -603,9 +589,6 @@ async def set_local_provider(request: Request, body: LocalProviderUpdate) -> Loc
     except Exception as e:
         logger.warning("Local provider validation failed for %s: %s", base_url, e)
         raise HTTPException(400, f"Local endpoint validation failed: {e}")
-
-    settings = request.app.state.settings
-    registry = request.app.state.provider_registry
     registry.unregister(LOCAL_PROVIDER_ID)
     registry.register(create_local_provider(base_url))
 
@@ -626,13 +609,11 @@ async def set_local_provider(request: Request, body: LocalProviderUpdate) -> Loc
 
 
 @router.delete("/config/local", response_model=LocalProviderStatus)
-async def delete_local_provider(request: Request) -> LocalProviderStatus:
+async def delete_local_provider(settings: SettingsDep, registry: ProviderRegistryDep) -> LocalProviderStatus:
     """Remove the local endpoint configuration."""
-    settings = request.app.state.settings
     settings.local_base_url = ""
     _remove_env_key(LOCAL_BASE_URL_ENV)
 
-    registry = request.app.state.provider_registry
     registry.unregister(LOCAL_PROVIDER_ID)
 
     try:

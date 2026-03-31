@@ -23,9 +23,7 @@ logger = logging.getLogger(__name__)
 
 _LOCALHOST_IPS = {"127.0.0.1", "::1", "localhost"}
 
-_RATE_WINDOW = 60
-_MAX_REQUESTS_PER_WINDOW = 120
-_MAX_FAILED_AUTH_PER_WINDOW = 5
+_RATE_WINDOW = 60  # seconds — kept as constant (not user-tunable)
 
 
 class _RateBucket:
@@ -49,7 +47,11 @@ class RemoteAuthMiddleware:
     """
 
     def __init__(self, app):
+        from app.config import get_settings as _get_settings
+        _s = _get_settings()
         self.app = app
+        self._max_requests = _s.rate_limit_max_requests
+        self._max_failed_auth = _s.rate_limit_max_failed_auth
         self._request_buckets: dict[str, _RateBucket] = defaultdict(_RateBucket)
         self._failed_auth_buckets: dict[str, _RateBucket] = defaultdict(_RateBucket)
 
@@ -87,14 +89,14 @@ class RemoteAuthMiddleware:
 
         # General rate limit
         req_count = self._request_buckets[client_ip].hit(now, _RATE_WINDOW)
-        if req_count > _MAX_REQUESTS_PER_WINDOW:
+        if req_count > self._max_requests:
             await self._send_json(send, 429, {"detail": "Rate limit exceeded"})
             return
 
         # Brute-force rate limit check
         failed_count = self._failed_auth_buckets[client_ip].hit(now, _RATE_WINDOW)
         self._failed_auth_buckets[client_ip].timestamps.pop()  # undo probe
-        if failed_count > _MAX_FAILED_AUTH_PER_WINDOW:
+        if failed_count > self._max_failed_auth:
             await self._send_json(send, 429, {"detail": "Too many failed authentication attempts"})
             return
 

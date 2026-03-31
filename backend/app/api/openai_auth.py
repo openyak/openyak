@@ -13,6 +13,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from app.api.config import _remove_env_key, _update_env_file
+from app.dependencies import ProviderRegistryDep, SettingsDep, get_provider_registry, get_settings
 from app.provider.openai_oauth import (
     exchange_code,
     extract_account_id,
@@ -51,10 +52,8 @@ class LoginResponse(BaseModel):
 
 
 @router.get("/config/openai-subscription", response_model=OpenAISubscriptionStatus)
-async def get_openai_subscription_status(request: Request) -> OpenAISubscriptionStatus:
+async def get_openai_subscription_status(settings: SettingsDep, registry: ProviderRegistryDep) -> OpenAISubscriptionStatus:
     """Check if an OpenAI subscription is connected."""
-    settings = request.app.state.settings
-    registry = request.app.state.provider_registry
 
     provider = registry.get_provider(PROVIDER_ID)
     if provider and settings.openai_oauth_access_token and settings.openai_oauth_account_id:
@@ -180,7 +179,7 @@ async def _complete_oauth_flow_internal(code: str, state: str) -> str:
     _update_env_file("OPENYAK_OPENAI_OAUTH_EMAIL", email)
 
     # Update runtime settings
-    settings = _app_ref.state.settings
+    settings = get_settings()
     settings.openai_oauth_access_token = access_token
     settings.openai_oauth_refresh_token = refresh_token
     settings.openai_oauth_account_id = account_id
@@ -188,7 +187,7 @@ async def _complete_oauth_flow_internal(code: str, state: str) -> str:
     settings.openai_oauth_email = email
 
     # Register provider
-    registry = _app_ref.state.provider_registry
+    registry = get_provider_registry()
     provider = OpenAISubscriptionProvider(
         access_token=access_token,
         account_id=account_id,
@@ -329,10 +328,8 @@ async def manual_openai_callback(request: Request, body: ManualCallbackRequest):
 
 
 @router.delete("/config/openai-subscription", response_model=OpenAISubscriptionStatus)
-async def disconnect_openai_subscription(request: Request) -> OpenAISubscriptionStatus:
+async def disconnect_openai_subscription(settings: SettingsDep, registry: ProviderRegistryDep) -> OpenAISubscriptionStatus:
     """Disconnect the OpenAI subscription and remove tokens."""
-    settings = request.app.state.settings
-
     # Clear runtime settings
     settings.openai_oauth_access_token = ""
     settings.openai_oauth_refresh_token = ""
@@ -348,7 +345,6 @@ async def disconnect_openai_subscription(request: Request) -> OpenAISubscription
     _remove_env_key("OPENYAK_OPENAI_OAUTH_EMAIL")
 
     # Unregister provider
-    registry = request.app.state.provider_registry
     registry.unregister(PROVIDER_ID)
 
     return OpenAISubscriptionStatus(is_connected=False)

@@ -3,10 +3,9 @@
 import { desktopAPI } from "./tauri-api";
 import { getRemoteConfig } from "./remote-connection";
 
-/** Whether we are running inside a desktop shell (Tauri or Electron). */
+/** Whether we are running inside a desktop shell (Tauri). */
 export const IS_DESKTOP =
-  typeof window !== "undefined" &&
-  ("__TAURI_INTERNALS__" in window || !!window.electronAPI);
+  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 /** Title bar height in pixels (for desktop mode). */
 export const TITLE_BAR_HEIGHT = 32;

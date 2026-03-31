@@ -6,6 +6,7 @@ import { ChevronDown, Plug, Brain, Pencil, Check, X, Download, RefreshCw } from 
 import { toast } from "sonner";
 import { useConnectors } from "@/hooks/use-connectors";
 import { useSkills } from "@/hooks/use-plugins";
+import { useChatStore } from "@/stores/chat-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import {
   useWorkspaceMemory,
@@ -93,6 +94,8 @@ function MemoryBlock() {
   const workspacePath = useWorkspaceStore((s) => s.activeWorkspacePath);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const refreshTimestampRef = useRef<string | null>(null);
+  const isGenerating = useChatStore((s) => s.isGenerating);
+  const prevGeneratingRef = useRef(isGenerating);
 
   const { data, isLoading } = useWorkspaceMemory(workspacePath, {
     refetchInterval: isRefreshing ? 3000 : false,
@@ -105,6 +108,15 @@ function MemoryBlock() {
   const [editContent, setEditContent] = useState("");
 
   const content = data?.content ?? "";
+
+  // Auto-poll after generation completes (memory queue debounces ~10s + LLM call)
+  useEffect(() => {
+    if (prevGeneratingRef.current && !isGenerating && workspacePath) {
+      refreshTimestampRef.current = data?.time_updated ?? null;
+      setIsRefreshing(true);
+    }
+    prevGeneratingRef.current = isGenerating;
+  }, [isGenerating, workspacePath, data?.time_updated]);
 
   // Stop polling when time_updated changes, or after 60s timeout
   useEffect(() => {

@@ -23,9 +23,6 @@ from app.utils.id import generate_ulid
 logger = logging.getLogger(__name__)
 
 
-# How often the scheduler polls the database for due tasks (seconds).
-_POLL_INTERVAL = 30
-
 # Maximum age of a missed task trigger that will still be executed on startup.
 # Beyond this window, missed triggers are skipped and rescheduled.
 _MISSED_GRACE_HOURS = 24
@@ -34,16 +31,17 @@ _MISSED_GRACE_HOURS = 24
 class TaskScheduler:
     """Application-level task scheduler integrated with FastAPI lifespan."""
 
-    # Maximum number of tasks that can execute concurrently.
-    _MAX_CONCURRENT = 3
-
     def __init__(
         self,
         session_factory: async_sessionmaker[AsyncSession],
         app_state: Any,
     ):
+        from app.config import get_settings as _get_settings
+        _s = _get_settings()
         self._session_factory = session_factory
         self._app_state = app_state
+        self._poll_interval = _s.scheduler_poll_interval
+        self._max_concurrent = _s.scheduler_max_concurrent
         self._task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
         self._running_tasks: set[str] = set()  # task IDs currently executing
@@ -57,7 +55,7 @@ class TaskScheduler:
         await self._recompute_all_next_run()
         await self._catchup_missed()
         self._task = asyncio.create_task(self._poll_loop(), name="task-scheduler")
-        logger.info("Task scheduler started (poll interval %ds)", _POLL_INTERVAL)
+        logger.info("Task scheduler started (poll interval %ds)", self._poll_interval)
 
     async def stop(self) -> None:
         """Graceful shutdown."""
@@ -111,7 +109,7 @@ class TaskScheduler:
     # ------------------------------------------------------------------
 
     async def _poll_loop(self) -> None:
-        """Main scheduler loop: check for due tasks every _POLL_INTERVAL."""
+        """Main scheduler loop: check for due tasks every self._poll_interval."""
         while not self._stop_event.is_set():
             try:
                 await self._check_and_execute()
@@ -120,7 +118,7 @@ class TaskScheduler:
             # Wait for stop event or timeout (normal path: timeout fires)
             try:
                 await asyncio.wait_for(
-                    self._stop_event.wait(), timeout=_POLL_INTERVAL
+                    self._stop_event.wait(), timeout=self._poll_interval
                 )
                 break  # stop_event was set
             except asyncio.TimeoutError:
@@ -144,10 +142,10 @@ class TaskScheduler:
         for task in due_tasks:
             if task.id in self._running_tasks:
                 continue  # Skip if already executing
-            if len(self._running_tasks) >= self._MAX_CONCURRENT:
+            if len(self._running_tasks) >= self._max_concurrent:
                 logger.info(
                     "Concurrency limit (%d) reached, deferring task %s",
-                    self._MAX_CONCURRENT, task.name,
+                    self._max_concurrent, task.name,
                 )
                 break
             asyncio.create_task(
