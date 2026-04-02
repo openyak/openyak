@@ -165,14 +165,20 @@ class TunnelManager:
         loop = asyncio.get_running_loop()
 
         def _do_download():
+            import ssl
             import urllib.request
+
+            import certifi
+
+            ssl_ctx = ssl.create_default_context(cafile=certifi.where())
 
             if url.endswith(".tgz"):
                 import tarfile
                 import tempfile
 
                 with tempfile.NamedTemporaryFile(suffix=".tgz", delete=False) as tmp:
-                    urllib.request.urlretrieve(url, tmp.name)
+                    with urllib.request.urlopen(url, context=ssl_ctx) as resp:
+                        tmp.write(resp.read())
                     with tarfile.open(tmp.name, "r:gz") as tf:
                         member = next(m for m in tf.getmembers() if "cloudflared" in m.name)
                         f = tf.extractfile(member)
@@ -180,7 +186,8 @@ class TunnelManager:
                         target.write_bytes(f.read())
                     Path(tmp.name).unlink(missing_ok=True)
             else:
-                urllib.request.urlretrieve(url, str(target))
+                with urllib.request.urlopen(url, context=ssl_ctx) as resp:
+                    target.write_bytes(resp.read())
 
             if sys.platform != "win32":
                 import stat

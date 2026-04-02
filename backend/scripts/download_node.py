@@ -60,9 +60,14 @@ def _platform_key() -> tuple[str, str]:
 
 
 def _download(url: str) -> bytes:
+    import ssl
+
+    import certifi
+
+    ssl_ctx = ssl.create_default_context(cafile=certifi.where())
     print(f"Downloading {url} ...")
     req = urllib.request.Request(url, headers={"User-Agent": "OpenYak-Builder/1.0"})
-    with urllib.request.urlopen(req, timeout=120) as resp:
+    with urllib.request.urlopen(req, timeout=120, context=ssl_ctx) as resp:
         total = int(resp.headers.get("Content-Length", 0))
         data = bytearray()
         while True:
