@@ -32,8 +32,7 @@ jobs:
             libssl-dev \
             libgtk-3-dev \
             libsoup-3.0-dev \
-            libxdo-dev \
-            libfuse2
+            libxdo-dev
 
       - uses: actions/setup-python@v5
         with:
@@ -77,12 +76,12 @@ jobs:
       - name: Sync metadata
         run: node scripts/sync-desktop-meta.mjs
 
-      - name: Build Tauri
-        env:
-          APPIMAGE_EXTRACT_AND_RUN: "1"
+      - name: Build Tauri (.deb + .rpm only)
         run: |
           cd desktop-tauri
-          npx @tauri-apps/cli build --config src-tauri/build.linux-x64.json
+          npx @tauri-apps/cli build \
+            --config src-tauri/build.linux-x64.json \
+            --bundles deb,rpm
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -90,5 +89,4 @@ jobs:
           name: linux-x64-bundle
           path: |
             desktop-tauri/src-tauri/target/release/bundle/deb/*.deb
-            desktop-tauri/src-tauri/target/release/bundle/appimage/*.AppImage
             desktop-tauri/src-tauri/target/release/bundle/rpm/*.rpm
