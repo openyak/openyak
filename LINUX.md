@@ -18,7 +18,7 @@ Other distributions may work but are not officially tested.
 
 ### Debian/Ubuntu-based distributions (.deb)
 
-Download the `.deb` package from the [releases page](https://github.com/openyak/desktop/releases) and install:
+Download the `.deb` package from the [releases page](https://github.com/openyak/openyak/releases) and install:
 
 ```bash
 sudo dpkg -i openyak_*.deb
@@ -29,7 +29,7 @@ Or double-click the `.deb` file in your file manager to install via the Software
 
 ### Fedora/RHEL-based distributions (.rpm)
 
-Download the `.rpm` package from the [releases page](https://github.com/openyak/desktop/releases) and install:
+Download the `.rpm` package from the [releases page](https://github.com/openyak/openyak/releases) and install:
 
 ```bash
 sudo dnf install openyak-*.rpm
@@ -41,29 +41,14 @@ Or:
 sudo rpm -i openyak-*.rpm
 ```
 
-### Universal AppImage
-
-The AppImage format works on any Linux distribution without installation:
-
-1. Download the `.AppImage` file from the [releases page](https://github.com/openyak/desktop/releases)
-2. Make it executable:
-   ```bash
-   chmod +x OpenYak_*.AppImage
-   ```
-3. Run it:
-   ```bash
-   ./OpenYak_*.AppImage
-   ```
-
-You can also integrate the AppImage with your desktop environment using [AppImageLauncher](https://github.com/TheAssassin/AppImageLauncher).
-
 ## System Requirements
 
 ### Required System Packages (End Users)
 
-The packaged versions (.deb, .rpm, .AppImage) bundle most dependencies, but you need these system libraries:
+The packaged versions (.deb, .rpm) bundle most dependencies, but you need these system libraries:
 
 **Debian/Ubuntu:**
+
 ```bash
 sudo apt-get install libwebkit2gtk-4.1-0 libayatana-appindicator3-1 zenity
 ```
@@ -146,7 +131,7 @@ source $HOME/.cargo/env
 
 ```bash
 # Clone the repository
-git clone https://github.com/openyak/desktop.git
+git clone https://github.com/openyak/openyak.git
 cd desktop
 
 # Install frontend dependencies
@@ -173,8 +158,8 @@ cargo tauri build --config build.linux-x64.json
 ```
 
 The built packages will be in:
+
 - `.deb`: `desktop-tauri/src-tauri/target/release/bundle/deb/`
-- `.AppImage`: `desktop-tauri/src-tauri/target/release/bundle/appimage/`
 - `.rpm`: `desktop-tauri/src-tauri/target/release/bundle/rpm/`
 
 ## Features
@@ -203,6 +188,14 @@ All features available on Windows and macOS are supported on Linux:
 ### Wayland vs X11
 - OpenYak supports both Wayland and X11
 - Some features (like window positioning) may behave differently under Wayland due to compositor restrictions
+- If you experience stability issues on Wayland, you can force X11 mode (see "Environment Overrides" below)
+
+### Environment Overrides
+
+The app sets several environment variables by default to improve compatibility. You can override these if needed:
+
+- `GDK_BACKEND=x11`: We force X11 mode by default if the variable is not set. This works around several WebKitGTK issues on Wayland (like the "Protocol error"). Native Wayland support may be revisited in the future.
+- `WEBKIT_DISABLE_DMABUF_RENDERER=1`: This disables GPU-accelerated DMABUF rendering in WebKitGTK. This is often necessary to prevent blank screens or rendering artifacts on many hardware configurations, though it may result in slightly higher CPU usage.
 
 ### Permissions
 - The app requires access to the filesystem for reading/writing user data
@@ -210,12 +203,11 @@ All features available on Windows and macOS are supported on Linux:
 
 ## Troubleshooting
 
-### App doesn't start
+### App app doesn't start
 1. Check system dependencies are installed (see "Required System Packages" above)
 2. Run from terminal to see error messages:
    ```bash
    openyak  # If installed via .deb/.rpm
-   ./OpenYak_*.AppImage  # If using AppImage
    ```
 
 ### System tray icon not showing
@@ -233,18 +225,10 @@ All features available on Windows and macOS are supported on Linux:
   sudo apt-get install zenity  # Debian/Ubuntu
   sudo dnf install zenity      # Fedora
   ```
-
 ### "Cannot find libwebkit2gtk" error
 - Install WebKitGTK 4.1:
   ```bash
   sudo apt-get install libwebkit2gtk-4.1-0  # Ubuntu 22.04+
-  ```
-
-### AppImage won't run
-- Make sure it's executable: `chmod +x OpenYak_*.AppImage`
-- Try running with `--appimage-extract-and-run` flag if FUSE is not available:
-  ```bash
-  ./OpenYak_*.AppImage --appimage-extract-and-run
   ```
 
 ## Uninstallation
@@ -259,8 +243,6 @@ sudo apt-get remove openyak
 sudo dnf remove openyak
 ```
 
-**AppImage:**
-Simply delete the `.AppImage` file and any desktop integration files created by AppImageLauncher.
 
 ## Data Location
 
@@ -279,7 +261,7 @@ Configuration files:
 If you encounter issues on Linux:
 
 1. Check this document for known issues and solutions
-2. Search existing [GitHub Issues](https://github.com/openyak/desktop/issues)
+2. Search existing [GitHub Issues](https://github.com/openyak/openyak/issues)
 3. Create a new issue with:
    - Your Linux distribution and version
    - Desktop environment (GNOME, KDE, etc.)

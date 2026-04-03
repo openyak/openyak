@@ -3,7 +3,7 @@
     "beforeBuildCommand": ""
   },
   "bundle": {
-    "targets": ["deb", "appimage", "rpm"],
+    "targets": ["deb", "rpm"],
     "resources": {
       "../../backend/dist/openyak-backend": "backend",
       "../../backend/resources/nodejs": "nodejs"
