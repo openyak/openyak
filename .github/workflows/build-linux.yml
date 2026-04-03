@@ -2,6 +2,7 @@ name: Build Linux
 
 on:
   push:
+    branches: ["main"]
     tags: ["v*"]
   workflow_dispatch:
 
@@ -28,7 +29,8 @@ jobs:
             wget \
             libssl-dev \
             libgtk-3-dev \
-            libsoup-3.0-dev
+            libsoup-3.0-dev \
+            libxdo-dev
 
       - uses: actions/setup-python@v5
         with:
