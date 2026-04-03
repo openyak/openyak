@@ -132,7 +132,7 @@ source $HOME/.cargo/env
 ```bash
 # Clone the repository
 git clone https://github.com/openyak/openyak.git
-cd desktop
+cd openyak
 
 # Install frontend dependencies
 cd frontend
@@ -203,7 +203,7 @@ The app sets several environment variables by default to improve compatibility. 
 
 ## Troubleshooting
 
-### App app doesn't start
+### App doesn't start
 1. Check system dependencies are installed (see "Required System Packages" above)
 2. Run from terminal to see error messages:
    ```bash

@@ -2,12 +2,12 @@
 
 <p align="center">
   <a href="README.zh-CN.md"><img src="https://img.shields.io/badge/lang-中文-blue?style=flat-square" alt="中文" /></a>
-  <a href="https://github.com/openyak/desktop/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/openyak/desktop/ci.yml?branch=main&style=flat-square&label=CI" alt="CI" /></a>
-  <a href="https://github.com/openyak/desktop/stargazers"><img src="https://img.shields.io/github/stars/openyak/desktop?style=flat-square" alt="GitHub Stars" /></a>
-  <a href="https://github.com/openyak/desktop/blob/main/LICENSE"><img src="https://img.shields.io/github/license/openyak/desktop?style=flat-square" alt="License" /></a>
-  <a href="https://github.com/openyak/desktop/releases/latest"><img src="https://img.shields.io/github/v/release/openyak/desktop?style=flat-square" alt="Latest Release" /></a>
+  <a href="https://github.com/openyak/openyak/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/openyak/openyak/ci.yml?branch=main&style=flat-square&label=CI" alt="CI" /></a>
+  <a href="https://github.com/openyak/openyak/stargazers"><img src="https://img.shields.io/github/stars/openyak/openyak?style=flat-square" alt="GitHub Stars" /></a>
+  <a href="https://github.com/openyak/openyak/blob/main/LICENSE"><img src="https://img.shields.io/github/license/openyak/openyak?style=flat-square" alt="License" /></a>
+  <a href="https://github.com/openyak/openyak/releases/latest"><img src="https://img.shields.io/github/v/release/openyak/openyak?style=flat-square" alt="Latest Release" /></a>
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-blue?style=flat-square" alt="Platform: macOS | Windows | Linux" />
-  <a href="https://github.com/openyak/desktop/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome" /></a>
+  <a href="https://github.com/openyak/openyak/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome" /></a>
 </p>
 
 <p align="center">
@@ -34,9 +34,9 @@
 |----------|-------------|---------|
 | macOS | Apple Silicon / Intel | .dmg, .app |
 | Windows | x64 | .exe (NSIS installer) |
-| Linux | x64 | .deb, .AppImage, .rpm |
+| Linux | x64 | .deb, .rpm |
 
-> **[Download Latest Release](https://github.com/openyak/desktop/releases/latest)** or visit [open-yak.com/download](https://open-yak.com/download/)
+> **[Download Latest Release](https://github.com/openyak/openyak/releases/latest)** or visit [open-yak.com/download](https://open-yak.com/download/)
 >
 > **Linux users**: See [LINUX.md](LINUX.md) for installation instructions, system requirements, and troubleshooting.
 
@@ -133,18 +133,18 @@ OpenYak runs on your desktop with direct access to your local files and system. 
 
 ## Community
 
-- **Questions & Discussions** — [GitHub Discussions](https://github.com/openyak/desktop/discussions)
-- **Bug Reports** — [GitHub Issues](https://github.com/openyak/desktop/issues)
+- **Questions & Discussions** — [GitHub Discussions](https://github.com/openyak/openyak/discussions)
+- **Bug Reports** — [GitHub Issues](https://github.com/openyak/openyak/issues)
 - **Contributing** — [CONTRIBUTING.md](CONTRIBUTING.md) — PRs and feedback welcome
 
 ## Star History
 
 If OpenYak is useful to you, consider giving it a star — it helps others discover the project.
 
-<a href="https://star-history.com/#openyak/desktop&Date">
+<a href="https://star-history.com/#openyak/openyak&Date">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=openyak/desktop&type=Date&theme=dark" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=openyak/desktop&type=Date" width="600" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=openyak/openyak&type=Date&theme=dark" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=openyak/openyak&type=Date" width="600" />
  </picture>
 </a>
 
