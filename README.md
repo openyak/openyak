@@ -6,7 +6,7 @@
   <a href="https://github.com/openyak/desktop/stargazers"><img src="https://img.shields.io/github/stars/openyak/desktop?style=flat-square" alt="GitHub Stars" /></a>
   <a href="https://github.com/openyak/desktop/blob/main/LICENSE"><img src="https://img.shields.io/github/license/openyak/desktop?style=flat-square" alt="License" /></a>
   <a href="https://github.com/openyak/desktop/releases/latest"><img src="https://img.shields.io/github/v/release/openyak/desktop?style=flat-square" alt="Latest Release" /></a>
-  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows-blue?style=flat-square" alt="Platform: macOS | Windows" />
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-blue?style=flat-square" alt="Platform: macOS | Windows | Linux" />
   <a href="https://github.com/openyak/desktop/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome" /></a>
 </p>
 
@@ -30,12 +30,15 @@
 
 ## Download
 
-| Platform | Architecture |
-|----------|-------------|
-| macOS | Apple Silicon / Intel |
-| Windows | x64 |
+| Platform | Architecture | Formats |
+|----------|-------------|---------|
+| macOS | Apple Silicon / Intel | .dmg, .app |
+| Windows | x64 | .exe (NSIS installer) |
+| Linux | x64 | .deb, .AppImage, .rpm |
 
 > **[Download Latest Release](https://github.com/openyak/desktop/releases/latest)** or visit [open-yak.com/download](https://open-yak.com/download/)
+>
+> **Linux users**: See [LINUX.md](LINUX.md) for installation instructions, system requirements, and troubleshooting.
 
 ## Get Started
 
