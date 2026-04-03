@@ -23,6 +23,8 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
+            rpm \
+            file \
             patchelf \
             build-essential \
             curl \
@@ -76,6 +78,8 @@ jobs:
         run: node scripts/sync-desktop-meta.mjs
 
       - name: Build Tauri
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
         run: |
           cd desktop-tauri
           npx @tauri-apps/cli build --config src-tauri/build.linux-x64.json
