@@ -267,13 +267,16 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
+            rpm \
+            file \
             patchelf \
             build-essential \
             curl \
             wget \
             libssl-dev \
             libgtk-3-dev \
-            libsoup-3.0-dev
+            libsoup-3.0-dev \
+            libxdo-dev
 
       - uses: actions/setup-python@v5
         with:
@@ -309,12 +312,20 @@ jobs:
           pyinstaller openyak.spec --noconfirm
 
       - name: Download Node.js runtime
-        run: cd backend && python3 scripts/download_node.py
+        run: |
+          cd backend
+          source venv/bin/activate
+          python scripts/download_node.py
 
-      - name: Build Tauri
+      - name: Sync metadata
+        run: node scripts/sync-desktop-meta.mjs
+
+      - name: Build Tauri (.deb + .rpm only)
         run: |
           cd desktop-tauri
-          npx @tauri-apps/cli build --config build.linux-x64.json
+          npx @tauri-apps/cli build \
+            --config src-tauri/build.linux-x64.json \
+            --bundles deb,rpm
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -322,7 +333,6 @@ jobs:
           name: linux-x64-bundle
           path: |
             desktop-tauri/src-tauri/target/release/bundle/deb/*.deb
-            desktop-tauri/src-tauri/target/release/bundle/appimage/*.AppImage
             desktop-tauri/src-tauri/target/release/bundle/rpm/*.rpm
 
   publish:
