@@ -65,6 +65,8 @@
   "providerKeyPlaceholder_zhipu": "...",
   "providerKeyPlaceholder_siliconflow": "sk-...",
   "providerKeyPlaceholder_xiaomi": "...",
+  "providerKeyPlaceholder_custom": "Custom Endpoint API Key",
+  "providerUrlPlaceholder_custom": "https://api.example.com/v1",
   "enableProvider": "Enable provider",
   "disableProvider": "Disable provider",
   "removeApiKey": "Remove API key",

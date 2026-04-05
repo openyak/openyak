@@ -67,6 +67,7 @@ export interface ProviderInfo {
   masked_key: string | null;
   model_count: number;
   status: "connected" | "error" | "unconfigured" | "disabled";
+  base_url?: string;
 }
 
 export interface LocalProviderStatus {

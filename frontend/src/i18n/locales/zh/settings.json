@@ -65,6 +65,8 @@
   "providerKeyPlaceholder_zhipu": "...",
   "providerKeyPlaceholder_siliconflow": "sk-...",
   "providerKeyPlaceholder_xiaomi": "...",
+  "providerKeyPlaceholder_custom": "自定义端点 API 密钥",
+  "providerUrlPlaceholder_custom": "https://api.example.com/v1",
   "enableProvider": "启用",
   "disableProvider": "停用",
   "removeApiKey": "移除 API 密钥",

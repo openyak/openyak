@@ -54,15 +54,18 @@ class GenericOpenAIProvider(OpenAICompatProvider):
         if self._models_cache is not None:
             return self._models_cache
 
-        # 1. Start with models.dev (remote, cached, best pricing)
-        models = await self._load_models_dev()
+        # 1. Start with models.dev (remote, cached, best pricing) unless it is a custom dynamic provider
+        models = []
+        seen_ids = set()
+        if not self._provider_id.startswith("custom_"):
+            models = await self._load_models_dev()
+            seen_ids = {m.id for m in models}
 
-        # 2. Merge yakAgent catalog (fills gaps for models.dev doesn't cover)
-        seen_ids = {m.id for m in models}
-        for m in self._load_catalog_models():
-            if m.id not in seen_ids:
-                models.append(m)
-                seen_ids.add(m.id)
+            # 2. Merge yakAgent catalog (fills gaps for models.dev doesn't cover)
+            for m in self._load_catalog_models():
+                if m.id not in seen_ids:
+                    models.append(m)
+                    seen_ids.add(m.id)
 
         # 3. Last resort: provider's own /v1/models API (no pricing)
         if not models:

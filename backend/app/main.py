@@ -236,6 +236,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         except Exception as e:
             logger.warning("Failed to register provider %s: %s", pid, e)
 
+    # Auto-register custom endpoints
+    from app.config import get_custom_endpoints
+    for ce in get_custom_endpoints(settings):
+        if not ce.get("enabled", True):
+            continue
+        try:
+            pid = ce["id"]
+            if pid in disabled:
+                continue
+            provider = create_desktop_provider(pid, ce.get("api_key", ""), base_url=ce.get("base_url"))
+            registry.register(provider)
+            byok_registered += 1
+            should_refresh_models = True
+            logger.info("Registered custom provider: %s (%s)", pid, ce.get("name"))
+        except Exception as e:
+            logger.warning("Failed to register custom provider %s: %s", ce.get("id"), e)
+
     if settings.local_base_url:
         try:
             local_provider = create_local_provider(settings.local_base_url)

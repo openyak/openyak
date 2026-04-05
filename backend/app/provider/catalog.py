@@ -171,4 +171,10 @@ PROVIDER_CATALOG: dict[str, ProviderDef] = {
         kind="openai_compat",
         base_url="https://api.xiaomimimo.com/v1",
     ),
+    "custom": ProviderDef(
+        id="custom",
+        name="Custom Endpoint",
+        settings_key="custom_api_key",
+        kind="openai_compat_custom",
+    ),
 }

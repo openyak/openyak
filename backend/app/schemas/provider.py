@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ModelCapabilities(BaseModel):
@@ -70,6 +70,25 @@ class ProviderKeyUpdate(BaseModel):
     """Request to set/update an API key for any provider."""
 
     api_key: str
+    base_url: str | None = None
+
+
+class CustomEndpointCreate(BaseModel):
+    """Payload to create or update a custom openai-compatible endpoint."""
+
+    name: str = Field(..., min_length=1, max_length=100, description="Endpoint name (1-100 chars)")
+    base_url: str = Field(..., min_length=1, description="Base URL for the endpoint")
+    api_key: str | None = None
+
+
+class CustomEndpointConfig(BaseModel):
+    """A complete persisted custom endpoint."""
+
+    id: str
+    name: str
+    base_url: str
+    api_key: str | None = None
+    enabled: bool = True
 
 
 class ProviderInfo(BaseModel):
@@ -82,3 +101,4 @@ class ProviderInfo(BaseModel):
     masked_key: str | None = None
     model_count: int = 0
     status: str = "unconfigured"  # "connected" | "error" | "unconfigured" | "disabled"
+    base_url: str | None = None
