@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Eye, EyeOff, X, Check, Loader2, AlertCircle, LogOut, CreditCard, Mail, RotateCw, Cpu, Server } from "lucide-react";
+import { Eye, EyeOff, X, Check, Loader2, AlertCircle, LogOut, CreditCard, Mail, RotateCw, Cpu, Server, Plug } from "lucide-react";
 import { OpenYakLogo } from "@/components/ui/openyak-logo";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -31,11 +31,12 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
   const { activeProvider, setActiveProvider } = useSettingsStore();
   const authStore = useAuthStore();
 
-  type ProviderMode = "openyak" | "byok" | "chatgpt" | "ollama" | "local";
+  type ProviderMode = "openyak" | "byok" | "chatgpt" | "ollama" | "local" | "custom";
   const [viewingProvider, setViewingProvider] = useState<ProviderMode>(
     () => (activeProvider as ProviderMode) ?? "openyak"
   );
 
+  const [mounted, setMounted] = useState(false);
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [showKey, setShowKey] = useState(false);
   const qc = useQueryClient();
@@ -131,6 +132,10 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
     setLocalBaseUrlInput(localStatus?.base_url ?? "");
   }, [localStatus?.base_url]);
 
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   const fallbackToOtherProviders = () => {
     if (authStore.isConnected) {
       setActiveProvider("openyak");
@@ -182,14 +187,16 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
 
   // Per-provider key input state and mutations
   const [providerKeyInputs, setProviderKeyInputs] = useState<Record<string, string>>({});
+  const [providerBaseUrlInputs, setProviderBaseUrlInputs] = useState<Record<string, string>>({});
   const [showProviderKey, setShowProviderKey] = useState<Record<string, boolean>>({});
   const [providerMutatingId, setProviderMutatingId] = useState<string | null>(null);
   const [providerError, setProviderError] = useState<Record<string, string>>({});
+  const [customEndpointName, setCustomEndpointName] = useState<string>("");
 
   const updateProviderKey = useMutation({
-    mutationFn: async ({ id, apiKey }: { id: string; apiKey: string }) => {
+    mutationFn: async ({ id, apiKey, baseUrl }: { id: string; apiKey: string; baseUrl?: string }) => {
       setProviderMutatingId(id);
-      return api.post<ProviderInfo>(API.CONFIG.PROVIDER_KEY(id), { api_key: apiKey });
+      return api.post<ProviderInfo>(API.CONFIG.PROVIDER_KEY(id), { api_key: apiKey, base_url: baseUrl });
     },
     onSuccess: (_data, { id }) => {
       setProviderKeyInputs((prev) => ({ ...prev, [id]: "" }));
@@ -224,6 +231,62 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.providers });
       qc.invalidateQueries({ queryKey: queryKeys.models });
+    },
+  });
+
+  const createCustomEndpoint = useMutation({
+    mutationFn: async ({ name, apiKey, baseUrl }: { name: string; apiKey?: string; baseUrl: string }) => {
+      setProviderMutatingId("custom_new");
+      return api.post<ProviderInfo>(API.CONFIG.CUSTOM_ENDPOINT, { name, api_key: apiKey || "", base_url: baseUrl });
+    },
+    onSuccess: () => {
+      setProviderKeyInputs((prev) => ({ ...prev, ["custom_new"]: "" }));
+      setProviderBaseUrlInputs((prev) => ({ ...prev, ["custom_new"]: "" }));
+      setCustomEndpointName("");
+      setProviderError((prev) => { const next = { ...prev }; delete next["custom_new"]; return next; });
+      setProviderMutatingId(null);
+      qc.invalidateQueries({ queryKey: queryKeys.providers });
+      qc.invalidateQueries({ queryKey: queryKeys.models });
+    },
+    onError: (err) => {
+      setProviderMutatingId(null);
+      const detail = err instanceof ApiError ? ((err.body as Record<string, string> | undefined)?.detail ?? "Failed to save endpoint") : "Failed to save endpoint";
+      setProviderError((prev) => ({ ...prev, ["custom_new"]: detail }));
+    },
+  });
+
+  const deleteCustomEndpoint = useMutation({
+    mutationFn: async (id: string) => {
+      setProviderMutatingId(id);
+      return api.delete<ProviderInfo>(API.CONFIG.CUSTOM_ENDPOINT_ITEM(id));
+    },
+    onSuccess: () => {
+      setProviderMutatingId(null);
+      qc.invalidateQueries({ queryKey: queryKeys.providers });
+      qc.invalidateQueries({ queryKey: queryKeys.models });
+    },
+    onError: () => { setProviderMutatingId(null); },
+  });
+
+  const updateCustomEndpoint = useMutation({
+    mutationFn: async ({ id, name, apiKey, baseUrl, enabled }: { id: string; name?: string; apiKey?: string; baseUrl?: string; enabled?: boolean }) => {
+      setProviderMutatingId(id);
+      const body: Record<string, unknown> = {};
+      if (name !== undefined) body.name = name;
+      if (apiKey !== undefined) body.api_key = apiKey;
+      if (baseUrl !== undefined) body.base_url = baseUrl;
+      if (enabled !== undefined) body.enabled = enabled;
+      return api.patch<ProviderInfo>(API.CONFIG.CUSTOM_ENDPOINT_ITEM(id), body);
+    },
+    onSuccess: () => {
+      setProviderMutatingId(null);
+      qc.invalidateQueries({ queryKey: queryKeys.providers });
+      qc.invalidateQueries({ queryKey: queryKeys.models });
+    },
+    onError: (err, { id }) => {
+      setProviderMutatingId(null);
+      const detail = err instanceof ApiError ? ((err.body as Record<string, string> | undefined)?.detail ?? "Failed to update endpoint") : "Failed to update endpoint";
+      setProviderError((prev) => ({ ...prev, [id]: detail }));
     },
   });
 
@@ -313,13 +376,14 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
       <p className="text-xs text-[var(--text-secondary)]">{t('providerModeDesc')}</p>
 
       {/* Provider cards */}
-      <div className="grid grid-cols-4 gap-2">
+      <div className="grid grid-cols-3 gap-2">
         {([
           { mode: "openyak" as ProviderMode, label: t('openyakAccount'), icon: Eye, connected: authStore.isConnected },
-          { mode: "byok" as ProviderMode, label: t('ownApiKey'), icon: Eye, connected: !!keyStatus?.is_configured || (providers ?? []).some((p) => p.is_configured) },
+          { mode: "byok" as ProviderMode, label: t('ownApiKey'), icon: Eye, connected: !!keyStatus?.is_configured || (providers ?? []).some((p) => p.is_configured && !p.id.startsWith("custom_")) },
           { mode: "chatgpt" as ProviderMode, label: t('chatgptSubscription'), icon: CreditCard, connected: !!openaiSubStatus?.is_connected },
           { mode: "ollama" as ProviderMode, label: "Ollama", icon: Cpu, connected: ollamaConnected },
           { mode: "local" as ProviderMode, label: t('localProvider'), icon: Server, connected: !!localStatus?.is_connected },
+          { mode: "custom" as ProviderMode, label: t('customEndpoint'), icon: Plug, connected: (providers ?? []).some(p => p.id.startsWith("custom_") && p.is_configured) },
         ]).map(({ mode, label, icon: Icon, connected }) => (
           <button
             key={mode}
@@ -332,8 +396,8 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
           >
             {mode === "openyak" ? <OpenYakLogo size={20} /> : <Icon className="h-5 w-5" />}
             <span className="text-xs font-medium text-center leading-tight">{label}</span>
-            {connected && <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-[var(--color-success)]" />}
-            {activeProvider === mode && connected && (
+            {mounted && connected && <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-[var(--color-success)]" />}
+            {activeProvider === mode && mounted && connected && (
               <span className="absolute bottom-1 text-[9px] font-medium text-[var(--brand-primary)]">{t('activeProvider')}</span>
             )}
           </button>
@@ -401,7 +465,7 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
           <p className="text-xs text-[var(--text-secondary)]">{t('byokDesc')}</p>
 
           {/* All BYOK providers (OpenRouter, OpenAI, Anthropic, Gemini, etc.) */}
-          {(providers ?? []).map((p) => (
+          {(providers ?? []).filter(p => !p.id.startsWith("custom_")).map((p) => (
             <div key={p.id} className={`rounded-lg border p-3 space-y-2 transition-opacity ${
               p.is_configured && !p.enabled ? "border-[var(--border-default)] opacity-50" : "border-[var(--border-default)]"
             }`}>
@@ -442,24 +506,26 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
                   </button>
                 </div>
               )}
-              <div className="flex items-center gap-2">
-                <div className="relative flex-1">
-                  <Input
-                    type={showProviderKey[p.id] ? "text" : "password"}
-                    value={providerKeyInputs[p.id] ?? ""}
-                    onChange={(e) => setProviderKeyInputs((prev) => ({ ...prev, [p.id]: e.target.value }))}
-                    placeholder={t(`providerKeyPlaceholder_${p.id}`, { defaultValue: `${p.name} API key` })}
-                    className="pr-8 font-mono text-xs"
-                    autoComplete="one-time-code"
-                    data-form-type="other"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowProviderKey((prev) => ({ ...prev, [p.id]: !prev[p.id] }))}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
-                  >
-                    {showProviderKey[p.id] ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-                  </button>
+              <div className="flex items-start gap-2">
+                <div className="flex-1 space-y-2">
+                  <div className="relative">
+                    <Input
+                      type={showProviderKey[p.id] ? "text" : "password"}
+                      value={providerKeyInputs[p.id] ?? ""}
+                      onChange={(e) => setProviderKeyInputs((prev) => ({ ...prev, [p.id]: e.target.value }))}
+                      placeholder={t(`providerKeyPlaceholder_${p.id}`, { defaultValue: `${p.name} API key` })}
+                      className="pr-8 font-mono text-xs"
+                      autoComplete="one-time-code"
+                      data-form-type="other"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowProviderKey((prev) => ({ ...prev, [p.id]: !prev[p.id] }))}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
+                    >
+                      {showProviderKey[p.id] ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                    </button>
+                  </div>
                 </div>
                 <Button
                   variant="outline"
@@ -577,6 +643,117 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
           </div>
         </div>
       )}
+
+      {/* Custom OpenAI-compatible endpoints */}
+      {viewingProvider === "custom" && (() => {
+        const customProviders = providers?.filter(p => p.id.startsWith("custom_")) || [];
+        return (
+          <div className="space-y-6">
+            <p className="text-xs text-[var(--text-secondary)]">{t('customEndpointDesc')}</p>
+            
+            {customProviders.length > 0 && (
+              <div className="space-y-4">
+                <h4 className="text-xs font-semibold text-[var(--text-secondary)]">{t('savedEndpoints')}</h4>
+                {customProviders.map((p) => (
+                  <div key={p.id} className={`p-3 border border-[var(--border-primary)] rounded-lg bg-[var(--surface-secondary)] ${!p.enabled ? "opacity-50" : ""}`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="font-semibold">{p.name || t('customEndpoint')}</span>
+                        <span className="text-[var(--text-secondary)] font-mono ml-2 text-[10px] bg-[var(--surface-primary)] px-2 py-0.5 rounded">{p.base_url}</span>
+                        {p.masked_key && <span className="text-[var(--text-tertiary)] font-mono ml-2 text-[10px]">Key: {p.masked_key}</span>}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-[var(--text-tertiary)]">{p.model_count} models</span>
+                        <button
+                          type="button"
+                          onClick={() => updateCustomEndpoint.mutate({ id: p.id, enabled: !p.enabled })}
+                          disabled={updateCustomEndpoint.isPending}
+                          className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${
+                            p.enabled ? "bg-[var(--color-success)]" : "bg-[var(--surface-tertiary)]"
+                          }`}
+                          title={p.enabled ? t('disableProvider') : t('enableProvider')}
+                        >
+                          <span className={`pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white shadow-sm transition-transform ${
+                            p.enabled ? "translate-x-3" : "translate-x-0"
+                          }`} />
+                        </button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 px-2 text-[var(--color-destructive)] hover:text-[var(--color-destructive)] hover:bg-[var(--color-destructive)]/10"
+                          onClick={() => deleteCustomEndpoint.mutate(p.id)}
+                          disabled={providerMutatingId === p.id}
+                        >
+                          {providerMutatingId === p.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <LogOut className="h-3 w-3" />}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="space-y-4 pt-4 border-t border-[var(--border-primary)]">
+              <h4 className="text-xs font-semibold text-[var(--text-secondary)]">{t('addNewCustomEndpoint')}</h4>
+              <div className="space-y-3 p-3 bg-[var(--surface-secondary)] rounded-lg">
+                <Input
+                  type="text"
+                  value={customEndpointName}
+                  onChange={(e) => setCustomEndpointName(e.target.value)}
+                  placeholder="Endpoint Name (e.g. My Local Model)"
+                  className="text-xs bg-[var(--surface-primary)]"
+                />
+                <Input
+                  type="text"
+                  value={providerBaseUrlInputs["custom_new"] ?? ""}
+                  onChange={(e) => setProviderBaseUrlInputs((prev) => ({ ...prev, ["custom_new"]: e.target.value }))}
+                  placeholder={t('providerUrlPlaceholder_custom', { defaultValue: 'Base URL (e.g. https://api.myendpoint.com/v1)' })}
+                  className="font-mono text-xs bg-[var(--surface-primary)]"
+                />
+                <div className="relative">
+                  <Input
+                    type={showProviderKey["custom_new"] ? "text" : "password"}
+                    value={providerKeyInputs["custom_new"] ?? ""}
+                    onChange={(e) => setProviderKeyInputs((prev) => ({ ...prev, ["custom_new"]: e.target.value }))}
+                    placeholder="API Key (Leave blank if not required)"
+                    className="pr-8 font-mono text-xs bg-[var(--surface-primary)]"
+                    autoComplete="one-time-code"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowProviderKey((prev) => ({ ...prev, ["custom_new"]: !prev["custom_new"] }))}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
+                  >
+                    {showProviderKey["custom_new"] ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                  </button>
+                </div>
+                <div className="flex items-center justify-between">
+                  {providerError["custom_new"] && (
+                    <div className="flex items-center gap-1.5 text-xs text-[var(--color-destructive)]">
+                      <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                      <span>{providerError["custom_new"]}</span>
+                    </div>
+                  )}
+                  <Button
+                    variant="default"
+                    size="sm"
+                    className="ml-auto"
+                    onClick={() => createCustomEndpoint.mutate({ 
+                      name: customEndpointName || "Custom Endpoint",
+                      apiKey: providerKeyInputs["custom_new"] ?? "", 
+                      baseUrl: providerBaseUrlInputs["custom_new"] ?? ""
+                    })}
+                    disabled={!(providerBaseUrlInputs["custom_new"] ?? "").trim() || providerMutatingId === "custom_new"}
+                  >
+                    {providerMutatingId === "custom_new" ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
+                    Add Endpoint
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

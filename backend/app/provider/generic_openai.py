@@ -34,6 +34,7 @@ class GenericOpenAIProvider(OpenAICompatProvider):
         *,
         provider_id: str,
         base_url: str,
+        kind: str = "openai_compat",
         default_headers: dict[str, str] | None = None,
     ):
         super().__init__(
@@ -43,6 +44,7 @@ class GenericOpenAIProvider(OpenAICompatProvider):
         )
         self._api_key = api_key
         self._provider_id = provider_id
+        self._kind = kind
         self._models_cache: list[ModelInfo] | None = None
 
     @property
@@ -54,15 +56,16 @@ class GenericOpenAIProvider(OpenAICompatProvider):
         if self._models_cache is not None:
             return self._models_cache
 
-        # 1. Start with models.dev (remote, cached, best pricing)
-        models = await self._load_models_dev()
+        models = []
+        seen_ids = set()
+        if self._kind != "openai_compat_custom":
+            models = await self._load_models_dev()
+            seen_ids = {m.id for m in models}
 
-        # 2. Merge yakAgent catalog (fills gaps for models.dev doesn't cover)
-        seen_ids = {m.id for m in models}
-        for m in self._load_catalog_models():
-            if m.id not in seen_ids:
-                models.append(m)
-                seen_ids.add(m.id)
+            for m in self._load_catalog_models():
+                if m.id not in seen_ids:
+                    models.append(m)
+                    seen_ids.add(m.id)
 
         # 3. Last resort: provider's own /v1/models API (no pricing)
         if not models:

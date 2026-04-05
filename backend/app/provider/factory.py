@@ -38,10 +38,19 @@ def create_provider(
     """
     pdef = PROVIDER_CATALOG.get(provider_id)
     if pdef is None:
-        raise ValueError(
-            f"Unknown provider: '{provider_id}'. "
-            f"Available: {', '.join(sorted(PROVIDER_CATALOG.keys()))}"
-        )
+        if provider_id.startswith("custom_"):
+            from app.provider.catalog import ProviderDef
+            pdef = ProviderDef(
+                id=provider_id,
+                name="Custom Endpoint",
+                settings_key="custom_endpoints",
+                kind="openai_compat_custom",
+            )
+        else:
+            raise ValueError(
+                f"Unknown provider: '{provider_id}'. "
+                f"Available: {', '.join(sorted(PROVIDER_CATALOG.keys()))}"
+            )
 
     if pdef.kind == "openrouter":
         from app.provider.openrouter import OpenRouterProvider
@@ -55,19 +64,20 @@ def create_provider(
         from app.provider.gemini_provider import GeminiDesktopProvider
         return GeminiDesktopProvider(api_key=api_key)
 
-    if pdef.kind in ("openai_compat", "openai_compat_azure"):
+    if pdef.kind in ("openai_compat", "openai_compat_azure", "openai_compat_custom"):
         from app.provider.generic_openai import GenericOpenAIProvider
 
         effective_url = base_url or pdef.base_url
-        if not effective_url:
+        if not effective_url and pdef.kind in ("openai_compat_azure", "openai_compat_custom"):
             raise ValueError(
                 f"Provider '{provider_id}' requires a base_url. "
-                f"Set OPENYAK_AZURE_OPENAI_BASE_URL for Azure."
+                f"Ensure the corresponding setting is provided."
             )
         return GenericOpenAIProvider(
             api_key=api_key,
             provider_id=provider_id,
             base_url=effective_url,
+            kind=pdef.kind,
             default_headers=pdef.default_headers or None,
         )
 

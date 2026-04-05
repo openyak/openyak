@@ -14,6 +14,7 @@ const PROVIDER_ID_MAP: Record<NonNullable<ActiveProvider>, string | null> = {
   chatgpt: "openai-subscription",
   ollama: "ollama",
   local: "local",
+  custom: null, // Custom endpoints: show models from custom providers
 };
 
 export function useProviderModels() {

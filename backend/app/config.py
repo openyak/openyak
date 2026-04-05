@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,7 @@ class Settings(BaseSettings):
     zhipu_api_key: str = ""         # OPENYAK_ZHIPU_API_KEY (智谱 GLM)
     siliconflow_api_key: str = ""   # OPENYAK_SILICONFLOW_API_KEY (硅基流动)
     xiaomi_api_key: str = ""        # OPENYAK_XIAOMI_API_KEY (MiMo)
+    custom_endpoints: str = "[]"    # OPENYAK_CUSTOM_ENDPOINTS
 
     # Comma-separated list of provider IDs to disable (e.g. "groq,deepseek")
     # Disabled providers are not registered even if their API key is set.
@@ -154,3 +156,12 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+def get_custom_endpoints(settings: Settings) -> list[dict[str, Any]]:
+    try:
+        data = json.loads(settings.custom_endpoints)
+        if isinstance(data, list):
+            return data
+    except Exception:
+        pass
+    return []

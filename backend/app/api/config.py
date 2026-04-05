@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
+import uuid
 from pathlib import Path
-
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from urllib.parse import urlparse
 
+from app.config import get_custom_endpoints
 from app.dependencies import ProviderRegistryDep, SettingsDep
 from app.provider.catalog import PROVIDER_CATALOG
 from app.provider.factory import create_provider as create_desktop_provider
@@ -20,11 +23,21 @@ from app.provider.local import (
     create_local_provider,
 )
 from app.provider.openrouter import OpenRouterProvider
-from app.schemas.provider import ApiKeyStatus, ApiKeyUpdate, ProviderInfo, ProviderKeyUpdate
+from app.schemas.provider import (
+    ApiKeyStatus,
+    ApiKeyUpdate,
+    CustomEndpointConfig,
+    CustomEndpointCreate,
+    CustomEndpointUpdate,
+    ProviderInfo,
+    ProviderKeyUpdate,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+_custom_endpoints_lock = asyncio.Lock()
 
 # Persist runtime config in current working directory.
 #
@@ -41,6 +54,26 @@ def _mask_key(key: str) -> str:
     if len(key) <= 11:
         return "****"
     return f"{key[:7]}...{key[-4:]}"
+
+
+def _build_custom_endpoint_info(
+    ce: dict[str, Any],
+    *,
+    enabled: bool,
+    status: str,
+    model_count: int | None = None,
+) -> ProviderInfo:
+    """Build ProviderInfo for a custom endpoint."""
+    return ProviderInfo(
+        id=ce["id"],
+        name=ce.get("name", "Custom Endpoint"),
+        is_configured=True,
+        enabled=enabled,
+        masked_key=_mask_key(ce.get("api_key", "")) if ce.get("api_key") else None,
+        model_count=model_count,
+        status=status,
+        base_url=ce.get("base_url"),
+    )
 
 
 def _update_env_file(key: str, value: str) -> None:
@@ -378,6 +411,10 @@ async def list_providers(settings: SettingsDep, registry: ProviderRegistryDep) -
         is_disabled = pid in disabled
         provider = registry.get_provider(pid)
 
+        base_url = None
+        if pdef.kind == "openai_compat_azure":
+            base_url = getattr(settings, "azure_openai_base_url", "")
+
         if api_key and is_disabled:
             result.append(ProviderInfo(
                 id=pid,
@@ -386,6 +423,7 @@ async def list_providers(settings: SettingsDep, registry: ProviderRegistryDep) -
                 enabled=False,
                 masked_key=_mask_key(api_key),
                 status="disabled",
+                base_url=base_url,
             ))
         elif provider and api_key:
             models = [m for p, m in registry._full_models if m.provider_id == pid]
@@ -397,6 +435,7 @@ async def list_providers(settings: SettingsDep, registry: ProviderRegistryDep) -
                 masked_key=_mask_key(api_key),
                 model_count=len(models),
                 status="connected",
+                base_url=base_url,
             ))
         elif api_key:
             result.append(ProviderInfo(
@@ -406,6 +445,7 @@ async def list_providers(settings: SettingsDep, registry: ProviderRegistryDep) -
                 enabled=True,
                 masked_key=_mask_key(api_key),
                 status="error",
+                base_url=base_url,
             ))
         else:
             result.append(ProviderInfo(
@@ -414,7 +454,23 @@ async def list_providers(settings: SettingsDep, registry: ProviderRegistryDep) -
                 is_configured=False,
                 enabled=not is_disabled,
                 status="unconfigured",
+                base_url=base_url,
             ))
+
+
+    # Inject Custom Endpoints
+    for ce in get_custom_endpoints(settings):
+        pid = ce["id"]
+        is_disabled = pid in disabled or not ce.get("enabled", True)
+        provider = registry.get_provider(pid)
+
+        if is_disabled:
+            result.append(_build_custom_endpoint_info(ce, enabled=False, status="disabled"))
+        elif provider:
+            models = [m for p, m in registry._full_models if m.provider_id == pid]
+            result.append(_build_custom_endpoint_info(ce, enabled=True, status="connected", model_count=len(models)))
+        else:
+            result.append(_build_custom_endpoint_info(ce, enabled=True, status="error"))
 
     return result
 
@@ -434,11 +490,19 @@ async def set_provider_key(
 
     # Azure needs a base_url from the request body or existing settings
     extra_kwargs: dict[str, str] = {}
-    if pdef.kind == "openai_compat_azure":
-        azure_url = getattr(body, "base_url", None) or getattr(settings, "azure_openai_base_url", "")
-        if not azure_url:
-            raise HTTPException(400, "Azure requires OPENYAK_AZURE_OPENAI_BASE_URL to be set")
-        extra_kwargs["base_url"] = azure_url
+    if pdef.kind in ("openai_compat_azure",):
+        url_setting_map = {
+            "openai_compat_azure": "azure_openai_base_url",
+        }
+        url_setting = url_setting_map[pdef.kind]
+        base_url = getattr(body, "base_url", None) or getattr(settings, url_setting, "")
+        if not base_url:
+            raise HTTPException(400, f"{pdef.name} requires a base_url to be set")
+        extra_kwargs["base_url"] = base_url
+
+        # Persist base_url
+        setattr(settings, url_setting, base_url)
+        _update_env_file(f"OPENYAK_{url_setting.upper()}", base_url)
 
     # Validate by creating a test provider and listing models
     try:
@@ -479,6 +543,7 @@ async def set_provider_key(
         masked_key=_mask_key(api_key),
         model_count=len(models),
         status="connected",
+        base_url=extra_kwargs.get("base_url"),
     )
 
 
@@ -497,6 +562,10 @@ async def delete_provider_key(
     # Remove from .env
     env_key = f"OPENYAK_{pdef.settings_key.upper()}"
     _remove_env_key(env_key)
+
+    if pdef.kind == "openai_compat_azure":
+        settings.azure_openai_base_url = ""
+        _remove_env_key("OPENYAK_AZURE_OPENAI_BASE_URL")
 
     # Unregister provider
     registry.unregister(provider_id)
@@ -566,6 +635,148 @@ async def toggle_provider(
             enabled=new_enabled, status="unconfigured",
         )
 
+
+@router.post("/config/custom", response_model=ProviderInfo)
+async def create_custom_endpoint(
+    body: CustomEndpointCreate, settings: SettingsDep, registry: ProviderRegistryDep
+) -> ProviderInfo:
+    """Create a new custom endpoint."""
+    base_url = body.base_url
+    api_key = body.api_key.strip() if body.api_key else ""
+    name = body.name.strip() or "Custom Endpoint"
+
+    endpoint_id = f"custom_{uuid.uuid4().hex[:8]}"
+
+    try:
+        test_provider = create_desktop_provider(endpoint_id, api_key, base_url=base_url)
+        models = await test_provider.list_models()
+    except Exception as e:
+        logger.warning("Failed validation for custom endpoint %s: %s", name, e)
+        raise HTTPException(400, f"Validation failed: {e}")
+
+    async with _custom_endpoints_lock:
+        endpoints = get_custom_endpoints(settings)
+        new_config = {
+            "id": endpoint_id,
+            "name": name,
+            "base_url": base_url,
+            "api_key": api_key,
+            "enabled": True
+        }
+        endpoints.append(new_config)
+
+        settings.custom_endpoints = json.dumps(endpoints)
+        _update_env_file("OPENYAK_CUSTOM_ENDPOINTS", settings.custom_endpoints)
+
+    registry.register(test_provider)
+    try:
+        await registry.refresh_models()
+    except Exception as e:
+        logger.warning("Failed to refresh models after adding custom endpoint %s: %s", endpoint_id, e)
+
+    return ProviderInfo(
+        id=endpoint_id, name=name, is_configured=True, enabled=True,
+        masked_key=_mask_key(api_key) if api_key else None,
+        model_count=len(models), status="connected", base_url=base_url
+    )
+
+@router.delete("/config/custom/{endpoint_id}", response_model=ProviderInfo)
+async def delete_custom_endpoint(
+    endpoint_id: str, settings: SettingsDep, registry: ProviderRegistryDep
+) -> ProviderInfo:
+    async with _custom_endpoints_lock:
+        endpoints = get_custom_endpoints(settings)
+        found = None
+        for i, e in enumerate(endpoints):
+            if e.get("id") == endpoint_id:
+                found = endpoints.pop(i)
+                break
+
+        if not found:
+            raise HTTPException(404, "Custom endpoint not found")
+
+        settings.custom_endpoints = json.dumps(endpoints)
+        _update_env_file("OPENYAK_CUSTOM_ENDPOINTS", settings.custom_endpoints)
+
+    registry.unregister(endpoint_id)
+
+    return ProviderInfo(
+        id=endpoint_id, name=found.get("name", "Custom Endpoint"),
+        is_configured=False, status="unconfigured"
+    )
+
+@router.patch("/config/custom/{endpoint_id}", response_model=ProviderInfo)
+async def update_custom_endpoint(
+    endpoint_id: str,
+    body: CustomEndpointUpdate,
+    settings: SettingsDep,
+    registry: ProviderRegistryDep,
+) -> ProviderInfo:
+    """Update a custom endpoint (partial update)."""
+    models = []
+    name = ""
+    base_url = ""
+    api_key = ""
+    enabled = True
+
+    async with _custom_endpoints_lock:
+        endpoints = get_custom_endpoints(settings)
+
+        found = None
+        found_idx = -1
+        for i, e in enumerate(endpoints):
+            if e.get("id") == endpoint_id:
+                found = e
+                found_idx = i
+                break
+
+        if not found:
+            raise HTTPException(404, "Custom endpoint not found")
+
+        name = body.name.strip() if body.name is not None else found.get("name", "Custom Endpoint")
+        base_url = body.base_url if body.base_url is not None else found.get("base_url", "")
+        api_key = body.api_key.strip() if body.api_key is not None else found.get("api_key", "")
+        enabled = body.enabled if body.enabled is not None else found.get("enabled", True)
+
+        if body.base_url is not None or body.api_key is not None:
+            try:
+                test_provider = create_desktop_provider(endpoint_id, api_key, base_url=base_url)
+                models = await test_provider.list_models()
+            except Exception as e:
+                logger.warning("Failed validation for custom endpoint %s: %s", name, e)
+                raise HTTPException(400, f"Validation failed: {e}")
+        else:
+            provider = registry.get_provider(endpoint_id)
+            models = [m for p, m in registry._full_models if m.provider_id == endpoint_id] if provider else []
+
+        updated_config = {
+            "id": endpoint_id,
+            "name": name,
+            "base_url": base_url,
+            "api_key": api_key,
+            "enabled": enabled,
+        }
+        endpoints[found_idx] = updated_config
+
+        settings.custom_endpoints = json.dumps(endpoints)
+        _update_env_file("OPENYAK_CUSTOM_ENDPOINTS", settings.custom_endpoints)
+
+    if enabled:
+        registry.unregister(endpoint_id)
+        test_provider = create_desktop_provider(endpoint_id, api_key, base_url=base_url)
+        registry.register(test_provider)
+        try:
+            await registry.refresh_models()
+        except Exception as e:
+            logger.warning("Failed to refresh models after updating custom endpoint %s: %s", endpoint_id, e)
+    else:
+        registry.unregister(endpoint_id)
+
+    return ProviderInfo(
+        id=endpoint_id, name=name, is_configured=True, enabled=enabled,
+        masked_key=_mask_key(api_key) if api_key else None,
+        model_count=len(models), status="connected" if enabled else "disabled", base_url=base_url
+    )
 
 @router.get("/config/local", response_model=LocalProviderStatus)
 async def get_local_provider(settings: SettingsDep, registry: ProviderRegistryDep) -> LocalProviderStatus:

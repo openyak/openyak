@@ -555,7 +555,7 @@ export function UsageTab() {
                             item.total_tokens.reasoning,
                           0,
                         );
-                        return data.by_model.map((m) => {
+                        return data.by_model.map((m, idx) => {
                           const modelTokens =
                             m.total_tokens.input +
                             m.total_tokens.output +
@@ -568,7 +568,7 @@ export function UsageTab() {
                                 : 0;
                           return (
                             <tr
-                              key={m.model_id}
+                              key={`${m.model_id}-${idx}`}
                               className="border-t border-[var(--border-default)]"
                             >
                               <td className="px-3 py-2 text-[var(--text-primary)] font-mono truncate max-w-[220px]">

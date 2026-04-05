@@ -151,6 +151,8 @@ export const API = {
     PROVIDERS: "/api/config/providers",
     PROVIDER_KEY: (id: string) => `/api/config/providers/${id}/key` as const,
     PROVIDER_TOGGLE: (id: string) => `/api/config/providers/${id}/toggle` as const,
+    CUSTOM_ENDPOINT: "/api/config/custom",
+    CUSTOM_ENDPOINT_ITEM: (id: string) => `/api/config/custom/${id}` as const,
     OPENYAK_ACCOUNT: "/api/config/openyak-account",
     OPENAI_SUBSCRIPTION: "/api/config/openai-subscription",
     OPENAI_SUBSCRIPTION_LOGIN: "/api/config/openai-subscription/login",

@@ -16,7 +16,7 @@ export interface SavedPermissionRule {
   timestamp: number;
 }
 
-export type ActiveProvider = "openyak" | "byok" | "chatgpt" | "ollama" | "local" | null;
+export type ActiveProvider = "openyak" | "byok" | "chatgpt" | "ollama" | "local" | "custom" | null;
 
 /**
  * Unified work mode — maps to agent + permission presets:
