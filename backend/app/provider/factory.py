@@ -77,6 +77,7 @@ def create_provider(
             api_key=api_key,
             provider_id=provider_id,
             base_url=effective_url,
+            kind=pdef.kind,
             default_headers=pdef.default_headers or None,
         )
 

@@ -186,6 +186,7 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
   const [showProviderKey, setShowProviderKey] = useState<Record<string, boolean>>({});
   const [providerMutatingId, setProviderMutatingId] = useState<string | null>(null);
   const [providerError, setProviderError] = useState<Record<string, string>>({});
+  const [customEndpointName, setCustomEndpointName] = useState<string>("");
 
   const updateProviderKey = useMutation({
     mutationFn: async ({ id, apiKey, baseUrl }: { id: string; apiKey: string; baseUrl?: string }) => {
@@ -236,6 +237,7 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
     onSuccess: () => {
       setProviderKeyInputs((prev) => ({ ...prev, ["custom_new"]: "" }));
       setProviderBaseUrlInputs((prev) => ({ ...prev, ["custom_new"]: "" }));
+      setCustomEndpointName("");
       setProviderError((prev) => { const next = { ...prev }; delete next["custom_new"]; return next; });
       setProviderMutatingId(null);
       qc.invalidateQueries({ queryKey: queryKeys.providers });
@@ -251,7 +253,7 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
   const deleteCustomEndpoint = useMutation({
     mutationFn: async (id: string) => {
       setProviderMutatingId(id);
-      return api.delete<ProviderInfo>(API.CONFIG.CUSTOM_ENDPOINT_DELETE(id));
+      return api.delete<ProviderInfo>(API.CONFIG.CUSTOM_ENDPOINT_ITEM(id));
     },
     onSuccess: () => {
       setProviderMutatingId(null);
@@ -259,6 +261,28 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
       qc.invalidateQueries({ queryKey: queryKeys.models });
     },
     onError: () => { setProviderMutatingId(null); },
+  });
+
+  const updateCustomEndpoint = useMutation({
+    mutationFn: async ({ id, name, apiKey, baseUrl, enabled }: { id: string; name?: string; apiKey?: string; baseUrl?: string; enabled?: boolean }) => {
+      setProviderMutatingId(id);
+      const body: Record<string, unknown> = {};
+      if (name !== undefined) body.name = name;
+      if (apiKey !== undefined) body.api_key = apiKey;
+      if (baseUrl !== undefined) body.base_url = baseUrl;
+      if (enabled !== undefined) body.enabled = enabled;
+      return api.patch<ProviderInfo>(API.CONFIG.CUSTOM_ENDPOINT_ITEM(id), body);
+    },
+    onSuccess: () => {
+      setProviderMutatingId(null);
+      qc.invalidateQueries({ queryKey: queryKeys.providers });
+      qc.invalidateQueries({ queryKey: queryKeys.models });
+    },
+    onError: (err, { id }) => {
+      setProviderMutatingId(null);
+      const detail = err instanceof ApiError ? ((err.body as Record<string, string> | undefined)?.detail ?? "Failed to update endpoint") : "Failed to update endpoint";
+      setProviderError((prev) => ({ ...prev, [id]: detail }));
+    },
   });
 
   const updateLocalProvider = useMutation({
@@ -658,8 +682,8 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
               <div className="space-y-3 p-3 bg-[var(--surface-secondary)] rounded-lg">
                 <Input
                   type="text"
-                  value={providerKeyInputs["custom_new_name"] ?? ""}
-                  onChange={(e) => setProviderKeyInputs((prev) => ({ ...prev, ["custom_new_name"]: e.target.value }))}
+                  value={customEndpointName}
+                  onChange={(e) => setCustomEndpointName(e.target.value)}
                   placeholder="Endpoint Name (e.g. My Local Model)"
                   className="text-xs bg-[var(--surface-primary)]"
                 />
@@ -699,7 +723,7 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
                     size="sm"
                     className="ml-auto"
                     onClick={() => createCustomEndpoint.mutate({ 
-                      name: providerKeyInputs["custom_new_name"] || "Custom Endpoint",
+                      name: customEndpointName || "Custom Endpoint",
                       apiKey: providerKeyInputs["custom_new"] ?? "", 
                       baseUrl: providerBaseUrlInputs["custom_new"] ?? ""
                     })}
