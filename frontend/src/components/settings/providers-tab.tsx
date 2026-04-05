@@ -650,17 +650,28 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
               <div className="space-y-4">
                 <h4 className="text-xs font-semibold text-[var(--text-secondary)]">Saved Endpoints</h4>
                 {customProviders.map((p) => (
-                  <div key={p.id} className="p-3 border border-[var(--border-primary)] rounded-lg bg-[var(--surface-secondary)]">
+                  <div key={p.id} className={`p-3 border border-[var(--border-primary)] rounded-lg bg-[var(--surface-secondary)] ${!p.enabled ? "opacity-50" : ""}`}>
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2 text-xs">
-                        {p.enabled ? <Check className="h-3.5 w-3.5 text-[var(--color-success)]" /> : null}
                         <span className="font-semibold">{p.name || "Custom Endpoint"}</span>
                         <span className="text-[var(--text-secondary)] font-mono ml-2 text-[10px] bg-[var(--surface-primary)] px-2 py-0.5 rounded">{p.base_url}</span>
                         {p.masked_key && <span className="text-[var(--text-tertiary)] font-mono ml-2 text-[10px]">Key: {p.masked_key}</span>}
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] text-[var(--text-tertiary)]">{p.model_count} models</span>
-
+                        <button
+                          type="button"
+                          onClick={() => updateCustomEndpoint.mutate({ id: p.id, enabled: !p.enabled })}
+                          disabled={updateCustomEndpoint.isPending}
+                          className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${
+                            p.enabled ? "bg-[var(--color-success)]" : "bg-[var(--surface-tertiary)]"
+                          }`}
+                          title={p.enabled ? t('disableProvider') : t('enableProvider')}
+                        >
+                          <span className={`pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white shadow-sm transition-transform ${
+                            p.enabled ? "translate-x-3" : "translate-x-0"
+                          }`} />
+                        </button>
                         <Button
                           variant="ghost"
                           size="sm"
