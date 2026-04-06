@@ -6,6 +6,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/), and this project
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-04-06
+
+### Added
+
+- **desktop:** Linux desktop support with Wayland/X11 automatic detection and GBM buffer compatibility
+- **ci:** Linux build pipeline producing `.deb` and `.rpm` packages
+- **backend:** Custom OpenAI-compatible endpoint support — CRUD API, frontend settings panel, SSRF validation, prefix-based model filtering
+- **frontend:** i18n support for custom endpoint UI (English and Chinese)
+
+### Changed
+
+- **assets:** Optimized all application icons and images for smaller bundle size
+
 ## [1.0.4] - 2026-04-02
 
 ### Fixed
