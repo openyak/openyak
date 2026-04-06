@@ -30,7 +30,7 @@ def _is_safe_url(url: str) -> tuple[bool, str]:
     host = parsed.hostname
     if not host:
         return False, "URL must include a valid host"
-    if host.lower() in ("localhost", "localhost.localdomain"):
+    if host.lower() in ("localhost", "localhost.localdomain") or host == "127.0.0.1":
         return True, ""
     try:
         ip = ipaddress.ip_address(host)
