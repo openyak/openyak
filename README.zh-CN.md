@@ -158,4 +158,4 @@ OpenYak 运行在你的桌面上，可以直接访问你的本地文件和系统
 
 ## 许可证
 
-[AGPL-3.0](LICENSE)
+[MIT](LICENSE)
