@@ -150,4 +150,4 @@ If OpenYak is useful to you, consider giving it a star — it helps others disco
 
 ## License
 
-[AGPL-3.0](LICENSE)
+[MIT](LICENSE)
