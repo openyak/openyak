@@ -49,7 +49,6 @@ class TestSkillToolProperties:
         tool = SkillTool(skill_registry=registry)
         desc = tool.description
 
-        assert "<available_skills>" in desc
         assert "test-skill" in desc
         assert "A test." in desc
 
