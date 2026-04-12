@@ -1,7 +1,7 @@
 /**
  * Hardcoded model ranking data from OpenRouter.
  * Source: openrouter.ai/rankings (LLM Leaderboard) & openrouter.ai/benchmarks (Intelligence Index)
- * Last updated: March 2026
+ * Last updated: April 2026
  */
 
 import { useMemo } from "react";
@@ -21,39 +21,37 @@ interface RankingEntry {
 // Merged data from OpenRouter Benchmarks (Intelligence Index) & LLM Leaderboard (Popularity)
 const RANKING_DATA: RankingEntry[] = [
   // Both quality and popularity
-  { name: "Gemini 3.1 Pro Preview", score: 57.2, rank: 20 },
-  { name: "Claude Opus 4.6", score: 53.0, rank: 5 },
+  { name: "Gemini 3.1 Pro Preview", score: 57.2, rank: 0 },
+  { name: "Claude Opus 4.6", score: 53.0, rank: 7 },
   { name: "Claude Sonnet 4.6", score: 51.7, rank: 6 },
-  { name: "GPT-5.2", score: 51.3, rank: 19 },
-  { name: "GLM 5", score: 49.8, rank: 14 },
-  { name: "Kimi K2.5", score: 46.8, rank: 3 },
-  { name: "Gemini 3 Flash Preview", score: 46.4, rank: 2 },
-  { name: "Claude Sonnet 4.5", score: 43.0, rank: 10 },
-  { name: "MiniMax M2.5", score: 41.9, rank: 1 },
+  { name: "GLM 5", score: 49.8, rank: 18 },
+  { name: "MiMo V2 Pro", score: 49.2, rank: 1 },
+  { name: "MiniMax M2.7", score: 49.6, rank: 9 },
+  { name: "MiniMax M2.5", score: 0, rank: 5 },
+  { name: "Kimi K2.5", score: 46.8, rank: 12 },
+  { name: "Gemini 3 Flash Preview", score: 46.4, rank: 8 },
+  { name: "GLM 5 Turbo", score: 46.8, rank: 10 },
+  { name: "Qwen3.6 Plus", score: 50.0, rank: 2 },
+  { name: "GPT-5.4", score: 56.8, rank: 20 },
+  { name: "Gemini 2.5 Flash", score: 0, rank: 13 },
+  { name: "Gemini 2.5 Flash Lite", score: 0, rank: 15 },
+  { name: "Grok 4.1 Fast", score: 0, rank: 11 },
+  { name: "GPT-OSS 120B", score: 0, rank: 16 },
+  { name: "Nemotron 3 Super", score: 0, rank: 14 },
+  { name: "Hunter Alpha", score: 0, rank: 19 },
   // Quality only
-  { name: "GPT-5.4", score: 57.0, rank: 0 },
-  { name: "GPT-5.3 Codex", score: 54.0, rank: 0 },
+  { name: "GPT-5.3 Codex", score: 53.6, rank: 0 },
+  { name: "GLM 5.1", score: 51.4, rank: 0 },
   { name: "Claude Opus 4.5", score: 49.7, rank: 0 },
+  { name: "Grok 4.20", score: 48.5, rank: 0 },
   { name: "Gemini 3 Pro Preview", score: 48.4, rank: 0 },
+  { name: "GPT-5.4 mini", score: 48.9, rank: 0 },
   { name: "GPT-5.1", score: 47.7, rank: 0 },
   { name: "Qwen3.5 397B A17B", score: 45.0, rank: 0 },
-  { name: "GPT-5", score: 44.6, rank: 0 },
-  { name: "GPT-5 Codex", score: 44.6, rank: 0 },
-  { name: "GPT-5.1 Codex", score: 43.1, rank: 0 },
-  { name: "GLM 4.7", score: 42.1, rank: 0 },
-  { name: "Qwen3.5 27B", score: 42.1, rank: 0 },
   // Popularity only
+  { name: "Step 3.5 Flash", score: 0, rank: 3 },
   { name: "DeepSeek V3.2", score: 0, rank: 4 },
-  { name: "Grok 4.1 Fast", score: 0, rank: 7 },
-  { name: "Trinity Large Preview", score: 0, rank: 8 },
-  { name: "Step 3.5 Flash", score: 0, rank: 9 },
-  { name: "Gemini 2.5 Flash", score: 0, rank: 11 },
-  { name: "Gemini 2.5 Flash Lite", score: 0, rank: 12 },
-  { name: "GPT-OSS 120B", score: 0, rank: 13 },
-  { name: "MiniMax M2.1", score: 0, rank: 15 },
-  { name: "GPT-5 Nano", score: 0, rank: 16 },
-  { name: "Claude Haiku 4.5", score: 0, rank: 17 },
-  { name: "Gemini 2.0 Flash", score: 0, rank: 18 },
+  { name: "Qwen3.6 Plus Preview", score: 0, rank: 17 },
 ];
 
 /** Normalize a model name for fuzzy matching. */

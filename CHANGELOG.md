@@ -6,6 +6,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/), and this project
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-04-12
+
+### Fixed
+
+- **desktop (Windows):** Installer no longer fails with `Error opening file for writing: ...\backend\_internal\*.pyd` when upgrading. Added a NSIS `NSIS_HOOK_PREINSTALL` hook that terminates the `openyak-backend.exe` sidecar (and any leftover `OpenYak.exe`) before file extraction, releasing locks on PyInstaller-bundled `.pyd` files (PIL `_imaging`, mypyc-compiled modules, etc.) so they can be overwritten cleanly. Fixes [#11](https://github.com/openyak/openyak/issues/11).
+
+### Changed
+
+- **desktop (Windows):** Reverted NSIS `installMode` back to the default (`currentUser`). The previous `"both"` setting added an unnecessary install-scope prompt and risked relocating users from `%LocalAppData%\OpenYak` to `C:\Program Files\OpenYak`, which would have broken auto-update continuity for existing 1.0.6 installs.
+
+### Updated
+
+- **frontend:** Refreshed model Intelligence Index scores and popularity rankings from OpenRouter (April 2026 data), adding new entries for MiMo V2 Pro, Qwen3.6 Plus, MiniMax M2.7, GLM 5 Turbo, Nemotron 3 Super, Hunter Alpha, and others
+
 ## [1.0.6] - 2026-04-09
 
 ### Added
