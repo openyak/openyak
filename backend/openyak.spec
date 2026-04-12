@@ -22,9 +22,20 @@ croniter_datas, croniter_binaries, croniter_hiddenimports = collect_all('cronite
 # Resolve paths
 backend_dir = os.path.abspath('.')
 app_dir = os.path.join(backend_dir, 'app')
+repo_root = os.path.abspath(os.path.join(backend_dir, '..'))
+frontend_out = os.environ.get(
+    'OPENYAK_FRONTEND_OUT',
+    os.path.join(repo_root, 'frontend', 'out'),
+)
 
-# Data files to include
-datas = [
+# Data files to include.
+#
+# Every entry here is REQUIRED. If any source path is missing at build time,
+# the spec aborts instead of silently shipping a broken bundle — that is how
+# we ended up releasing 1.0.7 with no mobile PWA (frontend_out was never
+# copied, /m returned 404 over the cloudflare tunnel). Never weaken this
+# check; add a new required path if you need a new resource.
+_required_datas = [
     # Agent prompt templates
     (os.path.join(app_dir, 'agent', 'prompts'), os.path.join('app', 'agent', 'prompts')),
     # Alembic migrations
@@ -32,10 +43,42 @@ datas = [
     (os.path.join(backend_dir, 'alembic.ini'), '.'),
     # Bundled data (skills, plugins, connectors)
     (os.path.join(app_dir, 'data'), os.path.join('app', 'data')),
+    # Frontend static export — served by FastAPI at /m for the mobile PWA
+    # when a phone connects through the cloudflare tunnel. Without this,
+    # remote access is effectively broken even though the desktop UI works
+    # (Tauri reads the frontend from its own resources).
+    (frontend_out, 'frontend_out'),
 ]
 
-# Filter out non-existent paths
-datas = [(src, dst) for src, dst in datas if os.path.exists(src)]
+_missing = [src for src, _ in _required_datas if not os.path.exists(src)]
+if _missing:
+    sys.stderr.write(
+        '\n[openyak.spec] FATAL: required build inputs are missing:\n'
+    )
+    for p in _missing:
+        sys.stderr.write(f'  - {p}\n')
+    sys.stderr.write(
+        '\nBuild the frontend (DESKTOP_BUILD=true next build) and make sure\n'
+        'backend/alembic, backend/app/agent/prompts and backend/app/data all\n'
+        'exist before running pyinstaller. Aborting so we never ship a\n'
+        'half-baked bundle.\n'
+    )
+    raise SystemExit(1)
+
+# Sanity-check that the frontend export actually contains the mobile entry
+# point. A stale `frontend/out` from a non-desktop build would otherwise
+# slip past the existence check above.
+_mobile_entry = os.path.join(frontend_out, 'm.html')
+_next_dir = os.path.join(frontend_out, '_next')
+if not os.path.isfile(_mobile_entry) or not os.path.isdir(_next_dir):
+    sys.stderr.write(
+        f'\n[openyak.spec] FATAL: frontend export at {frontend_out} is incomplete.\n'
+        f'Expected {_mobile_entry} and {_next_dir}/ to exist.\n'
+        'Rebuild the frontend with DESKTOP_BUILD=true before packaging.\n'
+    )
+    raise SystemExit(1)
+
+datas = list(_required_datas)
 
 # Hidden imports — modules that PyInstaller can't detect automatically
 hiddenimports = [

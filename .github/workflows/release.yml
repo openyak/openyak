@@ -45,6 +45,10 @@ jobs:
           pip install -r requirements.txt pyinstaller
           pyinstaller openyak.spec --noconfirm
 
+      - name: Verify backend bundle
+        shell: bash
+        run: node scripts/verify-bundle.mjs backend/dist/openyak-backend
+
       - name: Download Node.js runtime
         run: cd backend && python scripts/download_node.py
 
@@ -133,6 +137,14 @@ jobs:
           pip install -r requirements.txt pyinstaller
           pyinstaller openyak.spec --noconfirm
 
+      - name: Verify backend bundle
+        env:
+          # x86_64 artifacts are cross-compiled on the arm64 runner, so the
+          # runtime smoke test can't execute the binary natively. Static
+          # checks still run. The aarch64 matrix leg runs the full smoke.
+          VERIFY_BUNDLE_SKIP_SMOKE: ${{ matrix.arch == 'x64' && '1' || '0' }}
+        run: node scripts/verify-bundle.mjs backend/dist/openyak-backend
+
       - name: Download Node.js runtime
         run: cd backend && python3 scripts/download_node.py --platform ${{ matrix.node_platform }}
 
@@ -216,6 +228,16 @@ jobs:
             --wait
           xcrun stapler staple "$APP_PATH"
 
+      - name: Verify backend inside signed .app
+        env:
+          # Static-only: the bundled binary is codesigned and sandboxed;
+          # the earlier "Verify backend bundle" step already ran the
+          # full smoke test against the unsigned copy.
+          VERIFY_BUNDLE_SKIP_SMOKE: "1"
+        run: |
+          APP_BACKEND="desktop-tauri/src-tauri/target/${{ matrix.target }}/release/bundle/macos/OpenYak.app/Contents/Resources/backend"
+          node scripts/verify-bundle.mjs "$APP_BACKEND"
+
       # Regenerate updater archive and DMG from notarized app
       - name: Regenerate artifacts
         env:
@@ -223,15 +245,21 @@ jobs:
         run: |
           BUNDLE_DIR="desktop-tauri/src-tauri/target/${{ matrix.target }}/release/bundle"
           VERSION=$(python3 -c "import json; print(json.load(open('package.json'))['version'])")
+          ARCH="${{ matrix.arch }}"
+          TAR_NAME="OpenYak_${VERSION}_${ARCH}.app.tar.gz"
 
-          # Regenerate updater tar.gz
+          # Regenerate updater tar.gz with a versioned filename so each
+          # release has its own artifact on the CDN. Previously we shipped
+          # "OpenYak.app.tar.gz" for every version, which meant a new
+          # upload silently broke the in-place signature in latest.json.
           cd "$BUNDLE_DIR/macos"
-          rm -f OpenYak.app.tar.gz OpenYak.app.tar.gz.sig
-          tar -czf OpenYak.app.tar.gz OpenYak.app
+          rm -f OpenYak.app.tar.gz OpenYak.app.tar.gz.sig \
+                OpenYak_*.app.tar.gz OpenYak_*.app.tar.gz.sig
+          tar -czf "$TAR_NAME" OpenYak.app
           cd $GITHUB_WORKSPACE
 
-          # Sign tar.gz with Tauri updater key
-          npx @tauri-apps/cli signer sign "$BUNDLE_DIR/macos/OpenYak.app.tar.gz"
+          # Sign tar.gz with Tauri updater key — signature binds to THIS file
+          npx @tauri-apps/cli signer sign "$BUNDLE_DIR/macos/$TAR_NAME"
 
           # Regenerate DMG with Applications shortcut
           rm -f "$BUNDLE_DIR/dmg/"*.dmg
@@ -241,7 +269,7 @@ jobs:
           hdiutil create -volname "OpenYak" \
             -srcfolder "$DMG_STAGING" \
             -ov -format UDZO \
-            "$BUNDLE_DIR/dmg/OpenYak_${VERSION}_${{ matrix.arch }}.dmg"
+            "$BUNDLE_DIR/dmg/OpenYak_${VERSION}_${ARCH}.dmg"
           rm -rf "$DMG_STAGING"
           codesign --force --timestamp \
             --sign "$SIGNING_IDENTITY" "$BUNDLE_DIR/dmg/"*.dmg
@@ -252,8 +280,8 @@ jobs:
           name: macos-${{ matrix.arch }}-bundle
           path: |
             desktop-tauri/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
-            desktop-tauri/src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz
-            desktop-tauri/src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz.sig
+            desktop-tauri/src-tauri/target/${{ matrix.target }}/release/bundle/macos/OpenYak_*.app.tar.gz
+            desktop-tauri/src-tauri/target/${{ matrix.target }}/release/bundle/macos/OpenYak_*.app.tar.gz.sig
 
   build-linux:
     runs-on: ubuntu-22.04
@@ -311,6 +339,9 @@ jobs:
           pip install -r requirements.txt pyinstaller
           pyinstaller openyak.spec --noconfirm
 
+      - name: Verify backend bundle
+        run: node scripts/verify-bundle.mjs backend/dist/openyak-backend
+
       - name: Download Node.js runtime
         run: |
           cd backend
@@ -363,18 +394,36 @@ jobs:
 
       - name: Generate update manifest
         run: |
+          set -euo pipefail
           TAG="${GITHUB_REF#refs/tags/}"
           VERSION="${TAG#v}"
 
           # Read signatures (artifacts have subdirectories: macos/, dmg/, etc.)
-          WIN_SIG=$(find artifacts/windows-bundle -name '*.exe.sig' -exec cat {} \; 2>/dev/null || echo "")
-          AARCH64_SIG=$(find artifacts/macos-aarch64-bundle -name '*.app.tar.gz.sig' -exec cat {} \; 2>/dev/null || echo "")
-          X64_SIG=$(find artifacts/macos-x64-bundle -name '*.app.tar.gz.sig' -exec cat {} \; 2>/dev/null || echo "")
+          WIN_SIG=$(find artifacts/windows-bundle -name '*.exe.sig' -exec cat {} \; 2>/dev/null || true)
+          AARCH64_SIG=$(find artifacts/macos-aarch64-bundle -name '*.app.tar.gz.sig' -exec cat {} \; 2>/dev/null || true)
+          X64_SIG=$(find artifacts/macos-x64-bundle -name '*.app.tar.gz.sig' -exec cat {} \; 2>/dev/null || true)
 
-          # Find artifact filenames
+          # Find artifact filenames (versioned since 1.0.8 — so each release
+          # has its own file on the CDN and the signature stays valid forever)
           WIN_EXE=$(find artifacts/windows-bundle -name '*.exe' ! -name '*.sig' -exec basename {} \; | head -1)
-          AARCH64_TAR=$(find artifacts/macos-aarch64-bundle -name '*.app.tar.gz' ! -name '*.sig' -exec basename {} \; | head -1)
-          X64_TAR=$(find artifacts/macos-x64-bundle -name '*.app.tar.gz' ! -name '*.sig' -exec basename {} \; | head -1)
+          AARCH64_TAR=$(find artifacts/macos-aarch64-bundle -name 'OpenYak_*.app.tar.gz' ! -name '*.sig' -exec basename {} \; | head -1)
+          X64_TAR=$(find artifacts/macos-x64-bundle -name 'OpenYak_*.app.tar.gz' ! -name '*.sig' -exec basename {} \; | head -1)
+
+          # Fail loud if anything is missing — a broken manifest silently
+          # blocks every client's auto-update, which is exactly how 1.0.7
+          # ended up with "signature verification failed" everywhere.
+          missing=()
+          [[ -n "$WIN_SIG"     ]] || missing+=("windows signature")
+          [[ -n "$WIN_EXE"     ]] || missing+=("windows installer exe")
+          [[ -n "$AARCH64_SIG" ]] || missing+=("macOS aarch64 signature")
+          [[ -n "$AARCH64_TAR" ]] || missing+=("macOS aarch64 tar.gz")
+          [[ -n "$X64_SIG"     ]] || missing+=("macOS x86_64 signature")
+          [[ -n "$X64_TAR"     ]] || missing+=("macOS x86_64 tar.gz")
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error::cannot generate latest.json — missing: ${missing[*]}"
+            find artifacts -type f | sort
+            exit 1
+          fi
 
           DOWNLOAD_BASE="https://open-yak.com/downloads"
 
@@ -390,11 +439,11 @@ jobs:
               },
               "darwin-aarch64": {
                 "signature": "${AARCH64_SIG}",
-                "url": "${DOWNLOAD_BASE}/OpenYak.app.tar.gz"
+                "url": "${DOWNLOAD_BASE}/${AARCH64_TAR}"
               },
               "darwin-x86_64": {
                 "signature": "${X64_SIG}",
-                "url": "${DOWNLOAD_BASE}/OpenYak.app.tar.gz"
+                "url": "${DOWNLOAD_BASE}/${X64_TAR}"
               }
             }
           }
@@ -402,6 +451,9 @@ jobs:
 
           echo "Generated latest.json:"
           cat latest.json
+
+          # Sanity-check JSON is well-formed before publishing
+          python3 -c "import json,sys; json.load(open('latest.json'))"
 
       - name: Upload manifest as release asset
         uses: softprops/action-gh-release@v2
