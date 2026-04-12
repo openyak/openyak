@@ -6,6 +6,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/), and this project
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-04-12
+
+### Fixed
+
+- **desktop (remote access):** Mobile PWA at `/m?token=…` was returning 404 over the Cloudflare tunnel on every 1.0.7 install, making QR-code / link-based phone pairing unusable. Root cause: the PyInstaller spec silently dropped missing data paths, so the Next.js static export (`frontend/out`) never made it into the bundled backend and the FastAPI `/m` route was therefore never registered. The desktop UI kept working because Tauri reads the frontend from its own app resources, which hid the break entirely from local testing. The spec now treats every data entry as required and aborts the build if any are missing.
+- **desktop (auto-updater):** Auto-update failed with `signature verification failed` for users trying to move off 1.0.6/1.0.7 on macOS. Root cause: the updater manifest pointed at an unversioned `OpenYak.app.tar.gz`, so uploading a new release overwrote the previous tarball while the old `latest.json` signature was still live — producing a byte/signature mismatch for anyone mid-upgrade. macOS updater artifacts are now published as `OpenYak_${VERSION}_${ARCH}.app.tar.gz` and each release has its own immutable, signature-bound download.
+
+### Added
+
+- **ci:** `scripts/verify-bundle.mjs` — post-PyInstaller gate shared by local dev and CI. Performs static checks on 16 required assets (backend binary, Alembic, agent prompts, bundled skills/plugins, `frontend_out/m.html` + `_next/static`, and extracted Python packages) and then runs a real runtime smoke test: launches the bundled binary on a throwaway port, fetches `/m`, and requires HTTP 200 with HTML. This is the exact failure mode from 1.0.7 turned into a hard build-time gate so it cannot silently regress again. Cross-compiled artifacts can skip the smoke step with `VERIFY_BUNDLE_SKIP_SMOKE=1`.
+- **ci:** `verify-bundle` is wired into all three release jobs (Windows, macOS aarch64/x64, Linux) and runs a second time on macOS against the signed `.app` bundle to catch Tauri resource-path drift.
+
+### Changed
+
+- **ci (publish):** Update-manifest generation now fails loudly if any platform's signature or artifact filename is empty — instead of writing an empty field and breaking every client's auto-update — and validates the generated `latest.json` as well-formed JSON before upload.
+
 ## [1.0.7] - 2026-04-12
 
 ### Fixed
