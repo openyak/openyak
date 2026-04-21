@@ -1,7 +1,12 @@
 "use client";
 
+import { Suspense } from "react";
 import { Landing } from "@/components/chat/landing";
 
 export default function NewChatPage() {
-  return <Landing />;
+  return (
+    <Suspense fallback={null}>
+      <Landing />
+    </Suspense>
+  );
 }
