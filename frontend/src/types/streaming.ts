@@ -67,11 +67,12 @@ export interface SSEEventData {
   // done
   finish_reason?: string | null;
 
-  // compaction_start / compaction_phase / compaction_progress
+  // compaction_start / compaction_phase / compaction_progress / compacted
   phases?: string[] | null;
   phase?: string | null;
   status?: string | null;
   chars?: number | null;
+  summary_created?: boolean | null;
 
   // step_start
   step?: number | null;

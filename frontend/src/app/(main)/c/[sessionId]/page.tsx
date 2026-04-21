@@ -10,15 +10,10 @@ export async function generateStaticParams() {
   return [{ sessionId: "_" }];
 }
 
-export default async function SessionPage({
-  params,
-}: {
-  params: Promise<{ sessionId: string }>;
-}) {
-  const { sessionId } = await params;
+export default async function SessionPage() {
   return (
     <Suspense fallback={null}>
-      <SessionPageClient sessionId={sessionId} />
+      <SessionPageClient />
     </Suspense>
   );
 }

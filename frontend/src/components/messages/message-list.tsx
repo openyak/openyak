@@ -29,7 +29,7 @@ function groupMessages(messages: MessageResponse[]): MessageGroup[] {
   let assistantBatch: MessageResponse[] = [];
 
   const isStandaloneAssistantMessage = (msg: MessageResponse) => {
-    const data = msg.data as Record<string, unknown>;
+    const data = msg.data as unknown as Record<string, unknown>;
     return data.role === "assistant" && (
       data.summary === true ||
       data.system === true ||
