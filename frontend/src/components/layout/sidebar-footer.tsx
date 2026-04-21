@@ -8,7 +8,7 @@ export function SidebarFooter() {
   const { t } = useTranslation("common");
 
   return (
-    <div className="border-t border-[var(--border-subtle)] px-3 py-2">
+    <div className="px-3 py-2">
       <Link
         href="/settings"
         className="flex items-center gap-2 rounded-lg px-2 py-1 text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--sidebar-hover)] hover:text-[var(--text-primary)]"

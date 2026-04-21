@@ -26,7 +26,7 @@ export function Sidebar() {
     <TooltipProvider delayDuration={200}>
       <motion.aside
         aria-label="Chat sidebar"
-        className="fixed inset-y-0 left-0 z-30 flex flex-col overflow-hidden border-r border-[var(--border-subtle)] bg-[var(--sidebar-bg)]/98 backdrop-blur-sm"
+        className="fixed inset-y-0 left-0 z-30 flex flex-col overflow-hidden bg-[var(--sidebar-bg)]/98 backdrop-blur-sm"
         style={IS_DESKTOP ? { top: TITLE_BAR_HEIGHT } : undefined}
         initial={false}
         animate={{ width: isCollapsed ? 0 : SIDEBAR_WIDTH }}
