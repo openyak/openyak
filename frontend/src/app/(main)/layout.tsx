@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useQueryClient } from "@tanstack/react-query";
 import { usePathname, useRouter } from "next/navigation";
@@ -246,7 +246,13 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
 
       {/* Desktop sidebar — Settings swaps in its own nav */}
       <div className="hidden lg:block">
-        {isSettingsPage ? <SettingsSidebar /> : <Sidebar />}
+        {isSettingsPage ? (
+          <Suspense fallback={null}>
+            <SettingsSidebar />
+          </Suspense>
+        ) : (
+          <Sidebar />
+        )}
       </div>
 
       {/* Floating window top-left icons (panel-left + new chat) — sit above
