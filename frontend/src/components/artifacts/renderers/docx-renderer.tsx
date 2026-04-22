@@ -5,6 +5,7 @@ import { Download, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { API } from "@/lib/constants";
+import { useWorkspaceStore } from "@/stores/workspace-store";
 
 interface DocxRendererProps {
   filePath?: string;
@@ -20,6 +21,7 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
 }
 
 export function DocxRenderer({ filePath }: DocxRendererProps) {
+  const workspace = useWorkspaceStore((s) => s.activeWorkspacePath);
   const containerRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -43,7 +45,7 @@ export function DocxRenderer({ filePath }: DocxRendererProps) {
         const res = await api.post<{
           content_base64: string;
           name: string;
-        }>(API.FILES.CONTENT_BINARY, { path: filePath });
+        }>(API.FILES.CONTENT_BINARY, { path: filePath, workspace });
 
         if (cancelled) return;
 
@@ -85,7 +87,7 @@ export function DocxRenderer({ filePath }: DocxRendererProps) {
     return () => {
       cancelled = true;
     };
-  }, [filePath]);
+  }, [filePath, workspace]);
 
   const handleDownload = useCallback(() => {
     if (!blobRef.current) return;

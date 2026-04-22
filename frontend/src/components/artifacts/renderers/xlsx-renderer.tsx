@@ -5,6 +5,7 @@ import { Download, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { API } from "@/lib/constants";
+import { useWorkspaceStore } from "@/stores/workspace-store";
 
 interface XlsxRendererProps {
   filePath?: string;
@@ -25,6 +26,7 @@ interface SheetData {
 }
 
 export function XlsxRenderer({ filePath }: XlsxRendererProps) {
+  const workspace = useWorkspaceStore((s) => s.activeWorkspacePath);
   const [sheets, setSheets] = useState<SheetData[]>([]);
   const [activeSheet, setActiveSheet] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -49,7 +51,7 @@ export function XlsxRenderer({ filePath }: XlsxRendererProps) {
         const res = await api.post<{
           content_base64: string;
           name: string;
-        }>(API.FILES.CONTENT_BINARY, { path: filePath });
+        }>(API.FILES.CONTENT_BINARY, { path: filePath, workspace });
 
         if (cancelled) return;
 
@@ -85,7 +87,7 @@ export function XlsxRenderer({ filePath }: XlsxRendererProps) {
     return () => {
       cancelled = true;
     };
-  }, [filePath]);
+  }, [filePath, workspace]);
 
   const handleDownload = useCallback(() => {
     if (!blobRef.current) return;

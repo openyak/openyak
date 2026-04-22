@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, Download, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { API } from "@/lib/constants";
+import { useWorkspaceStore } from "@/stores/workspace-store";
 import type { PPTXData } from "@kandiforge/pptx-renderer";
 
 interface PptxRendererProps {
@@ -21,6 +22,7 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
 }
 
 export function PptxRenderer({ filePath }: PptxRendererProps) {
+  const workspace = useWorkspaceStore((s) => s.activeWorkspacePath);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string>("");
@@ -68,7 +70,7 @@ export function PptxRenderer({ filePath }: PptxRendererProps) {
         const res = await api.post<{
           content_base64: string;
           name: string;
-        }>(API.FILES.CONTENT_BINARY, { path: filePath });
+        }>(API.FILES.CONTENT_BINARY, { path: filePath, workspace });
 
         if (cancelled) return;
 
@@ -115,7 +117,7 @@ export function PptxRenderer({ filePath }: PptxRendererProps) {
     return () => {
       cancelled = true;
     };
-  }, [filePath]);
+  }, [filePath, workspace]);
 
   useEffect(() => {
     const node = viewportRef.current;

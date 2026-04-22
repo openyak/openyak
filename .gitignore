@@ -51,6 +51,8 @@ backend/openclaw/
 
 # === Auto-copied vendor files ===
 frontend/public/pdf.worker.min.mjs
+frontend/public/cmaps/
+frontend/public/standard_fonts/
 
 # === Build artifacts ===
 dist*/

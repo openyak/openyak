@@ -1,10 +1,17 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Download, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { API } from "@/lib/constants";
+import { useWorkspaceStore } from "@/stores/workspace-store";
+
+const PDF_DOCUMENT_OPTIONS = {
+  cMapUrl: "/cmaps/",
+  cMapPacked: true,
+  standardFontDataUrl: "/standard_fonts/",
+} as const;
 
 interface PdfRendererProps {
   filePath?: string;
@@ -20,6 +27,7 @@ function base64ToUint8Array(base64: string): Uint8Array {
 }
 
 export function PdfRenderer({ filePath }: PdfRendererProps) {
+  const workspace = useWorkspaceStore((s) => s.activeWorkspacePath);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string>("");
@@ -51,7 +59,7 @@ export function PdfRenderer({ filePath }: PdfRendererProps) {
         const res = await api.post<{
           content_base64: string;
           name: string;
-        }>(API.FILES.CONTENT_BINARY, { path: filePath });
+        }>(API.FILES.CONTENT_BINARY, { path: filePath, workspace });
 
         if (cancelled) return;
 
@@ -88,7 +96,7 @@ export function PdfRenderer({ filePath }: PdfRendererProps) {
     return () => {
       cancelled = true;
     };
-  }, [filePath]);
+  }, [filePath, workspace]);
 
   const handleDownload = useCallback(() => {
     if (!blobRef.current) return;
@@ -103,6 +111,12 @@ export function PdfRenderer({ filePath }: PdfRendererProps) {
   const onDocumentLoadSuccess = useCallback(({ numPages: n }: { numPages: number }) => {
     setNumPages(n);
   }, []);
+
+  // Memoize the file prop so resizes don't trigger react-pdf reloads
+  const documentFile = useMemo(
+    () => (pdfData ? { data: pdfData } : null),
+    [pdfData],
+  );
 
   if (error) {
     return (
@@ -140,9 +154,10 @@ export function PdfRenderer({ filePath }: PdfRendererProps) {
             <Loader2 className="h-5 w-5 animate-spin text-[var(--text-tertiary)]" />
           </div>
         )}
-        {PdfComponents && pdfData && (
+        {PdfComponents && documentFile && (
           <PdfComponents.Document
-            file={{ data: new Uint8Array(pdfData) }}
+            file={documentFile}
+            options={PDF_DOCUMENT_OPTIONS}
             onLoadSuccess={onDocumentLoadSuccess}
             onLoadError={(err: Error) => setError(err.message)}
             loading=""
