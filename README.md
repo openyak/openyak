@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img src="OpenYak-Logo/openyak-demo.gif" width="800" alt="OpenYak Demo" />
+  <img src="OpenYak-Logo/openyak-1.1.2.gif" width="800" alt="OpenYak Demo" />
 </p>
 
 **OpenYak is an open-source local AI agent that runs entirely on your desktop. It connects to 100+ models from 20+ providers, manages your files, and automates workflows — all without your data ever leaving your machine. No account required.**

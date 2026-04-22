@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <img src="OpenYak-Logo/openyak-demo.gif" width="800" alt="OpenYak Demo" />
+  <img src="OpenYak-Logo/openyak-1.1.2.gif" width="800" alt="OpenYak Demo" />
 </p>
 
 ---
