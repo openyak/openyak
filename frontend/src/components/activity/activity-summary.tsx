@@ -12,6 +12,9 @@ interface ActivitySummaryProps {
 export function ActivitySummary({ data }: ActivitySummaryProps) {
   const { t } = useTranslation("chat");
   const toggleForMessage = useActivityStore((s) => s.toggleForMessage);
+  const isActiveOpen = useActivityStore(
+    (s) => s.isOpen && !!data.sourceKey && s.activeKey === data.sourceKey,
+  );
 
   const hasReasoning = data.reasoningTexts.length > 0;
   const hasTools = data.toolParts.length > 0;
@@ -56,7 +59,9 @@ export function ActivitySummary({ data }: ActivitySummaryProps) {
         <Wrench className="h-3.5 w-3.5" />
       )}
       <span>{parts.join(" · ")}</span>
-      <ChevronRight className="h-3 w-3 transition-transform duration-200" />
+      <ChevronRight
+        className={`h-3 w-3 transition-transform duration-200 ${isActiveOpen ? "rotate-90" : ""}`}
+      />
     </button>
   );
 }

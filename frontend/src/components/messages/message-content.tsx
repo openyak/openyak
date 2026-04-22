@@ -17,6 +17,8 @@ interface MessageContentProps {
   parts: PartData[];
   /** Whether this is the currently streaming message. */
   isStreaming?: boolean;
+  /** Stable key identifying the message — used by ActivitySummary to toggle the activity panel. */
+  activityKey?: string;
 }
 
 /**
@@ -25,7 +27,7 @@ interface MessageContentProps {
  * When streaming: reasoning + tools are folded into a single "Thinking" line.
  * When complete: reasoning + tools are folded into a single "Activity" summary.
  */
-export function MessageContent({ parts, isStreaming }: MessageContentProps) {
+export function MessageContent({ parts, isStreaming, activityKey }: MessageContentProps) {
   // Thinking duration reported by ReasoningPart's live timer
   const [thinkingDuration, setThinkingDuration] = useState<number | undefined>();
   const handleDurationChange = useCallback((secs: number) => setThinkingDuration(secs), []);
@@ -99,6 +101,7 @@ export function MessageContent({ parts, isStreaming }: MessageContentProps) {
     () =>
       hasActivity
         ? {
+            sourceKey: activityKey,
             reasoningTexts,
             toolParts,
             thinkingDuration,
@@ -109,7 +112,7 @@ export function MessageContent({ parts, isStreaming }: MessageContentProps) {
             chain,
           }
         : null,
-    [hasActivity, reasoningTexts, toolParts, thinkingDuration, stepParts, chain, parts],
+    [hasActivity, reasoningTexts, toolParts, thinkingDuration, stepParts, chain, parts, activityKey],
   );
 
   // Content parts: text, subtask, and artifact tool calls (shown as inline cards)
