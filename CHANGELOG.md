@@ -6,6 +6,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/), and this project
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-04-22
+
+### Added
+
+- **frontend (appearance):** New Settings → Appearance → **Customize** panel (`appearance-customize.tsx`, `appearance-store.ts`, `appearance-injector.tsx`). Independent light/dark overrides for accent, background, and foreground; UI font family + size; code font family + size (flows through chat messages and diffs); and a pointer-cursor toggle for interactive elements. Every control has an inline Reset to defaults.
+- **desktop (tray):** Codex-style tray menu with a dynamic **Recent chats** submenu, pushed from the frontend via the new `update_tray_recents` Tauri command and kept in sync by `use-tray-sync.ts`. Selecting a recent jumps straight into the chat. macOS now ships a proper template tray icon (`tray-template.png` / `@2x`) so the bar icon renders correctly in both dark and light menu bars.
+- **frontend (sidebar):** Drag-to-resize sidebar edge (`sidebar-resize-handle.tsx`) with width persisted via `sidebar-store`.
+- **frontend (settings):** Dedicated `SettingsSidebar` that swaps in for the main sidebar on `/settings`, driven by a shared `settings-tabs.ts` registry. Tighter `max-w-3xl` content column with a `lg:py-10` spacing bump.
+- **frontend (desktop chrome):** New `window-top-icons.tsx` (floating panel-toggle + new-chat) and `use-platform.ts` for platform-aware window chrome.
+- **frontend (chat):** Workspace-aware landing greeting — "What should we do in {{workspace}}?" when a workspace is set, else the existing generic greeting. New `greetingInWorkspace` + `expandAll` i18n keys in EN/ZH.
+- **desktop (icons):** `build_macos_icons.py` helper plus a regenerated `icon.icns` sourced from a fresh 1024px macOS icon.
+
+### Changed
+
+- **frontend (update-check):** `use-update-check.ts` rewritten end-to-end — clearer states for idle / checking / downloading / ready / error, less flicker across transitions, and explicit handling for the Tauri updater's intermediate events.
+- **frontend (sidebar):** Refreshed `sidebar-header`, `sidebar-footer`, `sidebar-nav`, and `projects-toolbar` for a flatter, more consistent look; removed residual right + footer borders on the settings view for a seamless edge.
+- **frontend (chat):** Polished `chat-header`, `chat-actions`, `chat-form`, and `landing` layouts; refined `text-part` file-path rendering; button variant polish across the app.
+- **frontend (settings layout):** `settings-layout.tsx` lifted its tab registry into `settings-tabs.ts` so the page body and the new `SettingsSidebar` share a single source of truth.
+- **desktop (title bar):** Streamlined `title-bar.tsx` now defers to `WindowTopIcons` for the sidebar + new-chat affordances.
+
+### Fixed
+
+- **frontend (static export):** Wrapping `SettingsSidebar` in a `<Suspense>` boundary in `(main)/layout.tsx` so `useSearchParams()` no longer breaks static prerender of `/settings` (regression introduced when the sidebar lifted out of the page component).
+- **backend (tests):** `test_e2e.py::TestDoomLoopDetection` dropped the stale `DOOM_LOOP_THRESHOLD` import (removed in the loop-detection refactor) and now exercises the two-stage `LoopDetector` (allow → warn → block).
+- **backend (tests):** `test_bash.py::test_unicode_output` uses `python3` instead of bare `python` so the unicode smoke test doesn't require a `python` symlink on the host.
+
 ## [1.1.0] - 2026-04-21
 
 ### Added
