@@ -163,7 +163,17 @@ class Settings(BaseSettings):
     # shared host cannot read it. The desktop shell (Tauri) reads this file
     # after spawning the backend and injects the token on every request —
     # it never leaves the filesystem through the network layer.
-    session_token_path: str = "data/session_token.json"
+    #
+    # Path may be relative (resolved against cwd) or absolute. The
+    # production launcher (``run.py``) chdirs into ``--data-dir`` and then
+    # the Tauri shell polls ``<data_dir>/session_token.json``, so the
+    # default below assumes that working-directory contract. Override via
+    # the ``OPENYAK_SESSION_TOKEN_PATH`` env var when the contract differs
+    # (the dev launcher does this — see ``scripts/dev-desktop.mjs`` —
+    # because it runs uvicorn without invoking ``run.py``, so cwd stays
+    # at ``backend/`` and the file needs to land under ``backend/data/``
+    # to match what Tauri dev mode reads).
+    session_token_path: str = "session_token.json"
 
 
 @lru_cache

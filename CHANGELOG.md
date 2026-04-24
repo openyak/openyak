@@ -6,6 +6,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/), and this project
 
 ## [Unreleased]
 
+## [1.1.6] - 2026-04-24
+
+### Fixed
+
+- **backend (auth):** Session-token file path mismatch between the Python backend and the Tauri shell. The packaged backend writes the token via ``run.py``, which chdirs into ``--data-dir``; combined with the previous ``"data/session_token.json"`` default in ``Settings``, the file landed at ``<data_dir>/data/session_token.json`` while Tauri's Rust loader polled ``<data_dir>/session_token.json``. The Rust poll timed out, ``inner.session_token`` stayed ``None``, and every authenticated request from the webview saw "Backend session token not yet available" — masked by the v1.1.3 CSP block, then by the v1.1.4 cached-rejection bug, then by v1.1.5's retry-with-backoff (which dutifully tried for ~34 s and gave up).
+
+  Default is now ``"session_token.json"`` (no leading ``data/``), which resolves correctly under prod's chdir contract. The dev launcher (``scripts/dev-desktop.mjs``) sets ``OPENYAK_SESSION_TOKEN_PATH=data/session_token.json`` to preserve the existing dev path (uvicorn runs from ``backend/`` without chdir, so the file needs to land under ``backend/data/`` to match what Tauri dev mode polls).
+
 ## [1.1.5] - 2026-04-24
 
 ### Fixed

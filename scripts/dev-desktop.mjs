@@ -35,6 +35,12 @@ const env = {
   // Pin the absolute path so the Tauri dev binary reads the same token
   // regardless of where `cargo tauri dev` is invoked from.
   DEV_BACKEND_DATA_DIR: resolve(process.cwd(), "backend", "data"),
+  // The backend default (``session_token.json``) assumes the prod
+  // ``run.py`` has chdired into ``--data-dir``. Dev runs uvicorn from
+  // ``backend/`` directly (no chdir), so override the path to keep the
+  // file under ``backend/data/`` where ``DEV_BACKEND_DATA_DIR`` says
+  // Tauri will poll for it.
+  OPENYAK_SESSION_TOKEN_PATH: "data/session_token.json",
   NEXT_PUBLIC_API_URL: `http://localhost:${backendPort}`,
   // Tauri merges TAURI_CONFIG JSON into tauri.conf.json at runtime
   TAURI_CONFIG: JSON.stringify({
