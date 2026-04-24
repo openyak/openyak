@@ -6,6 +6,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/), and this project
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-04-24
+
+### Changed
+
+- **backend (security):** Hardening pass for the local HTTP API — tightened request authentication, origin validation, and CORS scope around the loopback-bound server. No functional change for typical desktop usage; details will be expanded in a follow-up note once the upgrade window has passed.
+
 ## [1.1.2] - 2026-04-22
 
 ### Added

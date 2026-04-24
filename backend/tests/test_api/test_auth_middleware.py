@@ -35,7 +35,35 @@ def _settings(**overrides) -> types.SimpleNamespace:
     return types.SimpleNamespace(**defaults)
 
 
-def _make_app(settings: types.SimpleNamespace, *, session_token: str | None = _SESSION_TOKEN) -> FastAPI:
+# Per-test settings holder — the autouse fixture redirects
+# ``app.config.get_settings`` to read from here, and ``_make_app``
+# writes the test's settings into it. Using a mutable dict (rather
+# than a plain variable) lets the fixture close over a stable handle.
+_current_settings: dict[str, object] = {"value": None}
+
+
+@pytest.fixture(autouse=True)
+def _patch_settings(monkeypatch):
+    """Scope the settings monkeypatch to each test.
+
+    AuthMiddleware's ``__init__`` reads rate-limit knobs from
+    ``app.config.get_settings()`` at construction time. Without
+    ``monkeypatch`` the override would leak into unrelated tests
+    (e.g. session/prompt.py, which expects a real Settings object
+    with ``max_steps``) and fail them.
+    """
+    import app.config as _cfg
+
+    _current_settings["value"] = _settings()
+    monkeypatch.setattr(_cfg, "get_settings", lambda: _current_settings["value"])
+    yield
+
+
+def _make_app(
+    settings: types.SimpleNamespace,
+    *,
+    session_token: str | None = _SESSION_TOKEN,
+) -> FastAPI:
     app = FastAPI()
 
     @app.get("/api/ping")
@@ -57,17 +85,9 @@ def _make_app(settings: types.SimpleNamespace, *, session_token: str | None = _S
     app.state.settings = settings
     app.state.session_token = session_token
 
-    # Patch get_settings so AuthMiddleware picks up the test config at
-    # construction. The middleware reads rate-limit knobs from it once.
-    import app.auth.middleware as mw
-
-    mw.get_settings = lambda: settings  # type: ignore[attr-defined]
-    # Rebind via the local import path used inside AuthMiddleware.__init__
-    from app.config import get_settings as _real_get_settings  # noqa: F401
-
-    import app.config as _cfg
-
-    _cfg.get_settings = lambda: settings  # type: ignore[assignment]
+    # Point the monkeypatched get_settings at this test's settings so
+    # AuthMiddleware.__init__ reads the right rate-limit knobs.
+    _current_settings["value"] = settings
 
     app.add_middleware(AuthMiddleware)
     return app
