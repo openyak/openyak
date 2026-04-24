@@ -19,6 +19,13 @@ export const TITLE_BAR_HEIGHT = 32;
 let _backendUrl: string | null = null;
 let _backendUrlPromise: Promise<string> | null = null;
 
+// Session bearer token for the desktop backend. Desktop-only: the backend
+// writes this to a 0600 file on startup and the Tauri shell hands it to
+// us. In web/remote mode we use a different credential (tunnel token),
+// so this cache stays null.
+let _backendToken: string | null = null;
+let _backendTokenPromise: Promise<string> | null = null;
+
 /** Direct backend URL for SSE streams (avoids Next.js proxy buffering). */
 const FALLBACK_BACKEND_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -56,11 +63,57 @@ export function resetBackendUrl(newUrl?: string): void {
   _backendUrlPromise = null;
 }
 
+/**
+ * Resolve the desktop session bearer token. Asynchronously fetched via
+ * Tauri IPC on first call, then cached. Only meaningful on desktop — in
+ * web/remote mode the caller should be using the remote tunnel token
+ * from `remote-connection.ts` instead.
+ */
+export function getBackendToken(): Promise<string> {
+  if (_backendToken) return Promise.resolve(_backendToken);
+  if (_backendTokenPromise) return _backendTokenPromise;
+  if (!IS_DESKTOP) {
+    return Promise.reject(
+      new Error("getBackendToken() is only available in desktop mode"),
+    );
+  }
+  _backendTokenPromise = desktopAPI.getBackendToken().then((token) => {
+    _backendToken = token;
+    return token;
+  });
+  return _backendTokenPromise;
+}
+
+/** Synchronous accessor for places that cannot await (e.g. SSE query string). */
+export function getBackendTokenSync(): string | null {
+  return _backendToken;
+}
+
+/**
+ * Clear the cached backend token. Called when the desktop backend
+ * restarts — the new backend run generates a fresh session token so the
+ * old one is invalid.
+ */
+export function resetBackendToken(): void {
+  _backendToken = null;
+  _backendTokenPromise = null;
+}
+
 // Auto-register desktop backend event listeners
 if (IS_DESKTOP && typeof window !== "undefined") {
+  // Prefetch the session token so the first API call does not pay the IPC
+  // round-trip latency. Token load failures are non-fatal here — the next
+  // explicit getBackendToken() call will surface the error.
+  void getBackendToken().catch(() => {});
+
   desktopAPI.onBackendRestart((newUrl) => {
-    // Backend restart detected — update URL for all future API calls.
+    // Backend restart detected — URL may have changed and the session
+    // token has definitely rotated (the new process writes a fresh one).
     resetBackendUrl(newUrl);
+    resetBackendToken();
+    // Kick off a refetch so the next API call already has a fresh token
+    // cached, avoiding a window where requests race the IPC round trip.
+    void getBackendToken().catch(() => {});
   });
   desktopAPI.onBackendCrashLog((log) => {
     console.error(

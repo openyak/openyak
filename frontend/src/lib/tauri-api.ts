@@ -14,6 +14,7 @@ export interface TrayRecent {
 
 export interface DesktopAPI {
   getBackendUrl: () => Promise<string>;
+  getBackendToken: () => Promise<string>;
   getPendingNavigation: () => Promise<string | null>;
   getPlatform: () => Promise<string>;
   openExternal: (url: string) => Promise<void>;
@@ -57,6 +58,7 @@ function listenSync<T>(
 
 export const desktopAPI: DesktopAPI = {
   getBackendUrl: () => invoke<string>("get_backend_url"),
+  getBackendToken: () => invoke<string>("get_backend_token"),
   getPendingNavigation: () => invoke<string | null>("get_pending_navigation"),
   getPlatform: () => invoke<string>("get_platform"),
   openExternal: (url) => invoke("open_external", { url }),

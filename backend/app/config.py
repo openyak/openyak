@@ -140,6 +140,13 @@ class Settings(BaseSettings):
     rate_limit_max_requests: int = 120  # max requests per minute
     rate_limit_max_failed_auth: int = 5  # max failed auth attempts per minute
 
+    # --- CSRF / Origin protection ---
+    # Comma-separated list of additional allowed origins (exact match) for
+    # cross-site state-changing requests. The defaults already cover the
+    # Tauri desktop shell, loopback, and the Next.js dev server — only set
+    # this to extend for unusual deployments (e.g. a custom web wrapper).
+    extra_allowed_origins: str = ""  # OPENYAK_EXTRA_ALLOWED_ORIGINS
+
     # --- Messaging Channels (nanobot-based, in-process) ---
     channels_enabled: bool = True  # OPENYAK_CHANNELS_ENABLED
     channels_config_path: str = ""  # OPENYAK_CHANNELS_CONFIG_PATH (default: data/channels.json)
@@ -150,6 +157,13 @@ class Settings(BaseSettings):
     remote_tunnel_mode: str = "cloudflare"  # "cloudflare" | "manual"
     remote_tunnel_url: str = ""  # Manual tunnel URL (when mode="manual")
     remote_permission_mode: str = "auto"  # "auto" | "ask" | "deny"
+
+    # --- Local session auth ---
+    # Rotated every backend start, written 0600 so another local user on a
+    # shared host cannot read it. The desktop shell (Tauri) reads this file
+    # after spawning the backend and injects the token on every request —
+    # it never leaves the filesystem through the network layer.
+    session_token_path: str = "data/session_token.json"
 
 
 @lru_cache

@@ -37,6 +37,32 @@ def _localhost_only(request: Request) -> None:
         raise HTTPException(status_code=403, detail="This endpoint is only accessible from localhost")
 
 
+# --- CSRF allowlist helpers ---
+
+def _allow_origin(app, url: str) -> None:
+    """Add ``url`` to the runtime CSRF allowlist on ``app.state``.
+
+    Called when a tunnel becomes active. ``CsrfProtectionMiddleware``
+    snapshots the set per request, so the new origin is accepted on the
+    very next mutating call — no restart required.
+    """
+    origins = getattr(app.state, "runtime_allowed_origins", None)
+    if origins is None:
+        origins = set()
+        app.state.runtime_allowed_origins = origins
+    origins.add(url.rstrip("/"))
+
+
+def _disallow_origin(app, url: str | None) -> None:
+    """Remove ``url`` from the runtime CSRF allowlist if present."""
+    if not url:
+        return
+    origins = getattr(app.state, "runtime_allowed_origins", None)
+    if origins is None:
+        return
+    origins.discard(url.rstrip("/"))
+
+
 # --- Schemas ---
 
 class RemoteEnableResponse(BaseModel):
@@ -83,7 +109,22 @@ async def enable_remote(request: Request) -> RemoteEnableResponse:
         tunnel_mgr = getattr(request.app.state, "tunnel_manager", None)
         if tunnel_mgr is None:
             from app.auth.tunnel import TunnelManager
-            tunnel_mgr = TunnelManager(backend_port=settings.port)
+
+            app_ref = request.app
+
+            def _sync_allowlist(old_url: str | None, new_url: str | None) -> None:
+                # Swap the CSRF allowlist entry atomically so a
+                # monitor-triggered restart on a fresh random quick-tunnel
+                # URL doesn't leave the previous URL whitelisted.
+                if old_url is not None:
+                    _disallow_origin(app_ref, old_url)
+                if new_url is not None:
+                    _allow_origin(app_ref, new_url)
+
+            tunnel_mgr = TunnelManager(
+                backend_port=settings.port,
+                on_url_change=_sync_allowlist,
+            )
             request.app.state.tunnel_manager = tunnel_mgr
 
         if not tunnel_mgr.is_running:
@@ -97,6 +138,14 @@ async def enable_remote(request: Request) -> RemoteEnableResponse:
     elif settings.remote_tunnel_mode == "manual":
         tunnel_url = settings.remote_tunnel_url or None
 
+    # Register the tunnel URL as a permitted CSRF origin. The quick-tunnel
+    # URL is random per cloudflared session, so it cannot be seeded from
+    # env; CsrfProtectionMiddleware reads this set on every request, so
+    # the new origin is honoured immediately without a restart. The
+    # counterpart pop lives in disable_remote() / the tunnel monitor.
+    if tunnel_url:
+        _allow_origin(request.app, tunnel_url)
+
     return RemoteEnableResponse(token=token, tunnel_url=tunnel_url)
 
 
@@ -109,10 +158,17 @@ async def disable_remote(request: Request) -> dict:
     # Revoke token
     delete_token(token_path)
 
-    # Stop tunnel
+    # Stop tunnel and evict the tunnel URL from the CSRF allowlist
+    # *before* stopping the subprocess, because after stop() the URL is
+    # cleared from the manager.
     tunnel_mgr = getattr(request.app.state, "tunnel_manager", None)
+    tunnel_url_to_evict = tunnel_mgr.tunnel_url if tunnel_mgr else None
     if tunnel_mgr:
         await tunnel_mgr.stop()
+    _disallow_origin(request.app, tunnel_url_to_evict)
+    # Also evict the manual-mode URL if configured — the set on startup
+    # may have seeded it, and disabling should revoke.
+    _disallow_origin(request.app, settings.remote_tunnel_url)
 
     settings.remote_access_enabled = False
 
@@ -249,6 +305,13 @@ async def update_remote_config(request: Request, body: RemoteConfigUpdate) -> di
         settings.remote_tunnel_mode = body.tunnel_mode
 
     if body.tunnel_url is not None:
+        # Manual-mode URL rotation: evict the old allowlisted URL and
+        # register the new one. Cloudflared mode ignores this field;
+        # its allowlist entry is managed by the TunnelManager callback.
+        if settings.remote_tunnel_mode == "manual":
+            _disallow_origin(request.app, settings.remote_tunnel_url)
+            if body.tunnel_url:
+                _allow_origin(request.app, body.tunnel_url)
         settings.remote_tunnel_url = body.tunnel_url
 
     return {"status": "updated"}

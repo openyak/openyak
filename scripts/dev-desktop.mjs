@@ -4,6 +4,7 @@
  */
 import { createServer } from "node:net";
 import { spawn } from "node:child_process";
+import { resolve } from "node:path";
 
 async function findFreePort(preferred = 3000) {
   return new Promise((resolve) => {
@@ -30,6 +31,10 @@ console.log(`\x1b[33m[dev-desktop] Using backend port: ${backendPort}\x1b[0m`);
 const env = {
   ...process.env,
   DEV_BACKEND_PORT: String(backendPort),
+  // Dev backend writes session_token.json under backend/data/ (cwd=backend).
+  // Pin the absolute path so the Tauri dev binary reads the same token
+  // regardless of where `cargo tauri dev` is invoked from.
+  DEV_BACKEND_DATA_DIR: resolve(process.cwd(), "backend", "data"),
   NEXT_PUBLIC_API_URL: `http://localhost:${backendPort}`,
   // Tauri merges TAURI_CONFIG JSON into tauri.conf.json at runtime
   TAURI_CONFIG: JSON.stringify({

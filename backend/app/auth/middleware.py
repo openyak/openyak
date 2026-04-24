@@ -1,12 +1,66 @@
-"""Remote access authentication middleware (pure ASGI).
+"""Bearer-token authentication middleware for the OpenYak local API.
 
-Uses raw ASGI middleware instead of Starlette's BaseHTTPMiddleware to avoid
-buffering StreamingResponse bodies — which breaks SSE event streaming.
+Threat model
+------------
 
-- If remote_access_enabled is False: no auth enforced.
-- If request is from localhost: skip auth (Tauri desktop app).
-- If non-API route: skip auth (static frontend files).
-- If non-localhost API request: require Bearer token or ?token= query param.
+OpenYak's FastAPI backend binds to ``127.0.0.1`` on an ephemeral port. The
+loopback interface is not a user-isolation boundary: on any Unix host
+every local user shares the same ``127.0.0.1``, and from the backend's
+perspective a request from Pepe's shell and a request from Ana's shell
+are indistinguishable. Since Pepe's chat-agent endpoint can execute
+shell commands with Pepe's permissions, letting Ana reach the server
+without a credential is equivalent to giving Ana shell-as-Pepe.
+
+The same applies to an attacker's JavaScript running in any page the
+user opens: the browser will proxy requests into loopback, and while
+the CSRF middleware blocks browser-initiated cross-site state-changing
+requests (via ``Origin`` validation), that is a defense-in-depth layer,
+not the primary control. A browser that relaxes preflight behaviour, or
+a non-browser client on the host, would bypass it.
+
+This middleware therefore enforces **mandatory bearer-token auth on
+every privileged request, regardless of the source interface** — the
+session token lives in a 0600 file that only the OpenYak-running user
+can read, and any client that cannot present the token is rejected.
+
+Pass-through paths
+------------------
+
+The middleware is **deny-by-default**: every route requires a bearer
+token unless its path appears in an explicit allowlist. Any new
+endpoint a developer adds is therefore authenticated without ceremony,
+and forgetting to protect one cannot happen silently — it takes an
+explicit code change to the allowlist below.
+
+Currently allowed unauthenticated:
+
+* ``/livez``, ``/health`` — liveness/readiness probes consumed by the
+  Tauri watchdog; contain no secrets, do not mutate state.
+* ``/favicon.svg``, ``/manifest.json`` — PWA asset serves.
+* ``/_next/*`` — Next.js static bundle (JS/CSS/fonts).
+* ``/m``, ``/m/*`` — mobile PWA HTML shells. The HTML itself is not
+  sensitive; the JS it serves makes authenticated ``/api/*`` calls
+  using the remote tunnel token.
+
+Everything else (``/api/*``, ``/v1/*`` OpenAI-compat, ``/shutdown``,
+root ``/``, anything a future router mounts) requires a valid token.
+
+Token sources
+-------------
+
+Two tokens are accepted, checked in constant time:
+
+1. **Session token** — rotated on backend startup, held in
+   ``app.state.session_token``, never leaves the host filesystem
+   (Tauri reads the 0600 file and injects ``Authorization`` on every
+   request).
+2. **Remote token** — persistent, loaded from
+   ``settings.remote_token_path``, only when
+   ``settings.remote_access_enabled`` is True. Used by the phone
+   companion mode through the tunnel.
+
+Rate limiting is preserved for non-loopback clients so a broken or
+hostile tunnel peer cannot brute-force the token.
 """
 
 from __future__ import annotations
@@ -15,15 +69,35 @@ import json
 import logging
 import time
 from collections import defaultdict
+from pathlib import Path
 from urllib.parse import parse_qs
 
 from app.auth.token import load_token, validate_token
 
 logger = logging.getLogger(__name__)
 
-_LOCALHOST_IPS = {"127.0.0.1", "::1", "localhost"}
+_LOCALHOST_IPS = frozenset({"127.0.0.1", "::1", "localhost"})
 
-_RATE_WINDOW = 60  # seconds — kept as constant (not user-tunable)
+# Exact-path allowlist — these routes skip authentication entirely. Keep
+# this set minimal: every entry is a public endpoint and must be audited
+# against the criterion "does it leak secrets or mutate state?". Anything
+# outside this set (and the prefix allowlist below) is authenticated.
+_PUBLIC_PATHS = frozenset({
+    "/livez",          # Tauri watchdog liveness probe
+    "/health",         # Provider status dump, no secrets
+    "/favicon.svg",    # PWA asset
+    "/manifest.json",  # PWA asset
+    "/m",              # Mobile PWA HTML shell (JS inside calls /api/* authed)
+})
+
+# Prefix allowlist — anything under these prefixes is public. The Next.js
+# static bundle and the mobile PWA's nested HTML shells fall here.
+_PUBLIC_PREFIXES: tuple[str, ...] = (
+    "/_next/",  # Next.js static bundle (JS/CSS/fonts)
+    "/m/",      # Mobile PWA SPA fallback pages
+)
+
+_RATE_WINDOW = 60  # seconds — not user-tunable
 
 
 class _RateBucket:
@@ -39,15 +113,51 @@ class _RateBucket:
         return len(self.timestamps)
 
 
-class RemoteAuthMiddleware:
-    """Pure ASGI middleware — does NOT wrap response bodies.
+def _requires_auth(path: str) -> bool:
+    """Return True unless ``path`` is explicitly allowlisted as public.
 
-    Unlike BaseHTTPMiddleware, this passes `scope/receive/send` straight
-    through to the downstream app, so StreamingResponse (SSE) works correctly.
+    Deny-by-default: adding a new endpoint does not require remembering
+    to wire up auth — the middleware already protects it. Making an
+    endpoint public is the exceptional case and must be an explicit
+    code change here.
+    """
+    if path in _PUBLIC_PATHS:
+        return False
+    for prefix in _PUBLIC_PREFIXES:
+        if path.startswith(prefix):
+            return False
+    return True
+
+
+def _extract_token(scope: dict, headers: dict[bytes, bytes]) -> str:
+    """Pull a bearer token from ``Authorization`` or the ``?token=`` query.
+
+    Header form is preferred and is what the Tauri shell uses. The query
+    string form is retained only for ``EventSource`` streams, which the
+    browser API cannot attach custom headers to.
+    """
+    auth_header = headers.get(b"authorization", b"").decode("latin-1", errors="replace")
+    if auth_header.startswith("Bearer "):
+        return auth_header[7:].strip()
+    # Fall back to ?token= only if Authorization was absent. Accepting both
+    # simultaneously would open a smuggling window if a proxy normalises one
+    # but not the other.
+    qs = scope.get("query_string", b"").decode("latin-1", errors="replace")
+    token_list = parse_qs(qs).get("token", [])
+    return token_list[0] if token_list else ""
+
+
+class AuthMiddleware:
+    """Pure ASGI middleware — never buffers response bodies.
+
+    Using raw ASGI rather than ``BaseHTTPMiddleware`` matters for
+    ``StreamingResponse`` (chat SSE) which would otherwise be buffered
+    in memory before reaching the client.
     """
 
     def __init__(self, app):
         from app.config import get_settings as _get_settings
+
         _s = _get_settings()
         self.app = app
         self._max_requests = _s.rate_limit_max_requests
@@ -60,101 +170,112 @@ class RemoteAuthMiddleware:
             await self.app(scope, receive, send)
             return
 
-        # Access app state from scope
-        app_state = scope.get("app")
-        settings = getattr(app_state, "state", None) and app_state.state.settings if app_state else None
-
-        if not settings or not settings.remote_access_enabled:
-            await self.app(scope, receive, send)
-            return
-
-        # Skip auth for non-API routes (static files, health, mobile pages)
         path = scope.get("path", "")
-        if not path.startswith("/api/"):
+        if not _requires_auth(path):
             await self.app(scope, receive, send)
             return
 
-        # Determine client IP
-        client_ip = self._get_client_ip(scope)
+        app_state = scope.get("app")
+        state = getattr(app_state, "state", None) if app_state else None
+        settings = getattr(state, "settings", None)
+        session_token = getattr(state, "session_token", None)
 
-        # Localhost bypass
-        if client_ip in _LOCALHOST_IPS:
-            scope.setdefault("state", {})["source"] = "local"
-            await self.app(scope, receive, send)
+        if settings is None or not session_token:
+            # Fail closed: missing configuration means we cannot validate,
+            # so we refuse rather than accidentally letting requests
+            # through unauthenticated.
+            await self._reject(send, 503, "Auth not initialised")
             return
 
-        # --- Non-localhost: enforce auth ---
-
+        headers = dict(scope.get("headers", []))
+        client_ip = self._client_ip(scope, headers)
+        is_local = client_ip in _LOCALHOST_IPS
         now = time.monotonic()
 
-        # General rate limit
-        req_count = self._request_buckets[client_ip].hit(now, _RATE_WINDOW)
-        if req_count > self._max_requests:
-            await self._send_json(send, 429, {"detail": "Rate limit exceeded"})
+        # Rate limit non-local peers. Local traffic is the Tauri shell and
+        # is trusted to the same extent as the user account — limiting
+        # it would just degrade the legitimate UI.
+        if not is_local:
+            req_count = self._request_buckets[client_ip].hit(now, _RATE_WINDOW)
+            if req_count > self._max_requests:
+                await self._reject(send, 429, "Rate limit exceeded")
+                return
+            # Probe the failed-auth bucket without consuming an attempt
+            failed_peek = len(self._failed_auth_buckets[client_ip].timestamps)
+            if failed_peek > self._max_failed_auth:
+                await self._reject(send, 429, "Too many failed authentication attempts")
+                return
+
+        provided = _extract_token(scope, headers)
+        if not provided:
+            if not is_local:
+                self._failed_auth_buckets[client_ip].hit(now, _RATE_WINDOW)
+            await self._reject(send, 401, "Authentication required")
             return
 
-        # Brute-force rate limit check
-        failed_count = self._failed_auth_buckets[client_ip].hit(now, _RATE_WINDOW)
-        self._failed_auth_buckets[client_ip].timestamps.pop()  # undo probe
-        if failed_count > self._max_failed_auth:
-            await self._send_json(send, 429, {"detail": "Too many failed authentication attempts"})
+        if not self._token_matches(provided, session_token, settings):
+            if not is_local:
+                self._failed_auth_buckets[client_ip].hit(now, _RATE_WINDOW)
+            await self._reject(send, 401, "Invalid token")
             return
 
-        # Extract token from Authorization header or ?token= query param
-        token = ""
-        headers = dict(scope.get("headers", []))
-        auth_header = headers.get(b"authorization", b"").decode()
-        if auth_header.startswith("Bearer "):
-            token = auth_header[7:]
-        else:
-            qs = scope.get("query_string", b"").decode()
-            params = parse_qs(qs)
-            token_list = params.get("token", [])
-            if token_list:
-                token = token_list[0]
-
-        if not token:
-            await self._send_json(send, 401, {"detail": "Authentication required"})
-            return
-
-        # Validate
-        from pathlib import Path
-        token_path = Path(settings.remote_token_path)
-        expected_token = load_token(token_path)
-
-        if not expected_token or not validate_token(token, expected_token):
-            self._failed_auth_buckets[client_ip].hit(now, _RATE_WINDOW)
-            await self._send_json(send, 401, {"detail": "Invalid token"})
-            return
-
-        # Authenticated
-        scope.setdefault("state", {})["source"] = "remote"
+        # Authenticated — annotate the scope so downstream handlers can
+        # distinguish local from remote if they want to apply extra policy
+        # (e.g. the permission prompt model).
+        scope.setdefault("state", {})["source"] = "local" if is_local else "remote"
         await self.app(scope, receive, send)
 
     @staticmethod
-    def _get_client_ip(scope) -> str:
-        headers = dict(scope.get("headers", []))
-        forwarded = headers.get(b"x-forwarded-for", b"").decode()
-        if forwarded:
-            return forwarded.split(",")[0].strip()
+    def _token_matches(provided: str, session_token: str, settings) -> bool:
+        """Constant-time match against session + (optional) remote token.
+
+        Both comparisons always run to keep the timing shape uniform
+        regardless of which token the client presented.
+        """
+        session_ok = validate_token(provided, session_token)
+        remote_ok = False
+        if getattr(settings, "remote_access_enabled", False):
+            remote_path = Path(settings.remote_token_path)
+            remote_expected = load_token(remote_path)
+            if remote_expected:
+                remote_ok = validate_token(provided, remote_expected)
+        return session_ok or remote_ok
+
+    @staticmethod
+    def _client_ip(scope, headers: dict[bytes, bytes]) -> str:
+        # Trust X-Forwarded-For only when remote access is enabled and a
+        # tunnel is front-of-us. For loopback-only desktop traffic the
+        # header is attacker-controlled and must be ignored — otherwise a
+        # browser-driven request could claim to be 127.0.0.1 and skip
+        # the rate limiter. We key on the socket peer.
         client = scope.get("client")
         if client:
             return client[0]
+        forwarded = headers.get(b"x-forwarded-for", b"").decode("latin-1", errors="replace")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
         return "unknown"
 
     @staticmethod
-    async def _send_json(send, status: int, body: dict) -> None:
-        """Send a JSON error response directly via ASGI send."""
-        data = json.dumps(body).encode()
+    async def _reject(send, status: int, detail: str) -> None:
+        data = json.dumps({"detail": detail}).encode()
         await send({
             "type": "http.response.start",
             "status": status,
             "headers": [
                 [b"content-type", b"application/json"],
                 [b"content-length", str(len(data)).encode()],
+                [b"www-authenticate", b'Bearer realm="openyak"'],
             ],
         })
         await send({
             "type": "http.response.body",
             "body": data,
         })
+
+
+# Backwards-compatible alias so existing imports (and any external scripts
+# that may reach into app.auth.middleware) keep resolving. The old name
+# was misleading because the check was optional; the new name reflects
+# that auth is now mandatory.
+RemoteAuthMiddleware = AuthMiddleware

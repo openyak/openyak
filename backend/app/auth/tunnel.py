@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Callable
 
 from app.tool.subprocess_compat import get_subprocess_kwargs
 
@@ -33,14 +34,27 @@ _DOWNLOAD_URLS = {
 
 
 class TunnelManager:
-    """Manages a cloudflared tunnel subprocess."""
+    """Manages a cloudflared tunnel subprocess.
 
-    def __init__(self, backend_port: int = 8000, bin_dir: Path | None = None):
+    ``on_url_change`` is invoked whenever the active tunnel URL changes
+    — first acquisition, a monitor-triggered restart on a new random
+    quick-tunnel URL, or a normal stop (``new=None``). The caller uses
+    this to keep the CSRF allowlist in sync: registering the new URL
+    and evicting the old one without requiring a backend restart.
+    """
+
+    def __init__(
+        self,
+        backend_port: int = 8000,
+        bin_dir: Path | None = None,
+        on_url_change: Callable[[str | None, str | None], None] | None = None,
+    ):
         self._port = backend_port
         self._bin_dir = bin_dir or Path("data/bin")
         self._process: subprocess.Popen | None = None
         self._tunnel_url: str | None = None
         self._monitor_task: asyncio.Task | None = None
+        self._on_url_change = on_url_change
 
     @property
     def tunnel_url(self) -> str | None:
@@ -75,8 +89,16 @@ class TunnelManager:
             self._read_tunnel_url(),
             timeout=30.0,
         )
+        old_url = self._tunnel_url
         self._tunnel_url = url
         logger.info("Cloudflare tunnel active: %s", url)
+        # Notify the allowlist owner. Invoked after self._tunnel_url is
+        # set so a callback that reads back state sees the new value.
+        if self._on_url_change is not None and old_url != url:
+            try:
+                self._on_url_change(old_url, url)
+            except Exception:
+                logger.exception("on_url_change callback raised")
 
         # Start background monitor
         self._monitor_task = asyncio.create_task(self._monitor(), name="tunnel-monitor")
@@ -98,7 +120,13 @@ class TunnelManager:
             self._process = None
             logger.info("Cloudflare tunnel stopped")
 
+        old_url = self._tunnel_url
         self._tunnel_url = None
+        if self._on_url_change is not None and old_url is not None:
+            try:
+                self._on_url_change(old_url, None)
+            except Exception:
+                logger.exception("on_url_change callback raised")
 
     async def _read_tunnel_url(self) -> str:
         """Read cloudflared output until we find the tunnel URL."""

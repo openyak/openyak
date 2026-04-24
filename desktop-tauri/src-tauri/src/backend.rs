@@ -8,7 +8,7 @@ use std::process::Stdio;
 use std::{
     fs::OpenOptions,
     io::Write,
-    path::Path,
+    path::{Path, PathBuf},
 };
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -22,6 +22,12 @@ use tokio::time::sleep;
 
 /// Watchdog polling interval.
 const WATCHDOG_INTERVAL: Duration = Duration::from_secs(10);
+/// How long to poll for the backend's session_token.json after /livez passes.
+/// The backend writes the token before it starts the HTTP server, but we
+/// read it in a separate step so we tolerate a short race window.
+const TOKEN_MAX_WAIT: Duration = Duration::from_secs(5);
+/// Interval between retries while waiting for the token file to appear.
+const TOKEN_POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// Consecutive health failures before watchdog triggers a restart.
 const WATCHDOG_MAX_FAILURES: u32 = 3;
 /// Maximum time to wait for health endpoint during startup.
@@ -59,6 +65,15 @@ struct BackendInner {
     restarting: bool,
     crash_count: u32,
     last_crash_time: u64,
+    /// Session bearer token loaded from the backend's session_token.json.
+    /// Cleared on restart and repopulated from disk after the new backend
+    /// passes its health check — never sent over the wire by the backend,
+    /// only written to a 0600 file we read directly.
+    session_token: Option<String>,
+    /// Data directory the backend writes its session token into. Set at
+    /// spawn (prod) or via set_dev_data_dir (dev) so token refresh after
+    /// an auto-restart uses the same path.
+    data_dir: Option<PathBuf>,
 }
 
 impl BackendState {
@@ -72,6 +87,8 @@ impl BackendState {
                 restarting: false,
                 crash_count: 0,
                 last_crash_time: 0,
+                session_token: None,
+                data_dir: None,
             })),
         }
     }
@@ -86,6 +103,33 @@ impl BackendState {
     pub async fn set_dev_port(&self, port: u16) {
         let mut inner = self.inner.lock().await;
         inner.port = port;
+    }
+
+    /// Set the backend data directory in dev mode and load its session
+    /// token. In dev the backend is started externally by `dev-desktop.mjs`
+    /// so there is no spawn to hook into; we poll the well-known token
+    /// path instead. Returns the token on success.
+    pub async fn set_dev_data_dir(&self, data_dir: PathBuf) -> Result<String, String> {
+        {
+            let mut inner = self.inner.lock().await;
+            inner.data_dir = Some(data_dir.clone());
+        }
+        let token = load_session_token(&data_dir).await?;
+        let mut inner = self.inner.lock().await;
+        inner.session_token = Some(token.clone());
+        Ok(token)
+    }
+
+    /// Returns the backend session bearer token, or an error if the
+    /// backend has not yet written it. The frontend calls this through
+    /// the `get_backend_token` Tauri command and attaches the value to
+    /// every HTTP request.
+    pub async fn token(&self) -> Result<String, String> {
+        let inner = self.inner.lock().await;
+        inner
+            .session_token
+            .clone()
+            .ok_or_else(|| "Backend session token not yet available".to_string())
     }
 
     /// Start the Python backend process.
@@ -280,10 +324,25 @@ impl BackendState {
         // Wait for backend health check (use lightweight /livez endpoint)
         self.wait_for_health(port, &log_path, &desktop_log_path).await?;
 
-        // Reset crash count on successful healthy start
+        // Load the session token the backend wrote on startup. Every
+        // authenticated request from the frontend carries it as a
+        // bearer; without it the backend rejects us. We poll briefly
+        // to tolerate the race where /livez is up before the token
+        // file has been flushed.
+        let token_data_dir = data_dir.clone();
+        let token = load_session_token(&token_data_dir).await.map_err(|e| {
+            let msg = format!("Session token unavailable: {e}");
+            write_desktop_log(&desktop_log_path, &msg);
+            msg
+        })?;
+
+        // Reset crash count on successful healthy start; cache token and
+        // data_dir so a later restart can refresh the token from disk.
         {
             let mut inner = self.inner.lock().await;
             inner.crash_count = 0;
+            inner.session_token = Some(token);
+            inner.data_dir = Some(token_data_dir);
         }
 
         // Start watchdog
@@ -474,6 +533,10 @@ impl BackendState {
         }
 
         let port = inner.port;
+        // Clone the token while we hold the lock so the HTTP shutdown
+        // below can authenticate. Without a bearer token the backend
+        // rejects /shutdown exactly like any other mutating request.
+        let token = inner.session_token.clone();
 
         info!("Stopping backend (port={port})...");
 
@@ -486,8 +549,20 @@ impl BackendState {
             .unwrap_or_default();
 
         let shutdown_url = format!("http://127.0.0.1:{port}/shutdown");
-        match client.post(&shutdown_url).send().await {
-            Ok(_) => info!("Shutdown request sent"),
+        let mut req = client.post(&shutdown_url);
+        if let Some(t) = token.as_deref() {
+            req = req.bearer_auth(t);
+        }
+        match req.send().await {
+            Ok(resp) if resp.status().is_success() => {
+                info!("Shutdown request accepted");
+            }
+            Ok(resp) => {
+                warn!(
+                    "Shutdown request rejected (status={}), will force kill",
+                    resp.status()
+                );
+            }
             Err(_) => {
                 warn!("HTTP shutdown failed, will force kill");
             }
@@ -677,6 +752,71 @@ fn write_desktop_log(log_path: &Path, message: &str) {
     }
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(log_path) {
         let _ = writeln!(file, "{message}");
+    }
+}
+
+/// Poll the backend's session token file until it appears or we time out.
+///
+/// The backend writes `session_token.json` at startup with mode 0600. We
+/// read it directly rather than trusting any HTTP field, so a tampered
+/// backend on the same host — or a malicious process masquerading on the
+/// same port — cannot inject an attacker-chosen token: the reader's own
+/// UID is what gates access via filesystem permissions.
+async fn load_session_token(data_dir: &Path) -> Result<String, String> {
+    let token_path = data_dir.join("session_token.json");
+    let deadline = std::time::Instant::now() + TOKEN_MAX_WAIT;
+
+    loop {
+        match tokio::fs::read_to_string(&token_path).await {
+            Ok(raw) => {
+                // Minimal JSON parse: we expect `{"token": "openyak_st_..."}`.
+                // Bringing in serde_json here would be overkill for a two-field
+                // file we control the format of, so we extract the string
+                // value directly.
+                if let Some(token) = extract_token_field(&raw) {
+                    return Ok(token);
+                }
+                return Err(format!(
+                    "session_token.json at {} is malformed",
+                    token_path.display()
+                ));
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                if std::time::Instant::now() >= deadline {
+                    return Err(format!(
+                        "Timed out waiting for {} (backend did not write session token)",
+                        token_path.display()
+                    ));
+                }
+                sleep(TOKEN_POLL_INTERVAL).await;
+            }
+            Err(err) => {
+                return Err(format!(
+                    "Cannot read {}: {}",
+                    token_path.display(),
+                    err
+                ));
+            }
+        }
+    }
+}
+
+/// Extract the `"token"` field from `{"token": "..."}` without pulling in
+/// a full JSON parser. The file is written by our own backend so the
+/// format is fixed; we only need to tolerate whitespace variations.
+fn extract_token_field(raw: &str) -> Option<String> {
+    let key = "\"token\"";
+    let start = raw.find(key)?;
+    // Advance past the key, any whitespace, and the colon.
+    let after_key = raw[start + key.len()..].trim_start();
+    let after_colon = after_key.strip_prefix(':')?.trim_start();
+    let rest = after_colon.strip_prefix('"')?;
+    let end = rest.find('"')?;
+    let value = &rest[..end];
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
     }
 }
 

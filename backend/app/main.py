@@ -16,7 +16,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.health import router as health_router
 from app.api.openai_compat import router as openai_compat_router
 from app.api.router import api_router
-from app.auth.middleware import RemoteAuthMiddleware
+from app.auth.csrf import CsrfProtectionMiddleware
+from app.auth.middleware import AuthMiddleware
+from app.auth.token import ensure_session_token
 from app.config import Settings
 from app.dependencies import (
     set_agent_registry,
@@ -72,6 +74,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Install global asyncio exception handler
     loop = asyncio.get_running_loop()
     loop.set_exception_handler(_asyncio_exception_handler)
+
+    # Session token — generate fresh on every startup, 0600 file so a
+    # different local user on the same host cannot read it. Stored on
+    # app.state so the AuthMiddleware can validate requests against it.
+    app.state.session_token = ensure_session_token(Path(settings.session_token_path))
+
+    # Runtime CSRF allowlist — mutated by remote-access handlers when a
+    # cloudflared tunnel URL is acquired/released. Separate from the
+    # static OPENYAK_EXTRA_ALLOWED_ORIGINS override because quick-tunnel
+    # URLs are random per session and cannot be known at env-load time.
+    # The CsrfProtectionMiddleware snapshots this set on every request.
+    app.state.runtime_allowed_origins = set()
+    # If the user had remote access enabled and configured a manual
+    # tunnel URL, seed the set now so mobile requests are accepted on
+    # the first request after startup.
+    if settings.remote_access_enabled and settings.remote_tunnel_mode == "manual" and settings.remote_tunnel_url:
+        app.state.runtime_allowed_origins.add(settings.remote_tunnel_url.rstrip("/"))
 
     # Database
     engine = create_engine(settings)
@@ -580,18 +599,49 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     set_settings(settings)
 
-    # CORS — permissive for local dev, tighten in production
+    # CORS — restricted to the OpenYak frontend origins. Wildcard would let
+    # any webpage read responses from this local server cross-origin, which
+    # is a PII-leak vector on top of the CSRF risk handled below.
+    #   - Tauri desktop shell: tauri://localhost (macOS/Linux) and
+    #     http(s)://tauri.localhost (Windows).
+    #   - Loopback on any port: http://localhost:*, http://127.0.0.1:*
+    #     (the backend picks a random free port; the Next.js dev server uses
+    #     a user-configurable port).
+    extra_origins = [
+        o.strip().rstrip("/")
+        for o in settings.extra_allowed_origins.split(",")
+        if o.strip()
+    ]
+    allowed_origin_regex = (
+        r"^(?:tauri://localhost"
+        r"|https?://tauri\.localhost"
+        r"|http://localhost(?::\d+)?"
+        r"|http://127\.0\.0\.1(?::\d+)?)$"
+    )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=extra_origins,
+        allow_origin_regex=allowed_origin_regex,
         allow_credentials=True,
-        allow_methods=["*"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["*"],
         expose_headers=["Content-Disposition"],
     )
 
-    # Remote access auth — must be AFTER CORSMiddleware (inner middleware runs first)
-    app.add_middleware(RemoteAuthMiddleware)
+    # CSRF — rejects cross-site state-changing requests at the server before
+    # they reach any handler. This is the authoritative defense: CORS only
+    # controls browser-side response reads, not whether the request lands.
+    app.add_middleware(
+        CsrfProtectionMiddleware,
+        extra_allowed_origins=extra_origins,
+    )
+
+    # Bearer-token auth — must be added AFTER CORS/CSRF so it is the
+    # outermost layer (Starlette runs last-added first). That way the
+    # token check short-circuits before CORS/CSRF and protects every
+    # privileged endpoint regardless of which interface the request
+    # arrived on.
+    app.add_middleware(AuthMiddleware)
 
     # Mount routers
     app.include_router(health_router)

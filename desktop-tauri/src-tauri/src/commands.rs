@@ -11,6 +11,17 @@ pub async fn get_backend_url(state: tauri::State<'_, BackendState>) -> Result<St
     Ok(state.url().await)
 }
 
+/// Get the backend's per-run session bearer token. The token is read
+/// from a 0600 file the backend writes on startup, so another local
+/// user on the same host cannot obtain it. The frontend attaches it
+/// as `Authorization: Bearer ...` on every API request and as a
+/// `?token=` query param on EventSource streams (which cannot set
+/// custom headers). Never log this value.
+#[tauri::command]
+pub async fn get_backend_token(state: tauri::State<'_, BackendState>) -> Result<String, String> {
+    state.token().await
+}
+
 #[tauri::command]
 pub async fn get_pending_navigation(
     state: tauri::State<'_, PendingNavigationState>,

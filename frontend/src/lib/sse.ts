@@ -10,6 +10,8 @@
  */
 
 import {
+  getBackendTokenSync,
+  IS_DESKTOP,
   SSE_HEARTBEAT_TIMEOUT,
   SSE_RECONNECT_DELAY,
   SSE_RECONNECT_MAX_DELAY,
@@ -155,11 +157,17 @@ export class SSEClient {
 
     // Resolve URL dynamically — picks up new backend port after restart
     const baseUrl = this.options.urlProvider?.() ?? this.options.url;
-    // Build query params: last_event_id for reconnection, token for remote auth
+    // Build query params: last_event_id for reconnection, token for auth.
+    // EventSource cannot attach custom headers, so we smuggle the bearer
+    // token through the query string. The backend accepts either ?token=
+    // or Authorization: Bearer, but we prefer the header everywhere it
+    // can be used (i.e. every non-EventSource request).
     const params = new URLSearchParams();
     if (this.lastEventId > 0) params.set("last_event_id", String(this.lastEventId));
     const remoteToken = getRemoteToken();
-    if (remoteToken) params.set("token", remoteToken);
+    const localToken = !remoteToken && IS_DESKTOP ? getBackendTokenSync() : null;
+    const queryToken = remoteToken ?? localToken;
+    if (queryToken) params.set("token", queryToken);
     const qs = params.toString();
     const url = qs ? `${baseUrl}?${qs}` : baseUrl;
 

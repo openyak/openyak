@@ -1,6 +1,11 @@
 /** Lightweight fetch wrapper for the OpenYak backend API. */
 
-import { getBackendUrl, IS_DESKTOP, resolveApiUrl } from "./constants";
+import {
+  getBackendToken,
+  getBackendUrl,
+  IS_DESKTOP,
+  resolveApiUrl,
+} from "./constants";
 import { getRemoteConfig } from "./remote-connection";
 import i18n from "@/i18n/config";
 
@@ -37,10 +42,18 @@ async function request<T>(
 
   let lastError: unknown;
 
-  // Build auth headers for remote mode
+  // Build auth headers. In remote mode we use the tunnel-issued token;
+  // in desktop mode we use the per-run session token fetched through
+  // Tauri IPC (the backend writes a 0600 file that only our user can
+  // read, preventing lateral-user escalation on shared hosts). In web
+  // dev mode the Next.js proxy handles credential-less same-origin
+  // calls, so no header is needed.
   const authHeaders: Record<string, string> = {};
   if (remoteConfig) {
     authHeaders["Authorization"] = `Bearer ${remoteConfig.token}`;
+  } else if (IS_DESKTOP) {
+    const token = await getBackendToken();
+    authHeaders["Authorization"] = `Bearer ${token}`;
   }
 
   for (let attempt = 0; attempt <= NETWORK_RETRY_MAX; attempt++) {

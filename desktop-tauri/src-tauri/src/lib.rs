@@ -72,6 +72,7 @@ pub fn run() {
         // -- Commands --
         .invoke_handler(tauri::generate_handler![
             commands::get_backend_url,
+            commands::get_backend_token,
             commands::get_pending_navigation,
             commands::window_minimize,
             commands::window_maximize,
@@ -206,10 +207,34 @@ pub fn run() {
                     .ok()
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(8000);
-                info!("Dev mode — using existing backend at http://127.0.0.1:{dev_port}");
+                // Dev backend runs with cwd=backend/ so its data_dir is
+                // backend/data/ relative to the repo root. We let
+                // dev-desktop.mjs pin this via DEV_BACKEND_DATA_DIR so the
+                // Tauri binary does not need to guess the repo layout.
+                let dev_data_dir: std::path::PathBuf = std::env::var("DEV_BACKEND_DATA_DIR")
+                    .ok()
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| {
+                        // Best-effort fallback when running `cargo tauri dev`
+                        // directly: desktop-tauri/src-tauri → ../../backend/data
+                        std::env::current_dir()
+                            .ok()
+                            .and_then(|p| p.parent().map(|x| x.to_path_buf()))
+                            .and_then(|p| p.parent().map(|x| x.to_path_buf()))
+                            .map(|root| root.join("backend").join("data"))
+                            .unwrap_or_else(|| std::path::PathBuf::from("backend/data"))
+                    });
+                info!(
+                    "Dev mode — using existing backend at http://127.0.0.1:{dev_port} \
+                     (data_dir={})",
+                    dev_data_dir.display()
+                );
                 tauri::async_runtime::spawn(async move {
                     let state = app_handle.state::<BackendState>();
                     state.set_dev_port(dev_port).await;
+                    if let Err(e) = state.set_dev_data_dir(dev_data_dir).await {
+                        error!("Dev mode: failed to load backend session token: {e}");
+                    }
                     if let Some(window) = app_handle.get_webview_window("main") {
                         let _ = window.show();
                     }
