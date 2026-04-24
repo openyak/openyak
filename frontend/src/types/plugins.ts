@@ -27,3 +27,34 @@ export interface SkillInfo {
   source: "bundled" | "plugin" | "project";
   enabled: boolean;
 }
+
+// ─── Store (proxied from skillsmp.com) ─────────────────────────────────
+
+export interface StoreSkill {
+  id: string;
+  name: string;
+  author: string;
+  description: string;
+  githubUrl: string;
+  skillUrl: string;
+  stars: number;
+  updatedAt: number;
+}
+
+export interface StoreSearchResponse {
+  success: boolean;
+  data: {
+    skills: StoreSkill[];
+    pagination: {
+      page: number;
+      limit: number;
+      total: number;
+      totalPages: number;
+      hasNext: boolean;
+      hasPrev: boolean;
+      totalIsExact?: boolean;
+    };
+    filters?: Record<string, unknown>;
+  };
+  meta?: Record<string, unknown>;
+}

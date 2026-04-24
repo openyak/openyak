@@ -38,11 +38,11 @@ export function SettingsSidebar() {
       <SidebarResizeHandle />
       <div
         data-tauri-drag-region
-        className="flex items-center px-4"
+        className="flex items-center"
         style={
           IS_DESKTOP && isMac
-            ? { height: 72, paddingTop: 32 }
-            : { height: 56, paddingTop: 4 }
+            ? { height: 60, paddingLeft: 91, paddingRight: 16 }
+            : { height: 56, paddingTop: 4, paddingLeft: 16, paddingRight: 16 }
         }
       >
         <Link

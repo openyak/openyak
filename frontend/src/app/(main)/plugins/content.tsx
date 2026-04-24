@@ -1,19 +1,24 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
+  Check,
   ChevronDown,
   ChevronRight,
+  Download,
   ExternalLink,
   Loader2,
   Plus,
   RotateCw,
   Sparkles,
+  Star,
+  Store,
   Unplug,
   Workflow,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api";
@@ -25,6 +30,8 @@ import {
   usePluginToggle,
   useSkills,
   useSkillToggle,
+  useSkillStoreSearch,
+  useInstallSkill,
 } from "@/hooks/use-plugins";
 import {
   useConnectors,
@@ -35,7 +42,7 @@ import {
   useAddCustomConnector,
   useSetConnectorToken,
 } from "@/hooks/use-connectors";
-import type { PluginInfo, SkillInfo } from "@/types/plugins";
+import type { PluginInfo, SkillInfo, StoreSkill } from "@/types/plugins";
 import type { ConnectorInfo } from "@/types/connectors";
 
 const SOURCE_COLORS: Record<string, string> = {
@@ -534,21 +541,15 @@ function PluginsTab({ search }: { search: string }) {
 function SkillsTab({ search }: { search: string }) {
   const { t } = useTranslation("plugins");
   const { data: skills, isLoading } = useSkills();
-
-  if (isLoading) {
-    return (
-      <div className="space-y-2">
-        {[1, 2, 3, 4].map((i) => (
-          <div
-            key={i}
-            className="h-10 rounded-lg bg-[var(--surface-tertiary)] animate-pulse"
-          />
-        ))}
-      </div>
-    );
-  }
+  const [storeOpen, setStoreOpen] = useState(false);
 
   const allSkills = skills ?? [];
+
+  // Lowercased name set for fast "already installed?" lookups in the store.
+  const installedNames = useMemo(
+    () => new Set(allSkills.map((s) => s.name.toLowerCase())),
+    [allSkills],
+  );
 
   const bundled = allSkills.filter((s) => s.source === "bundled");
   const plugin = allSkills.filter((s) => s.source === "plugin");
@@ -567,39 +568,297 @@ function SkillsTab({ search }: { search: string }) {
   const filteredPlugin = filterSkills(plugin);
   const filteredProject = filterSkills(project);
 
-  const total = filteredBundled.length + filteredPlugin.length + filteredProject.length;
-
-  if (total === 0) {
-    return (
-      <p className="text-xs text-[var(--text-tertiary)] text-center py-8">
-        {t("noSkills")}
-      </p>
-    );
-  }
+  const installedTotal =
+    filteredBundled.length + filteredPlugin.length + filteredProject.length;
 
   return (
     <div className="space-y-6">
-      {filteredBundled.length > 0 && (
-        <SkillGroup
-          title={t("bundledSkills")}
-          skills={filteredBundled}
-          source="bundled"
-        />
+      {/* Store browser — collapsed by default */}
+      <SkillStoreSection
+        open={storeOpen}
+        onToggle={() => setStoreOpen((v) => !v)}
+        installedNames={installedNames}
+      />
+
+      {/* Installed skills */}
+      {isLoading ? (
+        <div className="space-y-2">
+          {[1, 2, 3, 4].map((i) => (
+            <div
+              key={i}
+              className="h-10 rounded-lg bg-[var(--surface-tertiary)] animate-pulse"
+            />
+          ))}
+        </div>
+      ) : installedTotal === 0 ? (
+        <p className="text-xs text-[var(--text-tertiary)] text-center py-8">
+          {t("noSkills")}
+        </p>
+      ) : (
+        <>
+          {filteredBundled.length > 0 && (
+            <SkillGroup
+              title={t("bundledSkills")}
+              skills={filteredBundled}
+              source="bundled"
+            />
+          )}
+          {filteredPlugin.length > 0 && (
+            <SkillGroup
+              title={t("pluginSkills")}
+              skills={filteredPlugin}
+              source="plugin"
+            />
+          )}
+          {filteredProject.length > 0 && (
+            <SkillGroup
+              title={t("projectSkills")}
+              skills={filteredProject}
+              source="project"
+            />
+          )}
+        </>
       )}
-      {filteredPlugin.length > 0 && (
-        <SkillGroup
-          title={t("pluginSkills")}
-          skills={filteredPlugin}
-          source="plugin"
-        />
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Skill Store (proxied from skillsmp.com)                             */
+/* ------------------------------------------------------------------ */
+
+function SkillStoreSection({
+  open,
+  onToggle,
+  installedNames,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  installedNames: Set<string>;
+}) {
+  const { t } = useTranslation("plugins");
+  const [query, setQuery] = useState("");
+  const [debounced, setDebounced] = useState("");
+  const [sort, setSort] = useState<"stars" | "recent">("stars");
+
+  useEffect(() => {
+    const h = setTimeout(() => setDebounced(query.trim()), 400);
+    return () => clearTimeout(h);
+  }, [query]);
+
+  const { data, isFetching, isError, refetch } = useSkillStoreSearch(
+    debounced,
+    sort,
+    1,
+    /* enabled */ open,
+  );
+  const install = useInstallSkill();
+
+  const results = data?.data?.skills ?? [];
+  const total = data?.data?.pagination?.total ?? 0;
+
+  const handleInstall = async (skill: StoreSkill) => {
+    try {
+      await install.mutateAsync({
+        github_url: skill.githubUrl,
+        name: skill.name,
+      });
+      toast.success(
+        t("storeInstalled", {
+          name: skill.name,
+          defaultValue: `Installed ${skill.name}`,
+        }),
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Install failed";
+      toast.error(msg);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-[var(--border-default)]">
+      {/* Header */}
+      <button
+        onClick={onToggle}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left"
+      >
+        {open ? (
+          <ChevronDown className="h-3.5 w-3.5 text-[var(--text-tertiary)]" />
+        ) : (
+          <ChevronRight className="h-3.5 w-3.5 text-[var(--text-tertiary)]" />
+        )}
+        <Store className="h-3.5 w-3.5 text-[var(--text-secondary)]" />
+        <span className="text-xs font-semibold text-[var(--text-primary)]">
+          {t("storeTitle", { defaultValue: "Browse skills" })}
+        </span>
+        <span className="text-ui-3xs text-[var(--text-tertiary)]">
+          {t("storeSubtitle", {
+            defaultValue: "curated from skillsmp.com — search & install",
+          })}
+        </span>
+      </button>
+
+      {open && (
+        <div className="border-t border-[var(--border-default)] p-3 space-y-3">
+          {/* Search + sort */}
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={t("storeSearchPlaceholder", {
+                defaultValue: "Search 900k+ skills…",
+              })}
+              className="flex-1 h-8 rounded-md border border-[var(--border-default)] bg-transparent px-3 text-xs text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:outline-none focus:ring-1 focus:ring-[var(--border-focus)]"
+            />
+            <div className="flex items-center rounded-md border border-[var(--border-default)] text-ui-2xs overflow-hidden">
+              {(["stars", "recent"] as const).map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setSort(s)}
+                  className={`px-2.5 py-1.5 transition-colors ${
+                    sort === s
+                      ? "bg-[var(--surface-tertiary)] text-[var(--text-primary)]"
+                      : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
+                  }`}
+                >
+                  {s === "stars"
+                    ? t("storeSortStars", { defaultValue: "Top" })
+                    : t("storeSortRecent", { defaultValue: "Recent" })}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Results */}
+          {isError ? (
+            <div className="text-xs text-[var(--text-tertiary)] text-center py-4 space-y-2">
+              <p>
+                {t("storeUnavailable", {
+                  defaultValue: "Skills store is unreachable.",
+                })}
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-ui-2xs"
+                onClick={() => refetch()}
+              >
+                <RotateCw className="h-3 w-3 mr-1" />
+                {t("retry", { defaultValue: "Retry" })}
+              </Button>
+            </div>
+          ) : isFetching && results.length === 0 ? (
+            <div className="space-y-2">
+              {[1, 2, 3].map((i) => (
+                <div
+                  key={i}
+                  className="h-14 rounded-lg bg-[var(--surface-tertiary)] animate-pulse"
+                />
+              ))}
+            </div>
+          ) : results.length === 0 ? (
+            <p className="text-xs text-[var(--text-tertiary)] text-center py-4">
+              {t("storeNoResults", {
+                defaultValue: "No skills matched your search.",
+              })}
+            </p>
+          ) : (
+            <>
+              <p className="text-ui-3xs text-[var(--text-tertiary)]">
+                {t("storeResultCount", {
+                  shown: results.length,
+                  total,
+                  defaultValue: `Showing ${results.length} of ${total}`,
+                })}
+              </p>
+              <div className="space-y-1.5">
+                {results.map((skill) => (
+                  <StoreSkillRow
+                    key={skill.id}
+                    skill={skill}
+                    installed={installedNames.has(skill.name.toLowerCase())}
+                    installing={install.isPending && install.variables?.github_url === skill.githubUrl}
+                    onInstall={() => handleInstall(skill)}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+        </div>
       )}
-      {filteredProject.length > 0 && (
-        <SkillGroup
-          title={t("projectSkills")}
-          skills={filteredProject}
-          source="project"
-        />
-      )}
+    </div>
+  );
+}
+
+function StoreSkillRow({
+  skill,
+  installed,
+  installing,
+  onInstall,
+}: {
+  skill: StoreSkill;
+  installed: boolean;
+  installing: boolean;
+  onInstall: () => void;
+}) {
+  const { t } = useTranslation("plugins");
+  return (
+    <div className="flex items-start gap-3 rounded-lg border border-[var(--border-default)] p-2.5">
+      <Sparkles className="h-3.5 w-3.5 text-[var(--text-tertiary)] mt-0.5 shrink-0" />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-mono font-medium text-[var(--text-primary)] truncate">
+            {skill.name}
+          </span>
+          <span className="text-ui-3xs text-[var(--text-tertiary)] truncate">
+            by {skill.author}
+          </span>
+          {skill.stars > 0 && (
+            <span className="inline-flex items-center gap-0.5 text-ui-3xs text-[var(--text-tertiary)]">
+              <Star className="h-2.5 w-2.5" />
+              {skill.stars}
+            </span>
+          )}
+        </div>
+        <p className="text-ui-2xs text-[var(--text-tertiary)] mt-0.5 line-clamp-2">
+          {skill.description}
+        </p>
+      </div>
+      <div className="flex items-center gap-1 shrink-0">
+        <a
+          href={skill.githubUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="p-1 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
+          title={t("storeViewOnGithub", { defaultValue: "View on GitHub" })}
+        >
+          <ExternalLink className="h-3 w-3" />
+        </a>
+        {installed ? (
+          <span className="inline-flex items-center gap-1 text-ui-3xs text-[var(--text-tertiary)] px-2 py-1">
+            <Check className="h-3 w-3" />
+            {t("storeInstalledBadge", { defaultValue: "Installed" })}
+          </span>
+        ) : (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-ui-2xs px-2.5"
+            disabled={installing}
+            onClick={onInstall}
+          >
+            {installing ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Download className="h-3 w-3" />
+            )}
+            <span className="ml-1">
+              {t("storeInstall", { defaultValue: "Install" })}
+            </span>
+          </Button>
+        )}
+      </div>
     </div>
   );
 }

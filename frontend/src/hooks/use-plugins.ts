@@ -3,7 +3,12 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { API, queryKeys } from "@/lib/constants";
-import type { PluginsStatusResponse, PluginDetail, SkillInfo } from "@/types/plugins";
+import type {
+  PluginsStatusResponse,
+  PluginDetail,
+  SkillInfo,
+  StoreSearchResponse,
+} from "@/types/plugins";
 
 export function usePluginsStatus() {
   return useQuery({
@@ -52,6 +57,46 @@ export function useSkillToggle() {
     mutationFn: ({ name, enable }: { name: string; enable: boolean }) =>
       api.post<{ success: boolean; skills: SkillInfo[] }>(
         enable ? API.SKILLS.ENABLE(name) : API.SKILLS.DISABLE(name),
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.skills });
+    },
+  });
+}
+
+// ─── Store ─────────────────────────────────────────────────────────────
+
+export function useSkillStoreSearch(
+  q: string,
+  sort: "stars" | "recent" = "stars",
+  page = 1,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: queryKeys.skillStore(q, sort, page),
+    queryFn: () => {
+      const params = new URLSearchParams({
+        q,
+        sort,
+        page: String(page),
+        limit: "20",
+      });
+      return api.get<StoreSearchResponse>(
+        `${API.SKILLS.STORE_SEARCH}?${params.toString()}`,
+      );
+    },
+    enabled,
+    staleTime: 30_000,
+  });
+}
+
+export function useInstallSkill() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ github_url, name }: { github_url: string; name?: string }) =>
+      api.post<{ success: boolean; location: string; skills: SkillInfo[] }>(
+        API.SKILLS.INSTALL,
+        { github_url, name },
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.skills });

@@ -242,6 +242,8 @@ export const API = {
     LIST: "/api/skills",
     ENABLE: (name: string) => `/api/skills/${name}/enable` as const,
     DISABLE: (name: string) => `/api/skills/${name}/disable` as const,
+    STORE_SEARCH: "/api/skills/store/search",
+    INSTALL: "/api/skills/install",
   },
   MCP: {
     STATUS: "/api/mcp/status",
@@ -325,6 +327,7 @@ export const queryKeys = {
   agents: ["agents"] as const,
   tools: ["tools"] as const,
   skills: ["skills"] as const,
+  skillStore: (q: string, sort: string, page: number) => ["skillStore", q, sort, page] as const,
   usage: (days: number) => ["usage", days] as const,
   apiKeyStatus: ["apiKeyStatus"] as const,
   providers: ["providers"] as const,
