@@ -6,6 +6,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/), and this project
 
 ## [Unreleased]
 
+## [1.1.4] - 2026-04-24
+
+### Fixed
+
+- **desktop:** Restored backend reachability after the v1.1.3 hardening pass. A Content Security Policy regression in v1.1.3 blocked the Tauri `ipc://localhost` channel on all platforms; adding `ipc:` to the `connect-src` allowlist re-enables backend and updater calls from the webview.
+- **desktop (auth):** CORS preflight (`OPTIONS`) requests no longer 401. Browsers intentionally strip credentials from preflights, so the auth middleware now forwards them straight to `CORSMiddleware`. Cross-origin API calls from the desktop webview work again.
+- **frontend (streaming):** Multi-step assistant turns no longer render duplicate blocks. `streamingParts` accumulates the entire turn, so slicing the group into a "persisted" block plus a separate `StreamingMessage` double-rendered earlier steps (two `Sources` footers, overlapping tool-call timeline).
+- **frontend (streaming):** No more full-block fade-in flash when a new session navigates from `/c/new` → `/c/{id}` mid-stream. `StreamingMessage` records whether it mounted with empty content and suppresses the 0.3s opacity animation on a continuation remount.
+
+### Added
+
+- **frontend (skills store):** New "Browse skills" section in Settings → Plugins → Skills. Searches a bundled catalog of ~1.9k curated skills (scraped from skillsmp.com) and installs them in one click. Content is fetched live from GitHub raw on install, so the installed SKILL.md is always current; the catalog itself is refreshed per release and ships with zero runtime dependency on third-party APIs.
+- **backend (skills):** `GET /api/skills/store/search` serves the bundled catalog with substring search and stars/recent sorting. `POST /api/skills/install` converts a GitHub URL to `raw.githubusercontent.com`, downloads `SKILL.md`, writes to `~/.openyak/skills/<slug>/`, and rescans the registry so the new skill is immediately usable.
+- **backend (scripts):** `scripts/update_skills_catalog.py` — release-time scrape that paginates the upstream search with broad queries, dedupes, and regenerates `backend/app/data/skills_catalog.json`.
+
+### Changed
+
+- **desktop (window):** Default size is now 1360×840 (golden ratio) and every cold start re-centers on screen. The `tauri-plugin-window-state` plugin no longer persists size/position — same-process tray hide/show still keeps the user's arrangement untouched, but quit → relaunch returns to the predictable default. Previously the plugin was restoring saved pixel sizes from earlier versions that no longer made sense (some users saw near-square ratios).
+- **providers (openai subscription):** Subscription model list trimmed to GPT-5.5 and GPT-5.4. `header-model-dropdown` now prefers `gpt-5.5` and falls back to `gpt-5.4` if the user's subscription tier hasn't rolled it out yet. Removed: GPT-5.3 Codex, GPT-5.2, GPT-5.2 Code, GPT-5.1 Codex / Codex Max / Codex Mini.
+- **frontend (arena scores):** Refresh for the April Intelligence Index — GPT-5.5 bumped from 0 to 60.2; added Claude Opus 4.7 (57.3), Kimi K2.6 (53.9), MiMo V2.5 Pro (53.8), GPT-5.2 (51.3).
+- **frontend (workspace pill):** One-step folder picker. Click the pill to open the native picker directly (or the remote-mode browser); inline × clears the workspace. The intermediate popover with its "Browse" and "Clear" buttons is gone.
+- **frontend (menu density):** `ContextMenu` and `DropdownMenu` items tightened — 13px text / 6px vertical padding / 14px icons / 10px gap / 6px radius. The old 14px / 8px density felt oversized next to modern desktop conventions (VSCode / Linear / Raycast).
+
 ## [1.1.3] - 2026-04-24
 
 ### Changed
