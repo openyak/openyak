@@ -6,6 +6,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/), and this project
 
 ## [Unreleased]
 
+## [1.1.5] - 2026-04-24
+
+### Fixed
+
+- **frontend (auth):** Cached promise rejection in `getBackendToken()` was poisoning every authenticated API call after a single early-startup miss. The Rust side returns `"Backend session token not yet available"` if the IPC arrives before the backend has written the per-run token file; that rejected promise was being stored as the cache and handed back to every subsequent caller, producing a runaway "session token not yet available" / 401 storm and breaking the disconnect button (which itself routes through the same `api.delete` path). The token resolver now retries the transient-not-ready case with exponential backoff (300 ms → 5 s, up to 10 attempts) and clears the cache on terminal failure so a fresh caller can succeed. `getBackendUrl()` got the same cache-on-rejection guard for symmetry.
+
 ## [1.1.4] - 2026-04-24
 
 ### Fixed

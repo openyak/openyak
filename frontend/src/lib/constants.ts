@@ -33,16 +33,26 @@ const FALLBACK_BACKEND_URL =
 /**
  * Get the backend URL. In desktop mode, this is resolved asynchronously
  * from the desktop shell on first call, then cached.
+ *
+ * If the underlying IPC call rejects, the cached promise is cleared so
+ * the next caller retries — without this, every API request after the
+ * first failure stays rejected with the same stale error.
  */
 export function getBackendUrl(): Promise<string> {
   if (_backendUrl) return Promise.resolve(_backendUrl);
   if (_backendUrlPromise) return _backendUrlPromise;
 
   if (IS_DESKTOP) {
-    _backendUrlPromise = desktopAPI.getBackendUrl().then((url) => {
-      _backendUrl = url;
-      return url;
-    });
+    _backendUrlPromise = desktopAPI
+      .getBackendUrl()
+      .then((url) => {
+        _backendUrl = url;
+        return url;
+      })
+      .catch((err) => {
+        _backendUrlPromise = null;
+        throw err;
+      });
     return _backendUrlPromise;
   }
 
@@ -68,6 +78,18 @@ export function resetBackendUrl(newUrl?: string): void {
  * Tauri IPC on first call, then cached. Only meaningful on desktop — in
  * web/remote mode the caller should be using the remote tunnel token
  * from `remote-connection.ts` instead.
+ *
+ * Retry behaviour
+ * ---------------
+ * Early in app startup the Rust side hasn't read the token file yet and
+ * the IPC command rejects with "Backend session token not yet available".
+ * We retry that specific case with exponential backoff (300ms, 600ms,
+ * 1.2s, …, capped at 5s and 10 attempts) — every authenticated call
+ * goes through this path, and a single transient rejection used to
+ * poison the cached promise and brick the entire UI until reload.
+ *
+ * On *any* terminal rejection the cached promise is cleared so a fresh
+ * caller can try again instead of inheriting a stale error.
  */
 export function getBackendToken(): Promise<string> {
   if (_backendToken) return Promise.resolve(_backendToken);
@@ -77,10 +99,38 @@ export function getBackendToken(): Promise<string> {
       new Error("getBackendToken() is only available in desktop mode"),
     );
   }
-  _backendTokenPromise = desktopAPI.getBackendToken().then((token) => {
-    _backendToken = token;
-    return token;
-  });
+
+  const fetchWithRetry = async (): Promise<string> => {
+    const maxAttempts = 10;
+    let delay = 300;
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        return await desktopAPI.getBackendToken();
+      } catch (err) {
+        lastErr = err;
+        const msg = err instanceof Error ? err.message : String(err);
+        // Only retry the specific "not ready yet" error — anything else
+        // (genuine misconfiguration, IPC blocked, …) bubbles up immediately.
+        if (!/not yet available/i.test(msg)) throw err;
+        await new Promise((r) => setTimeout(r, delay));
+        delay = Math.min(delay * 2, 5000);
+      }
+    }
+    throw lastErr instanceof Error
+      ? lastErr
+      : new Error("Backend session token not yet available");
+  };
+
+  _backendTokenPromise = fetchWithRetry()
+    .then((token) => {
+      _backendToken = token;
+      return token;
+    })
+    .catch((err) => {
+      _backendTokenPromise = null;
+      throw err;
+    });
   return _backendTokenPromise;
 }
 
