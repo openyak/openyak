@@ -11,7 +11,6 @@
 
 import {
   getBackendTokenSync,
-  IS_DESKTOP,
   SSE_HEARTBEAT_TIMEOUT,
   SSE_RECONNECT_DELAY,
   SSE_RECONNECT_MAX_DELAY,
@@ -165,7 +164,7 @@ export class SSEClient {
     const params = new URLSearchParams();
     if (this.lastEventId > 0) params.set("last_event_id", String(this.lastEventId));
     const remoteToken = getRemoteToken();
-    const localToken = !remoteToken && IS_DESKTOP ? getBackendTokenSync() : null;
+    const localToken = !remoteToken ? getBackendTokenSync() : null;
     const queryToken = remoteToken ?? localToken;
     if (queryToken) params.set("token", queryToken);
     const qs = params.toString();

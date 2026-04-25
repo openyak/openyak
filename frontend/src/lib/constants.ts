@@ -29,6 +29,8 @@ let _backendTokenPromise: Promise<string> | null = null;
 /** Direct backend URL for SSE streams (avoids Next.js proxy buffering). */
 const FALLBACK_BACKEND_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const WEB_DEV_BACKEND_TOKEN =
+  process.env.NEXT_PUBLIC_OPENYAK_DEV_SESSION_TOKEN || "";
 
 /**
  * Get the backend URL. In desktop mode, this is resolved asynchronously
@@ -136,6 +138,7 @@ export function getBackendToken(): Promise<string> {
 
 /** Synchronous accessor for places that cannot await (e.g. SSE query string). */
 export function getBackendTokenSync(): string | null {
+  if (!IS_DESKTOP) return WEB_DEV_BACKEND_TOKEN || null;
   return _backendToken;
 }
 

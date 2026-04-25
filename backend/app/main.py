@@ -78,7 +78,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Session token — generate fresh on every startup, 0600 file so a
     # different local user on the same host cannot read it. Stored on
     # app.state so the AuthMiddleware can validate requests against it.
-    app.state.session_token = ensure_session_token(Path(settings.session_token_path))
+    dev_session_token = (
+        settings.dev_session_token if settings.allow_dev_session_token else ""
+    )
+    app.state.session_token = ensure_session_token(
+        Path(settings.session_token_path),
+        token=dev_session_token or None,
+    )
 
     # Runtime CSRF allowlist — mutated by remote-access handlers when a
     # cloudflared tunnel URL is acquired/released. Separate from the

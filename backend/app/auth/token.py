@@ -109,14 +109,17 @@ def rotate_token(path: Path) -> str:
     return token
 
 
-def ensure_session_token(path: Path) -> str:
+def ensure_session_token(path: Path, token: str | None = None) -> str:
     """Generate + persist a fresh session token on every call.
 
     Called from the app lifespan at startup. Each run gets a new token so
     a stale token cached somewhere (e.g. a terminated Tauri instance) is
     implicitly invalidated.
     """
-    token = generate_session_token()
+    if token is None:
+        token = generate_session_token()
+    elif not token.startswith(_SESSION_PREFIX):
+        raise ValueError("Session token override must use openyak_st_ prefix")
     _write_token_file(path, token)
     logger.info("Session token generated (0600): %s", path)
     return token

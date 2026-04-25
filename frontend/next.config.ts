@@ -2,6 +2,14 @@ import type { NextConfig } from "next";
 import path from "path";
 
 const isDesktopBuild = process.env.DESKTOP_BUILD === "true";
+const backendUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const devSessionToken = process.env.NEXT_PUBLIC_OPENYAK_DEV_SESSION_TOKEN;
+
+function backendApiDestination(): string {
+  const base = `${backendUrl}/api/:path*`;
+  if (!devSessionToken) return base;
+  return `${base}?token=${encodeURIComponent(devSessionToken)}`;
+}
 
 const nextConfig: NextConfig = {
   turbopack: {
@@ -20,11 +28,11 @@ const nextConfig: NextConfig = {
       return [
         {
           source: "/api/:path*",
-          destination: `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/:path*`,
+          destination: backendApiDestination(),
         },
         {
           source: "/health",
-          destination: `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/health`,
+          destination: `${backendUrl}/health`,
         },
       ];
     },
