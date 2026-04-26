@@ -111,6 +111,11 @@ class GenerationJob:
         reserve = 1 if self._completed else 0
         capacity = max(0, q.maxsize - reserve)
         if len(replay_events) > capacity:
+            # DESYNC itself occupies a queue slot. If the job is already
+            # completed, also reserve one slot for the terminal None sentinel;
+            # otherwise the sentinel insertion below can evict DESYNC and leave
+            # the frontend unaware that replay was trimmed.
+            capacity = max(0, capacity - 1)
             dropped = len(replay_events) - capacity
             logger.warning(
                 "Replay buffer overflow for stream %s: dropping %d old replay events",

@@ -120,6 +120,11 @@ export function useSSE(streamId: string | null) {
         persistedLastEventId = 0;
         currentStreamId = streamId;
       }
+      // Start the idle clock even before the first SSE event. If the SSE
+      // connection fails before delivering any event, lastEventTimestamp would
+      // otherwise stay 0 and recovery would wait for SSEClient's full retry
+      // exhaustion instead of checking persisted DB state promptly.
+      lastEventTimestamp = Date.now();
 
       const reasoningBuffer = new ProgressiveBuffer((text) => {
         store.getState().appendReasoningDelta(text);
@@ -761,18 +766,19 @@ export function useSSE(streamId: string | null) {
       }
 
       // Idle recovery: if isGenerating is true but no SSE event has arrived
-      // in 60 seconds, the stream is likely dead (both STEP_FINISH and DONE
-      // lost due to queue overflow or network issues). Force recovery by
-      // refetching from DB and clearing streaming state.
-      const IDLE_RECOVERY_MS = 60_000;
-      const IDLE_CHECK_INTERVAL_MS = 15_000;
+      // for a while, the stream is likely dead (both STEP_FINISH and DONE lost
+      // due to queue overflow or network issues). Try DB recovery quickly so a
+      // completed response does not leave the input disabled for a full minute.
+      // finishFromDatabase() still checks /chat/active before clearing state.
+      const IDLE_RECOVERY_MS = 15_000;
+      const IDLE_CHECK_INTERVAL_MS = 5_000;
       const idleCheckTimer = setInterval(async () => {
         if (!store.getState().isGenerating) {
           clearInterval(idleCheckTimer);
           return;
         }
         if (lastEventTimestamp > 0 && Date.now() - lastEventTimestamp > IDLE_RECOVERY_MS) {
-          console.warn("SSE idle recovery: no events for 60s, attempting DB recovery");
+          console.warn("SSE idle recovery: no events for 15s, attempting DB recovery");
           const sid = store.getState().sessionId;
           if (sid) {
             const finished = await finishFromDatabase(sid);
