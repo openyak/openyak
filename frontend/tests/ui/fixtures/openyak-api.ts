@@ -1,6 +1,46 @@
 import type { Page, Request, Route } from "@playwright/test";
 
-type Json = Record<string, unknown> | unknown[];
+interface MockPart {
+  id: string;
+  message_id: string;
+  session_id: string;
+  time_created: string;
+  data: Record<string, unknown>;
+}
+
+interface MockMessage {
+  id: string;
+  session_id: string;
+  time_created: string;
+  data: Record<string, unknown>;
+  parts: MockPart[];
+}
+
+interface MockMessagePage {
+  total: number;
+  offset: number;
+  messages: MockMessage[];
+}
+
+interface SessionRecord {
+  id: string;
+  project_id: null;
+  parent_id: null;
+  slug: null;
+  directory: string | null;
+  title: string;
+  version: number;
+  summary_additions: number;
+  summary_deletions: number;
+  summary_files: number;
+  summary_diffs: unknown[];
+  is_pinned: boolean;
+  permission: Record<string, unknown>;
+  time_created: string;
+  time_updated: string;
+  time_compacting: null;
+  time_archived: null;
+}
 
 export interface OpenYakMockState {
   promptBodies: unknown[];
@@ -73,7 +113,7 @@ interface BinaryFixture {
 
 const now = "2026-04-26T12:00:00.000Z";
 
-const sessionAlpha = {
+const sessionAlpha: SessionRecord = {
   id: "session-alpha",
   project_id: null,
   parent_id: null,
@@ -233,7 +273,7 @@ const models = [
   },
 ];
 
-const messagePage = (sessionId: string) => {
+const messagePage = (sessionId: string): MockMessagePage => {
   const isBeta = sessionId === "session-beta";
   return {
     total: 2,
@@ -300,7 +340,7 @@ const messagePage = (sessionId: string) => {
   };
 };
 
-const createdMessagePage = {
+const createdMessagePage: MockMessagePage = {
   total: 2,
   offset: 0,
   messages: [
@@ -575,7 +615,7 @@ function textMessage(
   role: "user" | "assistant",
   text: string,
   tokens?: Record<string, number>,
-) {
+): MockMessage {
   const messageId = `${sessionId}-${id}`;
   return {
     id: messageId,
@@ -894,7 +934,7 @@ export async function seedOpenYakStorage(page: Page, options: OpenYakSeedOptions
   }, { settings: seededSettings(options), auth: seededAuth(options), overwrite });
 }
 
-function fulfillJson(route: Route, body: Json | Record<string, unknown> | null = {}) {
+function fulfillJson(route: Route, body: unknown = {}) {
   return route.fulfill({
     status: 200,
     contentType: "application/json",
@@ -1335,7 +1375,7 @@ export async function mockOpenYakApi(page: Page, options: OpenYakMockOptions = {
     authRequests: [],
     remoteEnabled: false,
   };
-  const sessionRecords = new Map<string, typeof sessionAlpha>([
+  const sessionRecords = new Map<string, SessionRecord>([
     [sessionAlpha.id, cloneJson(sessionAlpha)],
     [sessionBeta.id, cloneJson(sessionBeta)],
     [sessionArtifacts.id, cloneJson(sessionArtifacts)],
