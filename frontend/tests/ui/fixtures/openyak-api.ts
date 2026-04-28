@@ -92,6 +92,9 @@ export interface OpenYakMockOptions {
   promptErrors?: PromptErrorMock[];
   binaryFailures?: string[];
   healthStatus?: number;
+  ollamaStatusCode?: number;
+  openaiLoginStatus?: number;
+  openaiSubscriptionConnected?: boolean;
   remoteProviderInfoStatus?: number | number[];
   connectorErrors?: ConnectorErrorMock[];
   activeJobs?: ActiveJobMock[];
@@ -1503,10 +1506,23 @@ export async function mockOpenYakApi(page: Page, options: OpenYakMockOptions = {
     if (path === "/api/config/openyak-account") {
       return method === "DELETE"
         ? fulfillJson(route, { success: true })
-        : fulfillJson(route, { is_connected: true, proxy_url: "https://proxy.test" });
+        : fulfillJson(route, { is_connected: true, proxy_url: "https://proxy.test", has_refresh_token: true });
+    }
+    if (path === "/api/config/openai-subscription/login") {
+      if (options.openaiLoginStatus && options.openaiLoginStatus !== 200) {
+        return route.fulfill({
+          status: options.openaiLoginStatus,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "Authentication launch unavailable" }),
+        });
+      }
+      return fulfillJson(route, { auth_url: "https://chatgpt.test/auth" });
     }
     if (path === "/api/config/openai-subscription") {
-      return fulfillJson(route, { is_connected: true, email: "chatgpt@openyak.test" });
+      return fulfillJson(route, {
+        is_connected: options.openaiSubscriptionConnected ?? true,
+        email: options.openaiSubscriptionConnected === false ? "" : "chatgpt@openyak.test",
+      });
     }
     if (path === "/api/config/local") {
       if (method !== "GET") {
@@ -1559,7 +1575,24 @@ export async function mockOpenYakApi(page: Page, options: OpenYakMockOptions = {
       state.providerSaves.push(method === "DELETE" ? { deleted: path } : requestJson(request));
       return fulfillJson(route, { success: true });
     }
-    if (path === "/api/ollama/status") return fulfillJson(route, { installed: false, running: false, version: null });
+    if (path === "/api/ollama/status") {
+      if (options.ollamaStatusCode && options.ollamaStatusCode !== 200) {
+        return route.fulfill({
+          status: options.ollamaStatusCode,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "Ollama status unavailable" }),
+        });
+      }
+      return fulfillJson(route, {
+        binary_installed: false,
+        running: false,
+        port: 11434,
+        base_url: null,
+        version: null,
+        models_dir: null,
+        disk_usage_bytes: 0,
+      });
+    }
     if (path === "/api/usage") {
       return fulfillJson(route, {
         total_cost: 0.12,

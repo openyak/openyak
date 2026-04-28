@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Eye, EyeOff, X, Check, Loader2, AlertCircle, LogOut, CreditCard, Mail, RotateCw, Cpu, Server, Plug } from "lucide-react";
 import { OpenYakLogo } from "@/components/ui/openyak-logo";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -344,14 +344,6 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
     },
   });
 
-  const openaiLoginMutation = useMutation({
-    mutationFn: async () => {
-      const resp = await api.post<{ auth_url: string }>(API.CONFIG.OPENAI_SUBSCRIPTION_LOGIN, {});
-      if (IS_DESKTOP) await desktopAPI.openExternal(resp.auth_url);
-      else window.open(resp.auth_url, "_blank", "noopener,noreferrer");
-    },
-  });
-
   const openaiDisconnectMutation = useMutation({
     mutationFn: () => api.delete(API.CONFIG.OPENAI_SUBSCRIPTION),
     onSuccess: () => {
@@ -368,27 +360,61 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
   const [openaiPolling, setOpenaiPolling] = useState(false);
   const [callbackUrlInput, setCallbackUrlInput] = useState("");
   const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const startOpenaiPolling = () => {
+  const stopOpenaiPolling = useCallback(() => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+    if (pollingTimeoutRef.current) {
+      clearTimeout(pollingTimeoutRef.current);
+      pollingTimeoutRef.current = null;
+    }
+    setOpenaiPolling(false);
+  }, []);
+
+  const startOpenaiPolling = useCallback(() => {
+    stopOpenaiPolling();
     setOpenaiPolling(true);
+    let consecutiveFailures = 0;
     const interval = setInterval(async () => {
-      const status = await api.get<OpenAISubscriptionStatus>(API.CONFIG.OPENAI_SUBSCRIPTION);
-      if (status.is_connected) {
-        clearInterval(interval);
-        pollingIntervalRef.current = null;
-        setOpenaiPolling(false);
-        refetchOpenaiSub();
-        setActiveProvider("chatgpt");
-        qc.invalidateQueries({ queryKey: queryKeys.models });
+      try {
+        const status = await api.get<OpenAISubscriptionStatus>(API.CONFIG.OPENAI_SUBSCRIPTION);
+        consecutiveFailures = 0;
+        if (status.is_connected) {
+          stopOpenaiPolling();
+          refetchOpenaiSub();
+          setActiveProvider("chatgpt");
+          qc.invalidateQueries({ queryKey: queryKeys.models });
+        }
+      } catch (err) {
+        consecutiveFailures += 1;
+        console.warn("OpenAI subscription auth polling failed", err);
+        if (consecutiveFailures >= 3) {
+          stopOpenaiPolling();
+        }
       }
     }, 2000);
     pollingIntervalRef.current = interval;
-    setTimeout(() => { clearInterval(interval); if (pollingIntervalRef.current === interval) pollingIntervalRef.current = null; setOpenaiPolling(false); }, 300_000);
-  };
+    pollingTimeoutRef.current = setTimeout(stopOpenaiPolling, 300_000);
+  }, [qc, refetchOpenaiSub, setActiveProvider, stopOpenaiPolling]);
+
+  useEffect(() => stopOpenaiPolling, [stopOpenaiPolling]);
+
+  const openaiLoginMutation = useMutation({
+    mutationFn: async () => {
+      const resp = await api.post<{ auth_url: string }>(API.CONFIG.OPENAI_SUBSCRIPTION_LOGIN, {});
+      if (IS_DESKTOP) await desktopAPI.openExternal(resp.auth_url);
+      else window.open(resp.auth_url, "_blank", "noopener,noreferrer");
+    },
+    onSuccess: startOpenaiPolling,
+    onError: stopOpenaiPolling,
+  });
 
   const manualCallbackMutation = useMutation({
     mutationFn: () => api.post<{ success: boolean; email: string }>(API.CONFIG.OPENAI_SUBSCRIPTION_MANUAL_CALLBACK, { callback_url: callbackUrlInput }),
-    onSuccess: () => { setCallbackUrlInput(""); setOpenaiPolling(false); setActiveProvider("chatgpt"); qc.invalidateQueries({ queryKey: queryKeys.models }); },
+    onSuccess: () => { setCallbackUrlInput(""); stopOpenaiPolling(); setActiveProvider("chatgpt"); qc.invalidateQueries({ queryKey: queryKeys.models }); },
   });
 
   interface OllamaRuntimeStatus { binary_installed: boolean; running: boolean; }
@@ -584,13 +610,13 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
                 </div>
               </div>
               <div className="flex gap-2">
-                {openaiSubStatus.needs_reauth && <Button variant="outline" size="sm" onClick={() => { openaiLoginMutation.mutate(); startOpenaiPolling(); }} disabled={openaiLoginMutation.isPending || openaiPolling}>{(openaiLoginMutation.isPending || openaiPolling) ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <RotateCw className="h-3.5 w-3.5 mr-1.5" />}{t('chatgptSignIn')}</Button>}
+                {openaiSubStatus.needs_reauth && <Button variant="outline" size="sm" onClick={() => openaiLoginMutation.mutate()} disabled={openaiLoginMutation.isPending || openaiPolling}>{(openaiLoginMutation.isPending || openaiPolling) ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <RotateCw className="h-3.5 w-3.5 mr-1.5" />}{t('chatgptSignIn')}</Button>}
                 <Button variant="ghost" size="sm" onClick={() => openaiDisconnectMutation.mutate()} disabled={openaiDisconnectMutation.isPending}>{openaiDisconnectMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <LogOut className="h-3.5 w-3.5 mr-1.5" />}{t('disconnect')}</Button>
               </div>
             </div>
           ) : (
             <div className="space-y-2">
-              <Button variant="outline" size="sm" onClick={() => { openaiLoginMutation.mutate(); startOpenaiPolling(); }} disabled={openaiLoginMutation.isPending || openaiPolling}>{(openaiLoginMutation.isPending || openaiPolling) ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}{openaiPolling ? t('chatgptWaiting') : t('chatgptSignIn')}</Button>
+              <Button variant="outline" size="sm" onClick={() => openaiLoginMutation.mutate()} disabled={openaiLoginMutation.isPending || openaiPolling}>{(openaiLoginMutation.isPending || openaiPolling) ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}{openaiPolling ? t('chatgptWaiting') : t('chatgptSignIn')}</Button>
               {openaiLoginMutation.isError && <div className="flex items-center gap-1.5 text-xs text-[var(--color-destructive)]"><AlertCircle className="h-3.5 w-3.5 shrink-0" /><span>{t('chatgptLoginFailed')}</span></div>}
               {openaiPolling && (
                 <div className="space-y-2 pt-2">

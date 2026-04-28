@@ -179,6 +179,8 @@ class OpenRouterProvider(OpenAICompatProvider):
         if self._provider_id == "openyak-proxy":
             models_by_id = {m.id: m for m in models}
             for virtual_id, (real_id, display_name) in PLATFORM_FREE_MODELS.items():
+                if virtual_id in models_by_id:
+                    continue
                 source = models_by_id.get(real_id)
                 if source:
                     models.append(

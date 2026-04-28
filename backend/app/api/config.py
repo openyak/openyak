@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -231,6 +232,7 @@ class OpenYakAccountStatus(BaseModel):
     is_connected: bool = False
     proxy_url: str = ""
     email: str = ""
+    has_refresh_token: bool = False
 
 
 class OpenYakAccountConnect(BaseModel):
@@ -243,6 +245,46 @@ class OpenYakAccountDisconnect(BaseModel):
     pass
 
 
+def _is_unauthorized_error(exc: Exception) -> bool:
+    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 401
+
+
+async def _refresh_openyak_proxy_token(
+    proxy_url: str,
+    refresh_token: str,
+) -> tuple[str, str] | None:
+    """Refresh an OpenYak proxy access token without mutating persisted settings."""
+    if not refresh_token:
+        return None
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{proxy_url}/api/auth/refresh",
+                json={"refresh_token": refresh_token},
+                timeout=15.0,
+            )
+    except Exception as exc:
+        logger.warning("OpenYak token refresh failed: %s", exc)
+        return None
+
+    if resp.status_code != 200:
+        logger.warning(
+            "OpenYak token refresh rejected: HTTP %d - %s",
+            resp.status_code,
+            resp.text[:200],
+        )
+        return None
+
+    data = resp.json()
+    access_token = data.get("access_token", "")
+    if not access_token:
+        logger.warning("OpenYak token refresh returned empty access_token")
+        return None
+
+    return access_token, data.get("refresh_token", "") or refresh_token
+
+
 @router.get("/config/openyak-account", response_model=OpenYakAccountStatus)
 async def get_openyak_account_status(settings: SettingsDep) -> OpenYakAccountStatus:
     """Check if an OpenYak account is connected (proxy mode active)."""
@@ -250,6 +292,7 @@ async def get_openyak_account_status(settings: SettingsDep) -> OpenYakAccountSta
         return OpenYakAccountStatus(
             is_connected=True,
             proxy_url=settings.proxy_url,
+            has_refresh_token=bool(settings.proxy_refresh_token),
         )
     return OpenYakAccountStatus(is_connected=False)
 
@@ -269,17 +312,36 @@ async def connect_openyak_account(
     if not proxy_url or not token:
         raise HTTPException(400, "proxy_url and token are required")
 
-    # Validate by trying to list models through the proxy
-    test_provider = OpenRouterProvider(token, base_url=proxy_url + "/v1", provider_id="openyak-proxy")
+    # Validate by trying to list models through the proxy. Existing desktop
+    # installs may hold an expired access token while still having a valid
+    # refresh token, so refresh once on 401 before asking the user to sign in.
+    refresh_token = body.refresh_token.strip()
+
+    async def _list_proxy_models(access_token: str):
+        test_provider = OpenRouterProvider(access_token, base_url=proxy_url + "/v1", provider_id="openyak-proxy")
+        return await test_provider.list_models()
+
     try:
-        models = await test_provider.list_models()
-        if not models:
-            raise HTTPException(400, "Proxy returned no models")
+        models = await _list_proxy_models(token)
     except HTTPException:
         raise
     except Exception as e:
-        logger.warning("OpenYak account connection failed: %s", e)
-        raise HTTPException(400, f"Failed to connect to proxy: {e}")
+        if _is_unauthorized_error(e) and refresh_token:
+            refreshed = await _refresh_openyak_proxy_token(proxy_url, refresh_token)
+            if not refreshed:
+                raise HTTPException(400, "OpenYak session expired. Please sign in again.") from e
+            token, refresh_token = refreshed
+            try:
+                models = await _list_proxy_models(token)
+            except Exception as retry_error:
+                logger.warning("OpenYak account connection failed after token refresh: %s", retry_error)
+                raise HTTPException(400, f"Failed to connect to proxy: {retry_error}") from retry_error
+        else:
+            logger.warning("OpenYak account connection failed: %s", e)
+            raise HTTPException(400, f"Failed to connect to proxy: {e}") from e
+
+    if not models:
+        raise HTTPException(400, "Proxy returned no models")
 
     # Switch the provider registry to use the proxy
     new_provider = OpenRouterProvider(token, base_url=proxy_url + "/v1", provider_id="openyak-proxy")
@@ -295,9 +357,9 @@ async def connect_openyak_account(
     settings.proxy_url = proxy_url
     settings.proxy_token = token
 
-    if body.refresh_token:
-        _update_env_file("OPENYAK_PROXY_REFRESH_TOKEN", body.refresh_token)
-        settings.proxy_refresh_token = body.refresh_token
+    if refresh_token:
+        _update_env_file("OPENYAK_PROXY_REFRESH_TOKEN", refresh_token)
+        settings.proxy_refresh_token = refresh_token
 
     return OpenYakAccountStatus(is_connected=True, proxy_url=proxy_url)
 

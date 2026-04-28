@@ -31,8 +31,13 @@ async function ensureDesktopOpenYakAccountSynced(): Promise<void> {
   if (!desktopModelSyncPromise) {
     desktopModelSyncPromise = (async () => {
       try {
-        const status = await api.get<{ is_connected: boolean; proxy_url: string }>(API.CONFIG.OPENYAK_ACCOUNT);
-        if (status.is_connected && status.proxy_url === auth.proxyUrl) return;
+        const status = await api.get<{
+          is_connected: boolean;
+          proxy_url: string;
+          has_refresh_token?: boolean;
+        }>(API.CONFIG.OPENYAK_ACCOUNT);
+        const refreshTokenSynced = !auth.refreshToken || status.has_refresh_token === true;
+        if (status.is_connected && status.proxy_url === auth.proxyUrl && refreshTokenSynced) return;
       } catch {
         // Fall through and force a re-sync.
       }
