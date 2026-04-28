@@ -11,160 +11,207 @@
 </p>
 
 <p align="center">
-  <img src="OpenYak-Logo/openyak-1.1.2.gif" width="800" alt="OpenYak Demo" />
+  <img src="docs/readme/openyak-workflow-artifacts.gif" width="900" alt="OpenYak turns uploaded office files into a structured answer and reusable artifact" />
 </p>
 
-**OpenYak is an open-source local AI agent that runs entirely on your desktop. It connects to 100+ models from 20+ providers, manages your files, and automates workflows — all without your data ever leaving your machine. No account required.**
+<h3 align="center">A local AI workspace for turning files, chats, and messy office context into deliverables.</h3>
+
+<p align="center">
+  Read local files, compare spreadsheets, review decks, synthesize PDFs, create artifacts, continue long threads, and keep the work on your machine.
+</p>
 
 ---
 
 ## Why OpenYak
 
-- **Organize 500 contracts without uploading a single file.** OpenYak runs on your desktop with direct access to your filesystem — your data never leaves your machine.
+OpenYak is built for real work, not just one-off chat prompts.
 
-- **Switch from GPT to Claude in one click.** 100+ cloud models, 20+ API providers, or run fully offline with [Ollama](https://ollama.com). No lock-in.
+- **Work from your actual files.** Upload DOCX, XLSX, PPTX, PDFs, CSVs, and local project context, then ask for briefs, tables, follow-ups, plans, and reusable artifacts.
+- **Keep the workflow in one thread.** Start with analysis, continue into a RACI, ask for a follow-up email, and preserve context across long conversations.
+- **Choose your model path.** Use free models, bring your own API key, connect a ChatGPT subscription, or run local models through [Ollama](https://ollama.com).
+- **Stay local by default.** Files, conversations, memory, and generated artifacts are stored on your device. Cloud model calls go directly to the model provider you choose.
+- **Use it from another device.** Remote access lets you scan a QR code and send tasks to your desktop through a secure tunnel.
 
-- **Let AI handle the tedious work.** 20+ built-in tools — read, write, rename files, run commands, parse spreadsheets, draft documents — all locally.
+## What It Feels Like
 
-- **Access from your phone — scan a QR code, done.** Enable remote access and scan a QR code with your phone to control your desktop AI from anywhere. Powered by Cloudflare Tunnel with automatic HTTPS — no port forwarding, no setup.
+| Ask OpenYak to... | It should give you... |
+|-------------------|------------------------|
+| Read a long memo | Executive brief, risks, owners, next actions, and a send-ready email |
+| Analyze a workbook | Budget vs. actual variance, drivers, anomalies, and finance talking points |
+| Review a deck | Slide-by-slide story, evidence gaps, speaker notes, and decision ask |
+| Synthesize several files | One board brief that reconciles memo, budget, deck, and PDF context |
+| Continue the same thread | RACI, 30-day plan, agenda, and follow-up drafts without restating context |
+| Recover from an error | Clear next step when upload, auth, or file parsing fails |
 
-- **No account required.** Just download and start using it. No signup, no login, no email verification. Free models work out of the box.
+## Office Workflows
 
-- **Free to start, no credit card.** 1M tokens per week on free models. Premium models at API prices with zero markup.
+### From Memo to Executive Brief
+
+OpenYak can turn a dense memo into a structured brief that is ready for a manager, team update, or follow-up email.
+
+<p align="center">
+  <img src="docs/readme/openyak-memo-to-brief.gif" width="900" alt="OpenYak memo to executive brief workflow" />
+</p>
+
+<p align="center">
+  <img src="docs/readme/openyak-docx-brief.png" width="900" alt="Close-up of a DOCX memo review result in OpenYak" />
+</p>
+
+### From Spreadsheet to Finance View
+
+Use spreadsheets as working inputs, not screenshots. Ask for budget variance, forecast risks, owner-level action items, and meeting-ready talking points.
+
+<p align="center">
+  <img src="docs/readme/openyak-budget-analysis.png" width="900" alt="Close-up of a spreadsheet budget analysis result in OpenYak" />
+</p>
+
+### From Multiple Files to an Artifact
+
+OpenYak can synthesize several files in the same thread and open a right-side artifact panel for reusable briefs, plans, diagrams, and structured outputs.
+
+<p align="center">
+  <img src="docs/readme/openyak-artifact-panel.png" width="900" alt="OpenYak artifact panel with a multi-file board brief" />
+</p>
+
+### Long Threads and Auto-Compress
+
+Real office work rarely fits in one message. OpenYak is designed for follow-ups, revisions, and long conversations where the important context needs to remain available.
+
+<p align="center">
+  <img src="docs/readme/openyak-auto-compress.gif" width="900" alt="OpenYak long-context auto-compress workflow" />
+</p>
+
+<p align="center">
+  <img src="docs/readme/openyak-long-context.png" width="900" alt="OpenYak long thread with preserved context" />
+</p>
+
+### Error Recovery
+
+Professional workflows include failure states. Upload errors and missing inputs should keep the composer usable and tell the user what to do next.
+
+<p align="center">
+  <img src="docs/readme/openyak-error-recovery.png" width="900" alt="OpenYak upload error recovery state" />
+</p>
 
 ## Download
 
 | Platform | Architecture | Formats |
-|----------|-------------|---------|
-| macOS | Apple Silicon / Intel | .dmg, .app |
-| Windows | x64 | .exe (NSIS installer) |
-| Linux | x64 | .deb, .rpm |
+|----------|--------------|---------|
+| macOS | Apple Silicon / Intel | `.dmg`, `.app` |
+| Windows | x64 | `.exe` installer |
+| Linux | x64 | `.deb`, `.rpm` |
 
-> **[Download Latest Release](https://github.com/openyak/openyak/releases/latest)** or visit [open-yak.com/download](https://open-yak.com/download/)
+> [Download the latest release](https://github.com/openyak/openyak/releases/latest) or visit [open-yak.com/download](https://open-yak.com/download/).
 >
-> **Linux users**: See [LINUX.md](LINUX.md) for installation instructions, system requirements, and troubleshooting.
+> Linux users can also read [LINUX.md](LINUX.md) for requirements and troubleshooting.
 
 ## Get Started
 
-1. **Download** the installer for your platform from the table above
-2. **Connect a model** — use free cloud models instantly, top up for premium models, bring your own API key from 20+ providers, or run fully local with [Ollama](https://ollama.com)
-3. **Start working** — manage files, analyze local data, and generate office-ready outputs
+1. **Install OpenYak** for your platform.
+2. **Connect a model** using free cloud models, your own API key, ChatGPT subscription, or local Ollama.
+3. **Start a new conversation** and attach a real file.
+4. **Ask for a deliverable**, not just a summary: brief, action plan, RACI, email, table, or artifact.
+5. **Review the result** in the chat and artifact panel, then continue in the same thread.
 
-## What You Can Do
+Example prompt:
 
-**File Management** — Rename, sort, and clean up files across folders. Set up recurring tasks — daily inbox tidy, weekly download cleanup — and let Yak handle it on schedule.
-
-**Document & Spreadsheet Creation** — Turn notes into formatted reports, spreadsheets with working formulas, and export-ready PDFs. AI generates the actual files — not just text you have to copy-paste and format yourself.
-
-**Data Analysis** — Parse spreadsheets, CSVs, and documents on your machine. Spot trends, flag anomalies, and export reports — your data never leaves your device.
-
-**Research & Synthesis** — Pull information from PDFs, local files, and the web. Summarize across sources, extract key points, and compile structured briefs — ready for review, not raw dumps.
-
-**Remote Access** — Scan a QR code from your desktop and open OpenYak on your phone instantly. Send tasks from your phone, let your desktop execute them, and check results later. Works over Cloudflare Tunnel — no account, no port forwarding, automatic HTTPS. Choose permission modes: auto-approve safe actions, require approval for each tool, or view-only.
-
-Connect to 46+ services — Slack, Notion, GitHub, Figma, and more — through built-in connectors. Or add your own via MCP.
+```text
+Please read the files I uploaded and turn them into a concise team brief.
+Start with three key takeaways, then list risks, owners, and next actions.
+Finally, write a follow-up email I can send to the team directly.
+```
 
 ## Supported Providers
 
-### Cloud (via API)
+### Cloud and Subscription
 
-| Provider | Access | |
-|----------|--------|-|
-| OpenAI | BYOK | ⭐ Recommended |
-| Anthropic | BYOK | ⭐ Recommended |
-| Google | BYOK | |
-| DeepSeek | BYOK | |
-| Grok | BYOK | |
-| Qwen | BYOK | ⭐ Recommended |
-| Kimi | BYOK | |
-| MiniMax | BYOK | ⭐ Recommended |
+| Provider | Access | Notes |
+|----------|--------|-------|
+| OpenRouter | Built-in | Free models and premium models |
+| OpenAI | BYOK | Bring your own API key |
+| Anthropic | BYOK | Bring your own API key |
+| Google | BYOK | Gemini models |
+| DeepSeek | BYOK | Direct provider key |
+| Groq | BYOK | Fast hosted inference |
+| Mistral | BYOK | Direct provider key |
+| xAI | BYOK | Grok models |
+| Qwen | BYOK | Direct provider key |
+| Kimi | BYOK | Moonshot models |
+| MiniMax | BYOK | Direct provider key |
+| Zhipu | BYOK | Direct provider key |
+| ChatGPT | Subscription | Use an existing ChatGPT Plus, Pro, Team, or Enterprise plan when available |
 
-### Local (via Ollama)
+### Local
 
-Run any model available on [Ollama](https://ollama.com) — fully offline, auto-detected, with tool-calling support.
+Run any model available through [Ollama](https://ollama.com). Local models are auto-detected and can be used without an internet connection.
 
-> **BYOK** = Bring Your Own Key. Use your own API key — no markup, no middleman.
+## Core Capabilities
+
+- **File understanding:** office docs, spreadsheets, slide decks, PDFs, CSVs, local folders, and generated artifacts.
+- **Artifact workspace:** reusable Markdown briefs, tables, diagrams, checklists, and structured outputs.
+- **Tool execution:** read, write, rename, organize, and automate files with user-controlled permissions.
+- **Long-context work:** continue from analysis to planning to follow-up without starting over.
+- **Remote access:** connect from mobile through QR code and Cloudflare Tunnel.
+- **Automations:** schedule recurring cleanup, reporting, and file workflows.
+- **Privacy controls:** local storage, BYOK options, and local model support.
 
 ## For Developers
 
-**Tech Stack**: Tauri v2 (Rust) + Next.js 15 + FastAPI + SQLite
+**Tech Stack:** Tauri v2, Rust, Next.js 15, FastAPI, SQLite
 
-**Monorepo Structure**:
+**Monorepo Structure:**
 
+```text
+desktop-tauri/    Rust desktop shell and system integration
+frontend/         Next.js chat UI, settings, artifacts, and SSE streaming
+backend/          FastAPI agent engine, tool execution, LLM streaming, storage
 ```
-desktop-tauri/    Rust — desktop shell, system integration
-frontend/         Next.js 15 — chat UI, state management, SSE streaming
-backend/          FastAPI — agent engine, tool execution, LLM streaming, storage
-```
 
-**Quick Start**:
+**Quick Start:**
 
 ```bash
-npm run dev:all    # Start backend (port 8000) + frontend (port 3000)
+npm run dev:all
 ```
 
-For full technical details, project structure, and development setup, see [frontend/README.md](frontend/README.md) and [backend/README.md](backend/README.md).
+This starts the backend on port `8000` and the frontend on port `3000`. For deeper setup notes, see [frontend/README.md](frontend/README.md) and [backend/README.md](backend/README.md).
 
 ## FAQ
 
 <details>
 <summary>Does my data leave my machine?</summary>
 
-No. All files, conversations, and memory are stored locally on your device. The only data sent externally is your prompt text when using a cloud model — and even that goes directly to the model provider's API. No telemetry, no analytics, no cloud storage.
+Files, conversations, memory, and generated artifacts are stored locally. If you use a cloud model, the prompt and relevant context are sent directly to the model provider you selected. You can also use local Ollama models for offline work.
 </details>
 
 <details>
-<summary>Is it free to use?</summary>
+<summary>Do I need an OpenYak account?</summary>
 
-Yes. OpenYak includes 1M tokens per week on free models through OpenRouter at no cost. For premium models, you pay OpenRouter's prices with zero markup. You can also bring your own API key from 20+ providers, or run fully offline with Ollama for free.
+No. OpenYak is designed to work without a required OpenYak account. You can use free models, bring provider keys, connect a subscription, or run local models depending on your setup.
+</details>
+
+<details>
+<summary>How is OpenYak different from ChatGPT or Claude.ai?</summary>
+
+OpenYak runs on your desktop and is designed around local files, artifacts, tools, and workflow continuity. Web chat products are great assistants; OpenYak is closer to a local workbench for files and repeatable office tasks.
 </details>
 
 <details>
 <summary>Can I use it offline?</summary>
 
-Yes. Install Ollama, download a model, and OpenYak works completely offline. No internet connection required. OpenYak auto-detects your local Ollama models and supports full tool-calling with them.
-</details>
-
-<details>
-<summary>What models are supported?</summary>
-
-100+ cloud models via OpenRouter, 20+ BYOK providers with direct API keys, and any model available through Ollama for local inference. New models are available as soon as they launch. See the Supported Providers section above.
-</details>
-
-<details>
-<summary>Do I need to create an account?</summary>
-
-No. OpenYak requires no signup, no login, and no email. Download the app and start using it immediately. Free cloud models work out of the box. For premium models, just add an API key or top up credits — still no account on OpenYak's side.
+Yes. Install Ollama, download a model, and OpenYak can run locally without cloud model calls.
 </details>
 
 <details>
 <summary>How does remote access work?</summary>
 
-Enable remote access in settings, and OpenYak generates a QR code. Scan it with your phone's camera — it opens a mobile web app connected to your desktop AI over Cloudflare Tunnel with automatic HTTPS. No port forwarding, no Cloudflare account needed. You can send tasks from your phone and your desktop executes them locally. Token-based authentication keeps the connection secure, and you can revoke access or rotate tokens at any time.
-</details>
-
-<details>
-<summary>How is this different from ChatGPT or Claude.ai?</summary>
-
-OpenYak runs on your desktop with direct access to your local files and system. It can read, write, and organize your files, execute commands, and automate workflows — all while keeping your data on your machine. Web-based assistants cannot access your local filesystem.
+Enable remote access in settings, scan the QR code, and open the mobile web client. OpenYak connects through Cloudflare Tunnel with token-based authentication, so you do not need port forwarding.
 </details>
 
 ## Community
 
-- **Questions & Discussions** — [GitHub Discussions](https://github.com/openyak/openyak/discussions)
-- **Bug Reports** — [GitHub Issues](https://github.com/openyak/openyak/issues)
-- **Contributing** — [CONTRIBUTING.md](CONTRIBUTING.md) — PRs and feedback welcome
-
-## Star History
-
-If OpenYak is useful to you, consider giving it a star — it helps others discover the project.
-
-<a href="https://star-history.com/#openyak/openyak&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=openyak/openyak&type=Date&theme=dark" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=openyak/openyak&type=Date" width="600" />
- </picture>
-</a>
+- **Questions and Discussions:** [GitHub Discussions](https://github.com/openyak/openyak/discussions)
+- **Bug Reports:** [GitHub Issues](https://github.com/openyak/openyak/issues)
+- **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## License
 

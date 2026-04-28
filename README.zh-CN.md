@@ -1,178 +1,217 @@
-[English](README.md)
+# OpenYak
 
 <p align="center">
-  <img src="OpenYak-Logo/mascot.png" width="200" alt="OpenYak 吉祥物" />
-</p>
-
-<h1 align="center">Yak is all you need.</h1>
-
-<p align="center"><strong>你的本地 AI Agent — 编辑文件、运行工作流、接入你想要的模型。</strong></p>
-
-<p align="center">
-  <a href="https://github.com/openyak/desktop/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/openyak/desktop/ci.yml?branch=main&style=flat-square&label=Tests %26 Type Check" alt="Tests & Type Check" /></a>
-  <a href="https://github.com/openyak/desktop/stargazers"><img src="https://img.shields.io/github/stars/openyak/desktop?style=flat-square" alt="GitHub Stars" /></a>
-  <a href="https://github.com/openyak/desktop/blob/main/LICENSE"><img src="https://img.shields.io/github/license/openyak/desktop?style=flat-square" alt="License" /></a>
-  <a href="https://github.com/openyak/desktop/releases/latest"><img src="https://img.shields.io/github/v/release/openyak/desktop?style=flat-square" alt="Latest Release" /></a>
-  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows-blue?style=flat-square" alt="Platform: macOS | Windows" />
-  <a href="https://github.com/openyak/desktop/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome" /></a>
+  <a href="README.md"><img src="https://img.shields.io/badge/lang-English-blue?style=flat-square" alt="English" /></a>
+  <a href="https://github.com/openyak/openyak/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/openyak/openyak/ci.yml?branch=main&style=flat-square&label=CI" alt="CI" /></a>
+  <a href="https://github.com/openyak/openyak/stargazers"><img src="https://img.shields.io/github/stars/openyak/openyak?style=flat-square" alt="GitHub Stars" /></a>
+  <a href="https://github.com/openyak/openyak/blob/main/LICENSE"><img src="https://img.shields.io/github/license/openyak/openyak?style=flat-square" alt="License" /></a>
+  <a href="https://github.com/openyak/openyak/releases/latest"><img src="https://img.shields.io/github/v/release/openyak/openyak?style=flat-square" alt="Latest Release" /></a>
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-blue?style=flat-square" alt="Platform: macOS | Windows | Linux" />
+  <a href="https://github.com/openyak/openyak/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome" /></a>
 </p>
 
 <p align="center">
-  <img src="OpenYak-Logo/openyak-1.1.2.gif" width="800" alt="OpenYak Demo" />
+  <img src="docs/readme/openyak-workflow-artifacts.gif" width="900" alt="OpenYak 把多份办公文件整理成结构化回答和可复用 artifact" />
+</p>
+
+<h3 align="center">把文件、对话和混乱办公上下文，变成真正可交付的本地 AI 工作台。</h3>
+
+<p align="center">
+  读取本地文件、对比表格、审阅 deck、综合 PDF、生成 artifact、延续长对话，并把工作留在你的设备上。
 </p>
 
 ---
 
 ## 为什么选择 OpenYak
 
-- **整理 500 份合同，无需上传任何文件。** OpenYak 运行在你的桌面上，直接访问本地文件系统 — 你的数据永远不会离开你的设备。
+OpenYak 不是只用来问一句话的聊天框，而是为真实办公动线设计的本地工作台。
 
-- **一键从 GPT-4o 切换到 DeepSeek。** 100+ 云端模型、20+ API 提供商，或通过 [Ollama](https://ollama.com) 完全离线运行。不锁定任何平台。
+- **直接处理真实文件。** 上传 DOCX、XLSX、PPTX、PDF、CSV 和本地项目上下文，生成 brief、表格、follow-up、计划和可复用 artifact。
+- **同一个线程走完整流程。** 先分析文件，再继续生成 RACI、follow-up 邮件、会议 agenda，不需要反复重讲背景。
+- **自由选择模型。** 使用免费模型、自带 API Key、接入 ChatGPT 订阅，或通过 [Ollama](https://ollama.com) 完全本地运行。
+- **默认本地优先。** 文件、对话、记忆和生成结果都存储在本机。使用云端模型时，只会直接请求你选择的模型提供商。
+- **可以从手机访问桌面 AI。** 开启远程访问后扫码连接，通过安全 tunnel 把任务发给桌面端执行。
 
-- **让 AI 处理繁琐的工作。** 20+ 内置工具 — 读写文件、重命名、执行命令、解析表格、起草文档 — 全部在本地完成。
+## 它解决什么问题
 
-- **手机扫码，即刻连接。** 开启远程访问，扫一下二维码，手机就能控制桌面 AI。基于 Cloudflare Tunnel 自动 HTTPS — 无需端口转发，无需配置。
+| 你让 OpenYak 做什么 | 它应该交付什么 |
+|---------------------|----------------|
+| 阅读一份长 memo | 高管简报、风险、owner、下一步行动和可直接发送的邮件 |
+| 分析一个 workbook | Budget / actual variance、驱动因素、异常和财务会议口径 |
+| 审阅一份 deck | 每页叙事、证据缺口、speaker notes 和最后的 decision ask |
+| 综合多份文件 | 把 memo、预算表、deck、PDF 对齐成一份 board brief |
+| 在同一线程继续追问 | RACI、30 天计划、agenda 和 follow-up 草稿 |
+| 遇到错误 | 上传、鉴权、文件解析失败时给出清楚的恢复路径 |
 
-- **无需注册账号。** 下载即用，没有注册、登录、邮箱验证。免费模型开箱即用。
+## 真实办公 Workflow
 
-- **免费起步，无需绑卡。** 每周 100 万免费 Token。高级模型按 API 原价计费，零加价。
+### 从 Memo 到高管简报
+
+OpenYak 可以把很长的 memo 整理成给管理层、团队同步或 follow-up 邮件使用的结构化 brief。
+
+<p align="center">
+  <img src="docs/readme/openyak-memo-to-brief.gif" width="900" alt="OpenYak 从 memo 生成高管简报的动线" />
+</p>
+
+<p align="center">
+  <img src="docs/readme/openyak-docx-brief.png" width="900" alt="OpenYak DOCX memo review 结果细节" />
+</p>
+
+### 从表格到财务口径
+
+表格不应该只被截图摘要。你可以要求 OpenYak 分析预算差异、forecast 风险、owner 级行动项，以及可以直接拿去开会的财务口径。
+
+<p align="center">
+  <img src="docs/readme/openyak-budget-analysis.png" width="900" alt="OpenYak 表格预算分析结果细节" />
+</p>
+
+### 从多文件到 Artifact
+
+OpenYak 可以在同一个线程里综合多份文件，并在右侧 artifact panel 打开可复用的 brief、计划、图表和结构化输出。
+
+<p align="center">
+  <img src="docs/readme/openyak-artifact-panel.png" width="900" alt="OpenYak 右侧 artifact panel 展示多文件 board brief" />
+</p>
+
+### 长对话与自动压缩
+
+真实办公任务很少一轮结束。OpenYak 支持连续追问、修订、长线程保留上下文，让任务从分析自然推进到执行。
+
+<p align="center">
+  <img src="docs/readme/openyak-auto-compress.gif" width="900" alt="OpenYak 长上下文自动压缩动线" />
+</p>
+
+<p align="center">
+  <img src="docs/readme/openyak-long-context.png" width="900" alt="OpenYak 长对话保留上下文界面" />
+</p>
+
+### 错误恢复
+
+专业产品不能只展示成功路径。上传失败、输入缺失、文件解析失败时，界面应该保留 composer 可用，并告诉用户下一步怎么恢复。
+
+<p align="center">
+  <img src="docs/readme/openyak-error-recovery.png" width="900" alt="OpenYak 上传错误恢复状态" />
+</p>
 
 ## 下载
 
-| 平台 | 架构 |
-|------|------|
-| macOS | Apple Silicon |
-| macOS | Intel |
-| Windows | x64 |
+| 平台 | 架构 | 格式 |
+|------|------|------|
+| macOS | Apple Silicon / Intel | `.dmg`, `.app` |
+| Windows | x64 | `.exe` 安装包 |
+| Linux | x64 | `.deb`, `.rpm` |
 
-> **[下载最新版本](https://github.com/openyak/desktop/releases/latest)** 或访问 [open-yak.com/download](https://open-yak.com/download/)
+> [下载最新版本](https://github.com/openyak/openyak/releases/latest) 或访问 [open-yak.com/download](https://open-yak.com/download/)。
+>
+> Linux 用户可以查看 [LINUX.md](LINUX.md) 了解依赖、安装和排障说明。
 
-## 开始使用
+## 快速开始
 
-1. **下载** 上方表格中对应平台的安装包
-2. **连接模型** — 即刻使用免费云端模型，充值使用高级模型，接入 20+ 提供商的 API 密钥，或通过 [Ollama](https://ollama.com) 完全本地运行
-3. **开始工作** — 管理文件、分析数据、生成办公文档
+1. **安装 OpenYak。** 下载适合你系统的安装包。
+2. **连接模型。** 使用免费云端模型、自带 API Key、接入 ChatGPT 订阅，或连接本地 Ollama。
+3. **新建会话并上传真实文件。**
+4. **直接说你要的交付物。** 比如 brief、行动计划、RACI、邮件、表格或 artifact。
+5. **检查结果并继续追问。** 在同一个线程里继续从分析推进到执行。
 
-## 应用场景
+示例 prompt：
 
-**文件管理** — 跨文件夹重命名、排序、清理文件。设置定时任务 — 每日收件箱整理、每周下载清理 — 交给 Yak 按计划执行。
-
-**文档与表格生成** — 将笔记转化为格式化报告、带公式的电子表格和可导出的 PDF。AI 直接生成可用的文件 — 而不是需要你复制粘贴再排版的纯文本。
-
-**数据分析** — 在本机解析电子表格、CSV 和文档。发现趋势、标记异常、导出报告 — 你的数据始终留在设备上。
-
-**研究与综合** — 从 PDF、本地文件和网页中提取信息。跨来源汇总、提炼要点、生成结构化简报 — 直接可用，不是未加工的素材堆砌。
-
-**远程访问** — 在桌面端扫描二维码，手机即刻打开 OpenYak。从手机发送任务，桌面端本地执行，随时查看结果。基于 Cloudflare Tunnel — 无需账号、无需端口转发、自动 HTTPS。支持多种权限模式：自动批准安全操作、逐一审批、或仅查看。
-
-通过内置连接器接入 46+ 服务 — Slack、Notion、GitHub、Figma 等。也可以通过 MCP 添加你自己的连接器。
+```text
+请阅读我上传的文件，整理成一份给团队同步用的简洁 brief：
+先列三条关键结论，再列风险、负责人和下一步行动。
+最后写一封可以直接发给团队的 follow-up 邮件。
+```
 
 ## 支持的模型提供商
 
-### 云端（通过 API）
+### 云端与订阅
 
-| 提供商 | 接入方式 | |
-|--------|---------|--|
-| OpenRouter | 内置 | 100+ 模型，含免费额度 |
-| OpenAI | BYOK | ⭐ 推荐 |
-| Anthropic | BYOK | ⭐ 推荐 |
-| Google | BYOK | |
-| DeepSeek | BYOK | |
-| Groq | BYOK | |
-| Mistral | BYOK | |
-| xAI | BYOK | |
-| 通义千问 (Qwen) | BYOK | ⭐ 推荐 |
-| Kimi (月之暗面) | BYOK | |
-| MiniMax | BYOK | ⭐ 推荐 |
-| 智谱 (ZhiPu) | BYOK | |
-| ChatGPT | 订阅直连 | 使用你现有的 ChatGPT Plus/Team 方案 |
+| 提供商 | 接入方式 | 说明 |
+|--------|----------|------|
+| OpenRouter | 内置 | 免费模型和高级模型 |
+| OpenAI | BYOK | 使用自己的 API Key |
+| Anthropic | BYOK | 使用自己的 API Key |
+| Google | BYOK | Gemini 模型 |
+| DeepSeek | BYOK | 直连提供商密钥 |
+| Groq | BYOK | 高速托管推理 |
+| Mistral | BYOK | 直连提供商密钥 |
+| xAI | BYOK | Grok 模型 |
+| Qwen | BYOK | 直连提供商密钥 |
+| Kimi | BYOK | Moonshot 模型 |
+| MiniMax | BYOK | 直连提供商密钥 |
+| 智谱 | BYOK | 直连提供商密钥 |
+| ChatGPT | 订阅 | 在可用时使用现有 ChatGPT Plus、Pro、Team 或 Enterprise 方案 |
 
-### 本地（通过 Ollama）
+### 本地模型
 
-运行 [Ollama](https://ollama.com) 上的任何模型 — 完全离线、自动检测、支持工具调用。
+通过 [Ollama](https://ollama.com) 运行任意本地模型。OpenYak 会自动检测本地模型，也可以在无网络环境下工作。
 
-> **BYOK** = Bring Your Own Key（自带密钥）。使用你自己的 API 密钥，零加价、无中间商。
+## 核心能力
+
+- **文件理解：** office 文档、表格、演示文稿、PDF、CSV、本地文件夹和生成的 artifact。
+- **Artifact 工作区：** 可复用 Markdown brief、表格、流程图、清单和结构化输出。
+- **工具执行：** 读取、写入、重命名、整理和自动化文件，并由用户控制权限。
+- **长上下文任务：** 从分析到计划再到 follow-up，不需要重新开始。
+- **远程访问：** 通过二维码和 Cloudflare Tunnel 从手机连接桌面端。
+- **自动化任务：** 定时清理、报告、文件整理和重复工作流。
+- **隐私控制：** 本地存储、BYOK、自带订阅和本地模型支持。
 
 ## 开发者
 
-**技术栈**：Tauri v2 (Rust) + Next.js 15 + FastAPI + SQLite
+**技术栈：** Tauri v2、Rust、Next.js 15、FastAPI、SQLite
 
-**Monorepo 结构**：
+**Monorepo 结构：**
 
+```text
+desktop-tauri/    Rust 桌面外壳和系统集成
+frontend/         Next.js 聊天 UI、设置、artifact、SSE 流式传输
+backend/          FastAPI agent 引擎、工具执行、LLM 流式传输、存储
 ```
-desktop-tauri/    Rust — 桌面外壳，系统集成
-frontend/         Next.js 15 — 聊天 UI、状态管理、SSE 流式传输
-backend/          FastAPI — Agent 引擎、工具执行、LLM 流式传输、存储
-```
 
-**快速开始**：
+**快速启动：**
 
 ```bash
-npm run dev:all    # 启动后端 (端口 8000) + 前端 (端口 3000)
+npm run dev:all
 ```
 
-完整技术细节、项目结构和开发环境配置，请参阅 [frontend/README.zh-CN.md](frontend/README.zh-CN.md) 和 [backend/README.zh-CN.md](backend/README.zh-CN.md)。
+这会启动后端 `8000` 端口和前端 `3000` 端口。更完整的开发说明请看 [frontend/README.md](frontend/README.md) 和 [backend/README.md](backend/README.md)。
 
 ## FAQ
 
 <details>
 <summary>我的数据会离开本机吗？</summary>
 
-不会。所有文件、对话和记忆都存储在你的设备本地。唯一发送到外部的数据是使用云端模型时的提示词文本 — 而且直接发送到模型提供商的 API。无遥测、无分析统计、无云端存储。
+文件、对话、记忆和生成的 artifact 都存储在本机。使用云端模型时，prompt 和相关上下文会直接发送给你选择的模型提供商。你也可以使用 Ollama 本地模型进行离线工作。
 </details>
 
 <details>
-<summary>免费吗？</summary>
+<summary>需要 OpenYak 账号吗？</summary>
 
-是的。OpenYak 通过 OpenRouter 提供每周 100 万免费 Token，零费用。高级模型按 OpenRouter 原价计费，零加价。你也可以使用 20+ 提供商的自有 API 密钥，或通过 Ollama 完全免费离线运行。
-</details>
-
-<details>
-<summary>可以离线使用吗？</summary>
-
-可以。安装 Ollama，下载一个模型，OpenYak 即可完全离线工作，无需联网。OpenYak 自动检测本地 Ollama 模型，并支持完整的工具调用。
-</details>
-
-<details>
-<summary>支持哪些模型？</summary>
-
-通过 OpenRouter 接入 100+ 云端模型，20+ BYOK 提供商支持直接 API 密钥接入，以及通过 Ollama 可运行的任何本地模型。新模型上线即可使用。完整列表请参阅上方「支持的模型提供商」。
-</details>
-
-<details>
-<summary>需要注册账号吗？</summary>
-
-不需要。OpenYak 无需注册、登录或邮箱验证。下载后即可直接使用。免费云端模型开箱即用。使用高级模型只需添加 API 密钥或充值额度 — OpenYak 本身不需要任何账号。
-</details>
-
-<details>
-<summary>远程访问是怎么工作的？</summary>
-
-在设置中开启远程访问，OpenYak 会生成一个二维码。用手机摄像头扫描后，会打开一个通过 Cloudflare Tunnel 连接到你桌面 AI 的移动网页应用，自动 HTTPS 加密。无需端口转发，无需 Cloudflare 账号。你可以从手机发送任务，桌面端在本地执行。基于 Token 的认证保障连接安全，随时可以撤销访问或轮换 Token。
+不需要。OpenYak 不强制要求注册账号。你可以使用免费模型、自带 provider key、连接订阅，或使用本地模型。
 </details>
 
 <details>
 <summary>和 ChatGPT 或 Claude.ai 有什么区别？</summary>
 
-OpenYak 运行在你的桌面上，可以直接访问你的本地文件和系统。它可以读取、编写和整理你的文件，执行命令，自动化工作流 — 同时你的数据始终留在本机。网页版助手无法访问你的本地文件系统。
+OpenYak 运行在你的桌面上，围绕本地文件、artifact、工具和连续工作流设计。网页版聊天助手很适合问答，OpenYak 更像一个可以处理文件和重复办公任务的本地工作台。
+</details>
+
+<details>
+<summary>可以离线使用吗？</summary>
+
+可以。安装 Ollama 并下载模型后，OpenYak 可以在不调用云端模型的情况下本地运行。
+</details>
+
+<details>
+<summary>远程访问怎么工作？</summary>
+
+在设置里开启远程访问，扫描二维码即可打开移动端网页。OpenYak 通过 Cloudflare Tunnel 和 token-based authentication 连接，不需要端口转发。
 </details>
 
 ## 社区
 
-- **提问与讨论** — [GitHub Discussions](https://github.com/openyak/desktop/discussions)
-- **Bug 反馈** — [GitHub Issues](https://github.com/openyak/desktop/issues)
-- **参与贡献** — [CONTRIBUTING.md](CONTRIBUTING.md) — 欢迎 PR 和反馈
-
-## Star History
-
-如果 OpenYak 对你有帮助，欢迎点个 Star — 帮助更多人发现这个项目。
-
-<a href="https://star-history.com/#openyak/desktop&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=openyak/desktop&type=Date&theme=dark" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=openyak/desktop&type=Date" width="600" />
- </picture>
-</a>
+- **提问与讨论：** [GitHub Discussions](https://github.com/openyak/openyak/discussions)
+- **Bug 反馈：** [GitHub Issues](https://github.com/openyak/openyak/issues)
+- **参与贡献：** [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## 许可证
 
