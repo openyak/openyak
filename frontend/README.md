@@ -323,24 +323,9 @@ EventSource → /api/chat/stream/{stream_id}
   └────────────────────────────────────────────────┘
 ```
 
-## Responsive Design
+## Design System
 
-| Breakpoint | Behavior |
-|------------|----------|
-| `≥1024px` (lg) | Sidebar pinned, main area `ml-[260px]` |
-| `768-1023px` (md) | Sidebar collapsible |
-| `<768px` (sm) | Sidebar hidden, Sheet drawer mode |
-
-## Theme System
-
-CSS variable-based monochrome + Indigo color system, supporting dark/light/system modes:
-
-- **Surface**: primary / secondary / tertiary / chat — four-level backgrounds
-- **Text**: primary / secondary / tertiary — three-level text
-- **Border**: default / heavy — two-level borders
-- **Brand**: primary brand color
-- **Semantic**: success / warning / destructive
-- **Tool**: pending / running / completed / error status colors
+Tokens, theme rules, motion, AI-native UI patterns, responsive breakpoints, and a11y rules: see [`DESIGN.md`](../DESIGN.md) at the repo root.
 
 ## Key Components
 
