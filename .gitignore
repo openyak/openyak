@@ -8,7 +8,9 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
+venv/
 venv*/
+backend/venv
 .python-*/
 .pytest_cache/
 
