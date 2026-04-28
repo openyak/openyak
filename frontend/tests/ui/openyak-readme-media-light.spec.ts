@@ -71,7 +71,6 @@ test.describe("OpenYak clean light README media", () => {
     const recorder = await recorderFor("memo-to-brief");
     await page.goto("/c/new");
     await expectHome(page);
-    await recorder.capture(page);
 
     await uploadFiles(page, [files.feedbackDoc]);
     await fillPrompt(
@@ -83,7 +82,7 @@ test.describe("OpenYak clean light README media", () => {
     await submitCurrentPrompt(page);
     await expect(page.locator("#main-content").getByText("VP-ready memo").last()).toBeVisible({ timeout: 25_000 });
     await recorder.capture(page);
-    await saveStill(page, "openyak-docx-brief.png", { x: 430, y: 95, width: 1120, height: 850 });
+    await saveStill(page, "openyak-docx-brief.png", { x: 450, y: 120, width: 1120, height: 760 });
   });
 
   test("record budget-analysis still", async ({ page }) => {
@@ -96,8 +95,8 @@ test.describe("OpenYak clean light README media", () => {
       "I attached the budget workbook. Please review it like Finance would: compare budget, actuals, and forecast, call out the biggest variance, and tell me what to ask the owners.",
     );
     await submitCurrentPrompt(page);
-    await expect(page.locator("#main-content").getByText("Finance review").last()).toBeVisible({ timeout: 25_000 });
-    await saveStill(page, "openyak-budget-analysis.png", { x: 430, y: 95, width: 1120, height: 850 });
+    await expect(page.locator("#main-content").getByText("Finance workbook review").last()).toBeVisible({ timeout: 25_000 });
+    await saveStill(page, "openyak-budget-analysis.png", { x: 450, y: 120, width: 1120, height: 760 });
   });
 
   test("record multi-file artifact workflow", async ({ page }) => {
@@ -105,7 +104,6 @@ test.describe("OpenYak clean light README media", () => {
     const recorder = await recorderFor("workflow-artifacts");
     await page.goto("/c/new");
     await expectHome(page);
-    await recorder.capture(page);
 
     await uploadFiles(page, [files.launchMemo, files.launchBudget, files.launchDeck, files.vendorTerms]);
     await fillPrompt(
@@ -122,24 +120,23 @@ test.describe("OpenYak clean light README media", () => {
 
     await openArtifactPanel(page);
     await recorder.capture(page);
-    await saveStill(page, "openyak-artifact-panel.png");
+    await saveStill(page, "openyak-artifact-panel.png", { x: 300, y: 70, width: 1540, height: 930 });
   });
 
   test("record long-context and auto-compress workflow", async ({ page }) => {
     await setupCleanLightApp(page);
     await page.goto("/c/session-long");
     await expect(page.getByText("Long conversation load test").first()).toBeVisible();
-    await expect(page.getByText("Long assistant turn 060")).toBeVisible();
-    await saveStill(page, "openyak-long-context.png");
+    await expect(page.getByText("Final version: launch is approved with conditions.")).toBeVisible();
+    await saveStill(page, "openyak-long-context.png", { x: 280, y: 70, width: 1580, height: 930 });
 
     const recorder = await recorderFor("auto-compress");
     await page.goto("/c/new");
     await expectHome(page);
-    await recorder.capture(page);
     await fillPrompt(page, "Please auto compress this long launch review thread, then summarize the owners, deadlines, risks, and next decision without losing the context.");
     await recorder.capture(page);
     await submitCurrentPrompt(page);
-    await expect(page.getByText("Auto compacted answer persisted after compression.")).toBeVisible({ timeout: 25_000 });
+    await expect(page.locator("#main-content").getByText("Auto compacted answer persisted after compression.").last()).toBeVisible({ timeout: 25_000 });
     await expect(page.getByText("Context compressed to save tokens")).toBeVisible();
     await recorder.capture(page);
   });
@@ -155,7 +152,7 @@ test.describe("OpenYak clean light README media", () => {
     });
     await expect(page.getByText("Failed to upload file")).toBeVisible();
     await expect(page.getByPlaceholder(/Describe the result you want/i)).toBeVisible();
-    await saveStill(page, "openyak-error-recovery.png");
+    await saveStill(page, "openyak-error-recovery.png", { x: 660, y: 0, width: 1200, height: 620 });
   });
 });
 
@@ -197,6 +194,15 @@ async function setupCleanLightApp(page: Page, options?: Parameters<typeof mockOp
           display: none !important;
           opacity: 0 !important;
           pointer-events: none !important;
+        }
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0s !important;
+          animation-delay: 0s !important;
+          transition-duration: 0s !important;
+          transition-delay: 0s !important;
+          scroll-behavior: auto !important;
         }
       `;
       document.documentElement.appendChild(style);

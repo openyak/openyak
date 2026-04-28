@@ -439,15 +439,15 @@ type NaturalOfficeKind = "memo" | "budget" | "deck" | "vendor" | "board" | "foll
 
 const naturalOfficeResponses: Record<NaturalOfficeKind, string> = {
   memo:
-    "VP-ready memo\n\nTop three themes: onboarding friction, pricing confusion, and support handoff delays.\n\nRevenue risk: delayed expansion in strategic accounts if owners do not close the billing clarity gap this quarter.\n\nOwners: Growth Ops owns onboarding, Finance owns pricing language, Support Ops owns handoff SLA.\n\nEmail draft: I recommend we align the three owners today, publish the new pricing FAQ by Friday, and review the SLA dashboard in next week's staff meeting.",
+    "VP-ready customer feedback memo\n\nExecutive readout: the feedback points to a fixable revenue risk, not a product-market problem. Customers still value the workflow, but onboarding, pricing language, and support ownership are creating avoidable friction before expansion conversations.\n\nTop three themes\n\n| Theme | Signal from notes | Business impact | Owner |\n| --- | --- | --- | --- |\n| Onboarding friction | New teams need repeated setup help | Delays first successful project | Growth Ops |\n| Pricing confusion | Buyers ask when usage becomes billable | Slows procurement and expansion | Finance |\n| Support handoff gaps | Tickets bounce between CS and Support | Creates executive escalation risk | Support Ops |\n\nRecommended actions\n\n1. Publish a one-page pricing FAQ by Friday.\n2. Assign one owner for onboarding follow-up on every strategic account.\n3. Review the SLA dashboard in next week's staff meeting.\n\nEmail draft\n\nTeam, I reviewed the customer notes and the pattern is clear: we should tighten onboarding, clarify pricing language, and close support handoffs before the next expansion cycle. I recommend Growth Ops, Finance, and Support Ops each bring a concrete fix and owner to tomorrow's planning review.",
   budget:
-    "Finance review\n\nBudget vs actuals: Customer success is over plan, paid acquisition is under plan, and infrastructure is tracking above forecast.\n\nBiggest variance: support contractor spend is 18% above budget because ticket volume rose faster than the staffing plan.\n\nForecast: keep the current quarter forecast flat only if Support Ops confirms the automation savings by month end.\n\nOwner questions: ask Customer Success for retention impact, Support Ops for the contractor exit date, and Finance for the revised run-rate model.",
+    "Finance workbook review\n\nExecutive view: the quarter is still manageable, but the support contractor line is now the controlling variance. Paid acquisition is under plan, which offsets part of the overage, but the forecast should not be held flat unless Support Ops confirms automation savings by month end.\n\n| Line item | Budget | Actual / forecast signal | Variance call | Owner question |\n| --- | --- | --- | --- | --- |\n| Customer Success | On plan | Slightly over on enterprise support | Watch | What retention risk is this protecting? |\n| Paid acquisition | Under plan | Spend delayed by campaign pause | Favorable | Will Q3 pipeline be affected? |\n| Infrastructure | Above forecast | Batch workloads increased | Medium risk | Which jobs can be moved off peak? |\n| Support contractors | 18% over | Ticket volume rose faster than staffing | Critical | What is the exit date and automation plan? |\n\nFinance recommendation\n\nHold the current quarter forecast only if Support Ops commits to a contractor ramp-down date, Product confirms the automation release scope, and Finance updates the run-rate model before the operating review.",
   deck:
     "QBR deck feedback\n\nSlide-by-slide: tighten the opening summary, move retention proof before pipeline claims, and split the crowded risk slide into risks and asks.\n\nEvidence gaps: add customer quotes, renewal cohort detail, and the source for the forecast assumption.\n\nSpeaker notes: call out what changed since last QBR and state the decision on the final slide.\n\nDecision ask: approve a 30-day retention sprint with Product, CS, and Finance owners.",
   vendor:
     "Vendor renewal risk brief\n\nObligations: confirm the renewal notice window, security addendum, data-retention clause, and support SLA.\n\nDeadlines: notice date is the critical path, followed by procurement review and legal redline cutoff.\n\nRisks: auto-renewal, uncapped usage overage, missing DPA language, and weak termination assistance.\n\nOwner / 负责人: Legal owns terms, Procurement owns pricing, Security owns DPA review, and Finance owns budget approval.\n\nFirst three actions: freeze renewal terms, request a price hold, and schedule Legal/Security review before procurement approval.",
   board:
-    "Board-ready launch brief\n\nExecutive Summary: launch readiness is green on product scope, yellow on budget variance, and yellow on vendor renewal risk.\n\nOpen risks with owners: Finance owns support contractor variance, Product owns onboarding completion, Legal owns renewal obligations, and CS owns enterprise communication.\n\nArtifacts prepared: a Markdown launch brief and a Mermaid decision workflow are attached for the meeting packet.",
+    "Board-ready launch brief\n\nExecutive summary: launch readiness is green on product scope, yellow on budget variance, and yellow on vendor renewal risk. The launch can proceed if Finance locks the contractor run-rate, Product closes onboarding gaps, and Legal confirms the renewal notice window before the board packet is finalized.\n\nDecision required\n\nApprove launch with three operating conditions:\n\n1. Finance confirms the contractor exit date and revised support run-rate.\n2. Product closes the onboarding checklist for enterprise accounts.\n3. Legal and Security complete vendor renewal review before procurement approval.\n\n| Risk | Owner | Severity | Next step |\n| --- | --- | --- | --- |\n| Support contractor variance | Finance | Yellow | Confirm exit date and savings model |\n| Enterprise onboarding readiness | Product | Yellow | Close remaining checklist items |\n| Vendor renewal notice window | Legal | Yellow | Lock renewal date and redline cutoff |\n| Customer communication | CS | Green | Send launch guidance to account owners |\n\nArtifacts prepared: a Markdown launch brief and a Mermaid decision workflow are attached for the meeting packet.",
   followup:
     "Launch team follow-up\n\nRACI: Product is responsible for onboarding scope, CS is accountable for customer communication, Finance is consulted on budget variance, and Legal/Security are consulted on vendor terms.\n\n30-day agenda: Week 1 owner alignment, Week 2 evidence cleanup, Week 3 renewal decision, Week 4 board follow-up and metric review.",
 };
@@ -569,7 +569,8 @@ function createdMessagePageForState(state: OpenYakMockState) {
   const assistant = page.messages[1];
   assistant.parts[0].data = {
     type: "text",
-    text: "Auto compacted answer persisted after compression.",
+    text:
+      "Auto compacted answer persisted after compression.\n\nContext checkpoint\n\nOpenYak preserved the launch-review thread, compressed older turns, and kept the active decision context available for the next reply.\n\n| Area | Preserved detail | Next action |\n| --- | --- | --- |\n| Owners | Product, CS, Finance, Legal, Security | Confirm one accountable owner per risk |\n| Deadlines | Board packet, renewal window, automation savings date | Keep the critical dates in the active summary |\n| Risks | Budget variance, onboarding readiness, vendor renewal | Use the compressed summary for follow-up planning |\n\nNext decision: approve the launch only after Finance confirms the contractor exit date and Legal locks the vendor renewal window.",
   };
   assistant.parts.splice(1, 0, {
     id: "session-new-auto-compaction",
@@ -662,15 +663,58 @@ function textMessage(
   };
 }
 
+const longConversationPrompts = [
+  "Can you turn the launch notes into a short operating brief for tomorrow's review?",
+  "Add a section that separates product readiness from commercial risk.",
+  "Please pull the budget variance into the same brief and make the owner explicit.",
+  "Can you rewrite the risk table so it is usable in a board packet?",
+  "The vendor renewal feels underplayed. What should Legal confirm before we commit?",
+  "Draft the customer communication plan as three bullets for CS leadership.",
+  "Now convert this into a 30-day rollout plan with owners and dates.",
+  "Can you make the recommendation more decisive, but still call out the unresolved items?",
+];
+
+const longConversationReplies = [
+  "I would frame the launch as conditionally ready: product scope is green, but the support run-rate and vendor renewal need explicit owners before the board review.",
+  "I separated the work into product readiness, finance exposure, legal dependency, and customer communication so each owner can act without rereading the full thread.",
+  "The controlling budget issue is support contractor spend. Finance should confirm the exit date, while Support Ops confirms whether automation savings will land this month.",
+  "For the board packet, keep the table compact: risk, owner, severity, and next decision. Avoid narrative in the table and put the recommendation above it.",
+  "Legal should confirm the renewal notice window, termination assistance, DPA language, and any usage overage exposure before Procurement approves the renewal path.",
+  "For CS, the clean message is: launch scope is stable, onboarding guidance is updated, and account owners should escalate any enterprise blockers by Friday.",
+  "The 30-day plan should start with owner alignment, then evidence cleanup, then renewal decision, then board follow-up and metric review.",
+  "Recommendation: approve the launch with three conditions: Finance locks the run-rate, Product closes onboarding gaps, and Legal confirms renewal timing.",
+];
+
 const longConversationMessages = Array.from({ length: 60 }, (_, index) => {
   const turn = String(index + 1).padStart(3, "0");
+  const prompt = longConversationPrompts[index % longConversationPrompts.length];
+  const reply = longConversationReplies[index % longConversationReplies.length];
   return [
-    textMessage("session-long", `user-${turn}`, "user", `Long user turn ${turn}: Please keep auditing the workflow state.`),
+    textMessage(
+      "session-long",
+      `user-${turn}`,
+      "user",
+      index >= 56
+        ? [
+            "Before I send this to the board, can you sanity-check whether the vendor renewal risk should stay yellow or move to red?",
+            "Can you use the same context to draft the final decision paragraph for the pre-read?",
+            "Please make the last paragraph sound like an operator wrote it, not like a generic summary.",
+            "Now give me the final version with the launch decision, owners, deadlines, and open risks in one place.",
+          ][index - 56]
+        : prompt,
+    ),
     textMessage(
       "session-long",
       `assistant-${turn}`,
       "assistant",
-      `Long assistant turn ${turn}: The workflow remains isolated and readable.`,
+      index >= 56
+        ? [
+            "Keep vendor renewal at yellow unless Legal misses the notice-window confirmation. It becomes red only if the renewal date is inside the freeze period or if the DPA language cannot be confirmed before procurement approval.",
+            "Recommended decision: approve the launch for the board packet, conditional on Finance confirming the contractor exit date, Product closing the onboarding checklist, and Legal locking the renewal notice window before final approval.",
+            "Here is a more operator-style close: We can move forward, but only with named owners on the three unresolved items. Finance owns run-rate, Product owns onboarding completion, and Legal owns renewal timing.",
+            "Final version: launch is approved with conditions. Product closes enterprise onboarding gaps by Wednesday, Finance confirms the support contractor run-rate by Friday, Legal locks the vendor renewal window before procurement approval, and CS sends account-owner guidance after those three checks are complete.",
+          ][index - 56]
+        : reply,
       { input: 48000 + index * 700, output: 180, reasoning: 12, cache_read: 0, cache_write: 0 },
     ),
   ];
