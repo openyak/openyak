@@ -166,10 +166,10 @@ The `--code-block-*` tokens stay close in light/dark but shift slightly so the d
 | Layer | Source | Modify? |
 |---|---|---|
 | Primitives | [`frontend/src/components/ui/`](frontend/src/components/ui) (shadcn/ui over Radix) | Carefully — these are shared across every feature |
-| Feature components | [`frontend/src/components/{feature}/`](frontend/src/components) | Freely, within the feature |
+| Feature components | `frontend/src/components/<feature>/` (e.g. [`messages`](frontend/src/components/messages), [`chat`](frontend/src/components/chat), [`settings`](frontend/src/components/settings)) | Freely, within the feature |
 | Icons | `lucide-react` | Use existing icons; do not add icon libraries |
 
-### 2.2 Hard rules (from [`.dev/CONVENTIONS.md`](.dev/CONVENTIONS.md))
+### 2.2 Hard rules
 
 1. **Tailwind utilities only.** No inline `style={{}}` props except for dynamic values that cannot be expressed as classes (e.g., a computed `transform`).
 2. **No CSS modules.** No `*.module.css`. Component-scoped styles belong in Tailwind classes or, if structural and reusable, in a `@layer utilities` block in [`globals.css`](frontend/src/app/globals.css).
@@ -250,20 +250,24 @@ Helper classes: `.animate-fade-in`, `.animate-slide-up`, `.animate-slide-in-righ
 
 OpenYak is an agent runtime. Its UI must communicate **what the AI is doing** at every moment. These rules are non-negotiable.
 
-### 4.1 Tool-call lifecycle — `--tool-*` tokens
+### 4.1 Tool-call lifecycle
 
-Every tool call passes through four states. The token, icon treatment, and copy must agree.
+Every tool call moves through four data states. The current rendering collapses them into **two visual treatments**: a neutral in-progress treatment (pending + running share one) and two terminal treatments (completed, error).
 
-| State | Token | Visual treatment | When it applies |
+| Data state | Icon | Color treatment | When it applies |
 |---|---|---|---|
-| `pending` | `--tool-pending` (#EAB308 / amber) | Static icon at full opacity; no animation | Tool queued, awaiting permission, or argument validation |
-| `running` | `--tool-running` (#171717 / near-black, `#339CFF` in dark) | `shimmer-icon` animation on icon; "Running…" copy | Tool executing |
-| `completed` | `--tool-completed` (#22C55E / green) | Static check icon; collapsible result panel below | Tool returned successfully |
-| `error` | `--tool-error` (#EF4444 / red) | Static X-circle icon; expanded error message persists | Tool raised, timed out, or returned an error result |
+| `pending` | `Loader2` (animate-spin) | `text-[var(--text-tertiary)]` — neutral | Tool queued, awaiting permission, or argument validation |
+| `running` | `Loader2` (animate-spin) | `text-[var(--text-tertiary)]` — neutral | Tool executing |
+| `completed` | `CheckCircle2` | `text-[var(--tool-completed)]` (#22C55E / green) | Tool returned successfully — collapsible result panel below |
+| `error` | `XCircle` | `text-[var(--tool-error)]` (#EF4444 / red) | Tool raised, timed out, or returned an error — expanded error message persists |
 
-**Rule:** A tool part **must persist a terminal state** (`completed` or `error`) — never leave the icon in `running` after the part settles. This rule is enforced backend-side via `update_part_data()` ([`CLAUDE.md` Known Gotchas #1](CLAUDE.md)) but the UI must respect the data.
+Canonical implementation: [`activity/activity-panel.tsx`](frontend/src/components/activity/activity-panel.tsx) and [`parts/reasoning-part.tsx`](frontend/src/components/parts/reasoning-part.tsx). When building a new tool-state UI, match this pattern.
 
-**Rule:** Use `--tool-*` for AI tool calls only. For human-facing form validation, use `--color-success` / `--color-warning` / `--color-destructive` instead. The two scales are visually similar but **semantically distinct** — conflating them blurs the human/AI boundary.
+**On the unused tokens.** `--tool-pending` (amber) and `--tool-running` (near-black / brand-blue in dark) are defined in [`globals.css:67-71`](frontend/src/app/globals.css:67) but **not currently bound** to any rendered state — the live UI uses the neutral spinner above. Treat them as reserved tokens; do not introduce them into UI without a deliberate design change to the lifecycle visualization.
+
+**Rule:** A tool part **must persist a terminal state** (`completed` or `error`) — never leave the icon spinning after the part settles. This is enforced backend-side via `update_part_data()`; the UI must respect the data.
+
+**Rule:** Use `--tool-completed` / `--tool-error` for AI tool calls only. For human-facing form validation, use `--color-success` / `--color-destructive` instead. The two scales are visually similar but **semantically distinct** — conflating them blurs the human/AI boundary.
 
 ### 4.2 User vs. AI-generated content
 
@@ -303,17 +307,18 @@ Long agent traces (10+ tool calls, multi-thousand-token reasoning blocks) are no
 
 ## 5. Responsive Design
 
-Tailwind defaults; layout shifts at `lg` and `md`.
+The layout has a **single switch point at `lg` (1024 px)**. The `md` (768 px) breakpoint is reserved for component-internal use (e.g., the user-message bubble's `sm:max-w-[70%]`); it does not change the chrome.
 
-| Breakpoint | Behavior |
-|---|---|
-| `≥1024px` (`lg`) | Sidebar pinned 260 px wide; main content offset `ml-[260px]` |
-| `768–1023px` (`md`) | Sidebar collapsible (toggleable, overlays main) |
-| `<768px` (`sm`) | Sidebar hidden by default; opens as a `Sheet` drawer; mobile composer takes precedence |
+| Viewport | Sidebar | Main content offset |
+|---|---|---|
+| `≥1024px` (`lg`) | Pinned. **Dynamic width**: default `SIDEBAR_WIDTH = 300px`, range `240–480 px`, user-resizable, persisted via `sidebar-store` | `marginLeft = sidebarWidth` (animated spring) |
+| `<1024px` | Hidden. Opens as a `Sheet` drawer triggered by the mobile nav | `0` |
+
+Numerical defaults live in [`frontend/src/lib/constants.ts`](frontend/src/lib/constants.ts) (`SIDEBAR_WIDTH`, `SIDEBAR_MIN_WIDTH`, `SIDEBAR_MAX_WIDTH`). The desktop sidebar renders inside `hidden lg:block`; the mobile drawer renders inside `lg:hidden` ([`frontend/src/app/(main)/layout.tsx`](frontend/src/app/(main)/layout.tsx)).
 
 Touch-coarse pointers (`@media (pointer: coarse)`) hide custom scrollbars entirely ([`globals.css:288-296`](frontend/src/app/globals.css:288)).
 
-**Rule:** never assume sidebar visibility. Use the layout containers in [`frontend/src/app/(main)/`](frontend/src/app/(main)) and [`frontend/src/app/(mobile)/`](frontend/src/app/(mobile)) — they handle the breakpoint switch.
+**Rule:** never hardcode `260px` or any literal sidebar width into a feature component — read `sidebarWidth` from the store, or compose against the layout's existing offset. Use the layout containers in [`frontend/src/app/(main)/`](frontend/src/app/(main)) and [`frontend/src/app/(mobile)/`](frontend/src/app/(mobile)); they handle the breakpoint switch.
 
 ---
 
