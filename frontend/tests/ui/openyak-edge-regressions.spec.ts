@@ -38,7 +38,7 @@ test.describe("OpenYak edge-state GUI regressions", () => {
     await setupMockedApp(page, undefined, { authConnected: false });
 
     await page.goto("/settings?tab=billing");
-    await expect(page.getByText("Connect an OpenYak account to top up and access premium models.")).toBeVisible();
+    await expect(page.locator("p:visible").filter({ hasText: "Connect an OpenYak account to top up and access premium models." })).toBeVisible();
     await page.getByRole("button", { name: "Go to Settings" }).click();
     await expect(page).toHaveURL(/\/settings\?tab=providers$/);
     await expect(page.getByRole("heading", { name: "Providers" })).toBeVisible();
@@ -102,13 +102,42 @@ test.describe("OpenYak edge-state GUI regressions", () => {
 
     await page.goto("/settings?tab=plugins");
     await expect(page.getByRole("heading", { name: "Plugins" })).toBeVisible();
-    await page.getByPlaceholder("Search...").fill("notion");
+    await page.locator('input[placeholder="Search..."]:visible').fill("notion");
     const notionRow = page.locator("div").filter({ hasText: "Notion" }).filter({ hasText: "Search and update pages" }).first();
     await expect(notionRow).toBeVisible();
     await notionRow.getByRole("switch").click();
 
     await expect(page.getByText("Notion OAuth unavailable")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Plugins" })).toBeVisible();
+    await expectNoAppCrash(page);
+  });
+
+  test("chatgpt auth launch failure stops the waiting state", async ({ page }) => {
+    await setupMockedApp(page, {
+      openaiSubscriptionConnected: false,
+      openaiLoginStatus: 500,
+    });
+
+    await page.goto("/settings?tab=providers");
+    await page.getByRole("button", { name: /ChatGPT Subscription/i }).click();
+    await page.getByRole("button", { name: "Sign in with ChatGPT" }).click();
+
+    await expect(page.getByText("Failed to start authentication")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Sign in with ChatGPT" })).toBeEnabled();
+    await expect(page.getByText("Waiting for authentication...")).toHaveCount(0);
+    await expectNoAppCrash(page);
+  });
+
+  test("ollama status failure shows a retryable error instead of an endless spinner", async ({ page }) => {
+    await setupMockedApp(page, {
+      ollamaStatusCode: 500,
+    });
+
+    await page.goto("/settings?tab=providers");
+    await page.getByRole("button", { name: "Ollama" }).click();
+
+    await expect(page.getByText("Failed to load Ollama status.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
     await expectNoAppCrash(page);
   });
 });

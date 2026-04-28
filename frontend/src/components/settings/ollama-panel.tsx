@@ -2,7 +2,8 @@
 
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
+import { AlertCircle, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { API, queryKeys } from "@/lib/constants";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -13,26 +14,47 @@ import { ModelLibrary } from "./ollama/ollama-library";
 import type { OllamaRuntimeStatus } from "./ollama/types";
 
 export function OllamaPanel() {
-  useTranslation("settings");
+  const { t } = useTranslation("settings");
   const qc = useQueryClient();
   const { setActiveProvider } = useSettingsStore();
 
-  const { data: runtimeStatus, refetch: refetchStatus } = useQuery({
+  const {
+    data: runtimeStatus,
+    refetch: refetchStatus,
+    isError: runtimeStatusError,
+  } = useQuery({
     queryKey: ["ollamaRuntime"],
     queryFn: () => api.get<OllamaRuntimeStatus>(API.OLLAMA.STATUS),
     refetchInterval: 10_000,
+    retry: false,
   });
 
   const { data: installedModels, refetch: refetchModels } = useQuery({
     queryKey: ["ollamaInstalledModels"],
     queryFn: () => api.get<{ models: import("./ollama/types").OllamaModel[] }>(API.OLLAMA.MODELS),
     enabled: !!runtimeStatus?.running,
+    retry: false,
   });
 
   const { data: library } = useQuery({
     queryKey: ["ollamaLibrary"],
     queryFn: () => api.get<import("./ollama/types").LibraryData>(API.OLLAMA.LIBRARY),
+    retry: false,
   });
+
+  if (runtimeStatusError) {
+    return (
+      <div className="space-y-3 py-2">
+        <div className="flex items-center gap-2 text-xs text-[var(--color-destructive)]">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          <span>{t("ollamaStatusLoadFailed", "Failed to load Ollama status.")}</span>
+        </div>
+        <Button variant="outline" size="sm" onClick={() => refetchStatus()}>
+          {t("setupRetry", "Retry")}
+        </Button>
+      </div>
+    );
+  }
 
   if (!runtimeStatus) {
     return (

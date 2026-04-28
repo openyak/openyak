@@ -7,6 +7,27 @@ import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api";
 import { API } from "@/lib/constants";
 
+const SETUP_STREAM_IDLE_TIMEOUT_MS = 120_000;
+
+async function readWithIdleTimeout(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      reader.read(),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error("Ollama setup timed out while waiting for progress.")),
+          SETUP_STREAM_IDLE_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 export function SetupFlow({ onComplete }: { onComplete: () => void }) {
   const { t } = useTranslation("settings");
   const [progress, setProgress] = useState<{
@@ -39,7 +60,7 @@ export function SetupFlow({ onComplete }: { onComplete: () => void }) {
       let buffer = "";
 
       while (true) {
-        const { done, value } = await reader.read();
+        const { done, value } = await readWithIdleTimeout(reader);
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
@@ -53,6 +74,7 @@ export function SetupFlow({ onComplete }: { onComplete: () => void }) {
               setProgress(data);
               if (data.status === "error") {
                 setError(data.message || "Setup failed");
+                setProgress(null);
                 return;
               }
               if (data.status === "ready") {
@@ -65,6 +87,8 @@ export function SetupFlow({ onComplete }: { onComplete: () => void }) {
           }
         }
       }
+      setError("Setup ended before Ollama became ready.");
+      setProgress(null);
     } catch (e) {
       setError(String(e));
       setProgress(null);
