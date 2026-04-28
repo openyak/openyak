@@ -153,7 +153,7 @@ export function ReasoningPart({ texts, toolParts = [], isStreaming, onDurationCh
 /** Compact tool line inside the thinking section */
 function ToolLine({ tool }: { tool: ToolPart }) {
   const { t } = useTranslation("chat");
-  const isRunning = tool.state.status === "running";
+  const isRunning = tool.state.status === "running" || tool.state.status === "pending";
   const isError = tool.state.status === "error";
   const label = getToolLabel(tool, t);
 
