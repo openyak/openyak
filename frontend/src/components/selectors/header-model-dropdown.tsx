@@ -67,6 +67,53 @@ const SORT_BUTTONS_SIMPLE: { key: SortMode; i18n: string }[] = [
 /** Providers that have arena ranking data */
 const ARENA_PROVIDERS = new Set<string | null>(["openyak"]);
 
+/**
+ * Variant keywords that disambiguate model tiers (Fast/Heavy/Pro/...).
+ * Order matters: longer multi-word variants are matched before single-word ones
+ * so "Heavy Reasoning" wins over "Heavy" alone.
+ */
+const VARIANT_KEYWORDS = [
+  "Heavy Reasoning",
+  "Fast Reasoning",
+  "Heavy",
+  "Fast",
+  "Ultra",
+  "Pro",
+  "Max",
+  "Mini",
+  "Lite",
+  "Air",
+  "Plus",
+  "Turbo",
+  "Flash",
+  "Sonic",
+  "Thinking",
+];
+
+/**
+ * Splits a model display name into {family, variant} so the trigger can
+ * surface the variant on its own line — fixes the truncation case where
+ * "Fast" / "Heavy" suffixes were being clipped.
+ *
+ * Returns null variant when no known keyword is detected; the caller renders
+ * a single-line layout in that case.
+ */
+function splitModelDisplayName(name: string): { family: string; variant: string | null } {
+  const trimmed = name.trim();
+  for (const kw of VARIANT_KEYWORDS) {
+    // Match keyword as a trailing token (case-insensitive, optional separators).
+    const re = new RegExp(`[\\s\\-_·]+${kw}\\s*$`, "i");
+    const match = trimmed.match(re);
+    if (match) {
+      const family = trimmed.slice(0, match.index).trim();
+      if (family.length > 0) {
+        return { family, variant: kw };
+      }
+    }
+  }
+  return { family: trimmed, variant: null };
+}
+
 export function HeaderModelDropdown() {
   const { t } = useTranslation("common");
   const router = useRouter();
@@ -216,14 +263,39 @@ export function HeaderModelDropdown() {
     );
   }
 
+  const { family: modelFamily, variant: modelVariant } = splitModelDisplayName(
+    shortModel ?? "",
+  );
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="inline-flex h-7 max-w-[220px] translate-y-[1px] items-center gap-1.5 rounded-lg border-none bg-transparent px-3 text-[13px] font-semibold text-[var(--text-primary)] shadow-none transition-colors hover:bg-[var(--surface-secondary)] focus:outline-none cursor-pointer"
+          aria-label={
+            modelVariant ? `${modelFamily} (${modelVariant})` : modelFamily
+          }
+          className={cn(
+            "inline-flex translate-y-[1px] items-center gap-1.5 rounded-lg border-none bg-transparent px-3 shadow-none transition-colors hover:bg-[var(--surface-secondary)] focus:outline-none cursor-pointer",
+            // Two-line layout when a variant is detected; otherwise keep single
+            // line so the visual matches the existing dropdown trigger height.
+            modelVariant
+              ? "h-10 max-w-[280px] py-1"
+              : "h-7 max-w-[280px] text-[13px] font-semibold text-[var(--text-primary)]",
+          )}
         >
-          <span className="truncate">{shortModel}</span>
+          {modelVariant ? (
+            <span className="flex flex-col items-start min-w-0 leading-tight">
+              <span className="truncate max-w-full text-[13px] font-semibold text-[var(--text-primary)]">
+                {modelFamily}
+              </span>
+              <span className="truncate max-w-full text-[10px] font-medium uppercase tracking-[0.08em] text-[var(--text-tertiary)]">
+                {modelVariant}
+              </span>
+            </span>
+          ) : (
+            <span className="truncate">{modelFamily || shortModel}</span>
+          )}
           <ChevronDown className="h-4 w-4 opacity-50 shrink-0" />
         </button>
       </PopoverTrigger>

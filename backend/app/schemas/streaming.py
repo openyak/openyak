@@ -30,6 +30,7 @@ class SSEEventData(BaseModel):
     # step_finish
     tokens: dict[str, int] | None = None
     cost: float | None = None
+    total_cost: float | None = None
     reason: StepFinishReason | None = None
 
     # permission_request

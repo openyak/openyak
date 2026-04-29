@@ -47,6 +47,7 @@ export interface SSEEventData {
   // step_finish
   tokens?: Record<string, number> | null;
   cost?: number | null;
+  total_cost?: number | null;
   reason?: string | null;
 
   // permission_request

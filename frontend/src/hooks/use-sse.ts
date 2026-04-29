@@ -422,6 +422,7 @@ export function useSSE(streamId: string | null) {
         data.reason ?? "stop",
         data.tokens ?? {},
         data.cost ?? 0,
+        data.total_cost ?? null,
       );
 
       const terminalReasons = new Set(["stop", "length", "error", "aborted"]);

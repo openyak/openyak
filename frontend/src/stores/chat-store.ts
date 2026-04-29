@@ -5,6 +5,33 @@ import type { CompactionPart, CompactionPhase, CompactionPhaseStatus, PartData, 
 import type { PermissionRequest, QuestionRequest, PlanReviewRequest } from "@/types/streaming";
 import type { FileAttachment } from "@/types/chat";
 
+/**
+ * Cumulative usage for the current chat session (across multiple generations).
+ * Reset only on `reset()` (e.g., switching chats); preserved across `finishGeneration`.
+ *
+ * - `cost` mirrors the backend-authoritative `total_cost` from the latest step_finish.
+ *   `null` when running on a model with no pricing (local Ollama, custom endpoints).
+ * - Token fields are accumulated frontend-side from `step_finish.tokens`.
+ *   Will reset on page refresh until Phase 2 wires backend persistence.
+ */
+export interface SessionUsage {
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  cost: number | null;
+}
+
+const EMPTY_SESSION_USAGE: SessionUsage = {
+  inputTokens: 0,
+  outputTokens: 0,
+  reasoningTokens: 0,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+  cost: null,
+};
+
 interface ChatStore {
   // ─── Active generation ───
   streamId: string | null;
@@ -34,6 +61,10 @@ interface ChatStore {
   pendingQuestion: QuestionRequest | null;
   pendingPlanReview: PlanReviewRequest | null;
 
+  // ─── Session usage (Trust Surface — Phase 1) ───
+  /** Cumulative token + cost for the current chat. Resets on chat switch. */
+  sessionUsage: SessionUsage;
+
   // ─── Actions ───
   /** Immediately show loading state + optimistic user message before API returns. */
   beginSending: (text: string, attachments?: FileAttachment[]) => void;
@@ -45,7 +76,12 @@ interface ChatStore {
   setToolResult: (callId: string, output: string, title?: string | null, metadata?: Record<string, unknown> | null) => void;
   setToolError: (callId: string, output: string) => void;
   addStepStart: (step: number) => void;
-  addStepFinish: (reason: string, tokens: Record<string, number>, cost: number) => void;
+  addStepFinish: (
+    reason: string,
+    tokens: Record<string, number>,
+    cost: number,
+    totalCost: number | null,
+  ) => void;
   addCompaction: (auto: boolean) => void;
   startCompaction: (phases: string[]) => void;
   updateCompactionPhase: (phase: string, status: string) => void;
@@ -98,6 +134,7 @@ export const useChatStore = create<ChatStore>((set) => ({
   pendingPermission: null,
   pendingQuestion: null,
   pendingPlanReview: null,
+  sessionUsage: EMPTY_SESSION_USAGE,
 
   // Actions
   beginSending: (text, attachments) =>
@@ -246,13 +283,24 @@ export const useChatStore = create<ChatStore>((set) => ({
       };
     }),
 
-  addStepFinish: (reason, tokens, cost) =>
+  addStepFinish: (reason, tokens, cost, totalCost) =>
     set((s) => {
       const { parts, text, reasoning } = flushBuffers(
         s.streamingParts,
         s.streamingText,
         s.streamingReasoning,
       );
+      const prev = s.sessionUsage;
+      const nextUsage: SessionUsage = {
+        inputTokens: prev.inputTokens + (tokens?.input ?? 0),
+        outputTokens: prev.outputTokens + (tokens?.output ?? 0),
+        reasoningTokens: prev.reasoningTokens + (tokens?.reasoning ?? 0),
+        cacheReadTokens: prev.cacheReadTokens + (tokens?.cache_read ?? 0),
+        cacheWriteTokens: prev.cacheWriteTokens + (tokens?.cache_write ?? 0),
+        // Backend total_cost is authoritative. Fall back to previous when omitted
+        // (e.g., providers with no pricing — keeps prior value rather than zeroing).
+        cost: totalCost ?? prev.cost,
+      };
       return {
         streamingParts: [
           ...parts,
@@ -265,6 +313,7 @@ export const useChatStore = create<ChatStore>((set) => ({
         ],
         streamingText: text,
         streamingReasoning: reasoning,
+        sessionUsage: nextUsage,
       };
     }),
 
@@ -421,5 +470,6 @@ export const useChatStore = create<ChatStore>((set) => ({
       pendingPermission: null,
       pendingQuestion: null,
       pendingPlanReview: null,
+      sessionUsage: EMPTY_SESSION_USAGE,
     }),
 }));

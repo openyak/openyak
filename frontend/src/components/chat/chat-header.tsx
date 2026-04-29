@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Share2, Loader2, List, PanelRightClose, PanelRightOpen } from "lucide-react";
 import { HeaderModelDropdown } from "@/components/selectors/header-model-dropdown";
 import { ContextIndicator } from "@/components/chat/context-indicator";
+import { SessionStats } from "@/components/chat/session-stats";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { useSidebarStore } from "@/stores/sidebar-store";
@@ -164,6 +165,7 @@ export function ChatHeader({ sessionId }: ChatHeaderProps) {
 
         <div className="flex items-center gap-2 min-w-0 shrink-0">
           <HeaderModelDropdown />
+          <SessionStats />
         </div>
 
         <div
