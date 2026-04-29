@@ -6,6 +6,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/), and this project
 
 ## [Unreleased]
 
+## [1.1.8] - 2026-04-29
+
+### Fixed
+
+- **backend (Ollama):** Restored managed Ollama setup after upstream release asset names changed. macOS now downloads `ollama-darwin.tgz`, Linux uses `.tar.zst` archives, and Windows uses the current `.zip` assets instead of stale bare-binary URLs that returned 404.
+- **backend (Ollama):** Added archive extraction and binary validation for managed installs, including nested Windows binaries and executable-bit repair on Unix platforms.
+- **tests (Ollama):** Added regression coverage for release asset mapping, archive extraction, and an opt-in real install/pull/chat/uninstall flow with `qwen2.5:0.5b`.
+
 ## [1.1.7] - 2026-04-27
 
 ### Added
