@@ -34,6 +34,7 @@ export function GeneralTab() {
   const checkForUpdate = useCallback(async () => {
     if (!IS_DESKTOP) return;
     setUpdateStatus("checking");
+    setUpdateError(null);
     try {
       const { check } = await import("@tauri-apps/plugin-updater");
       const update = await check();
@@ -41,13 +42,16 @@ export function GeneralTab() {
         setUpdateVersion(update.version);
         setUpdateStatus("available");
       } else {
+        setUpdateVersion(null);
         setUpdateStatus("up-to-date");
         setTimeout(() => setUpdateStatus("idle"), 3000);
       }
     } catch (e) {
-      console.warn("Update check failed (expected in dev mode):", e);
-      setUpdateStatus("up-to-date");
-      setTimeout(() => setUpdateStatus("idle"), 3000);
+      const message = e instanceof Error ? e.message : String(e);
+      console.warn("Update check failed:", message);
+      setUpdateVersion(null);
+      setUpdateError(message);
+      setUpdateStatus("error");
     }
   }, []);
 
