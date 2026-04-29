@@ -115,6 +115,13 @@ function splitModelDisplayName(
   return { family: trimmed, variant: null };
 }
 
+function preserveModelSuffix(name: string, max = 42): string {
+  if (name.length <= max) return name;
+  const head = Math.max(12, Math.floor(max * 0.55));
+  const tail = Math.max(12, max - head - 1);
+  return `${name.slice(0, head).trimEnd()}…${name.slice(-tail).trimStart()}`;
+}
+
 export function HeaderModelDropdown() {
   const { t } = useTranslation("common");
   const router = useRouter();
@@ -212,7 +219,8 @@ export function HeaderModelDropdown() {
 
   const selectedInfo = visibleModels.find((m) => m.id === selectedModel && m.provider_id === selectedProviderId)
     ?? visibleModels.find((m) => m.id === selectedModel);
-  const shortModel = selectedInfo?.name ?? (selectedModel ? (selectedModel.includes("/") ? selectedModel.split("/").pop() : selectedModel) : t("noModelFound"));
+  const selectedLabel = selectedInfo?.name ?? (selectedModel ? (selectedModel.includes("/") ? selectedModel.split("/").pop() : selectedModel) : t("noModelFound"));
+  const shortModel = preserveModelSuffix(selectedLabel);
 
   // Models still loading with an active provider — show loading indicator
   if (isLoading && activeProvider) {
@@ -265,7 +273,7 @@ export function HeaderModelDropdown() {
   }
 
   const { family: modelFamily, variant: modelVariant } = splitModelDisplayName(
-    shortModel ?? "",
+    selectedLabel,
     activeProvider,
   );
 
@@ -277,13 +285,14 @@ export function HeaderModelDropdown() {
           aria-label={
             modelVariant ? `${modelFamily} (${modelVariant})` : modelFamily
           }
+          title={selectedLabel}
           className={cn(
             "inline-flex translate-y-[1px] items-center gap-1.5 rounded-lg border-none bg-transparent px-3 shadow-none transition-colors hover:bg-[var(--surface-secondary)] focus:outline-none cursor-pointer",
             // Two-line layout when a variant is detected; otherwise keep single
             // line so the visual matches the existing dropdown trigger height.
             modelVariant
-              ? "h-10 max-w-[280px] py-1"
-              : "h-7 max-w-[280px] text-[13px] font-semibold text-[var(--text-primary)]",
+              ? "h-10 max-w-[320px] sm:max-w-[420px] py-1"
+              : "h-7 max-w-[320px] sm:max-w-[420px] text-[13px] font-semibold text-[var(--text-primary)]",
           )}
         >
           {modelVariant ? (
@@ -296,12 +305,12 @@ export function HeaderModelDropdown() {
               </span>
             </span>
           ) : (
-            <span className="truncate">{modelFamily || shortModel}</span>
+            <span className="truncate">{shortModel}</span>
           )}
           <ChevronDown className="h-4 w-4 opacity-50 shrink-0" />
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-[360px] p-0 overflow-hidden" align="start" sideOffset={4}>
+      <PopoverContent className="w-[min(520px,calc(100vw-24px))] p-0 overflow-hidden" align="start" sideOffset={4}>
         <TooltipProvider delayDuration={300}>
           <Command>
             <CommandInput placeholder={t("searchModels")} />
@@ -443,6 +452,7 @@ function ModelRow({
       value={`${model.name} ${providerLabel}`}
       onSelect={onSelect}
       className="text-sm"
+      title={`${model.name} (${model.id})`}
     >
       <Check
         className={cn(
@@ -450,7 +460,14 @@ function ModelRow({
           isSelected ? "opacity-100" : "opacity-0",
         )}
       />
-      <span className="truncate flex-1">{model.name}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate">{model.name}</span>
+        {model.id !== model.name && (
+          <span className="block truncate text-[10px] font-normal text-[var(--text-tertiary)]">
+            {model.id}
+          </span>
+        )}
+      </span>
       {showProviderBadge && (
         <span className="ml-1.5 shrink-0 text-[9px] font-medium text-[var(--text-tertiary)] bg-[var(--surface-tertiary)] px-1 py-0.5 rounded">
           {providerLabel}

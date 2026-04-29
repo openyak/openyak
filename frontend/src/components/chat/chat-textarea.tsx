@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, type TextareaHTMLAttributes } from "react";
+import { forwardRef, useRef, type TextareaHTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
 
 interface ChatTextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
@@ -10,7 +10,43 @@ interface ChatTextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> 
 }
 
 const ChatTextarea = forwardRef<HTMLTextAreaElement, ChatTextareaProps>(
-  ({ className, onSubmit, onKeyDown, mentionActive, ...props }, ref) => {
+  ({
+    className,
+    onSubmit,
+    onKeyDown,
+    onCompositionStart,
+    onCompositionEnd,
+    mentionActive,
+    ...props
+  }, ref) => {
+    const composingRef = useRef(false);
+    const compositionEndedAtRef = useRef(0);
+
+    const handleCompositionStart = (e: React.CompositionEvent<HTMLTextAreaElement>) => {
+      composingRef.current = true;
+      compositionEndedAtRef.current = 0;
+      onCompositionStart?.(e);
+    };
+
+    const handleCompositionEnd = (e: React.CompositionEvent<HTMLTextAreaElement>) => {
+      onCompositionEnd?.(e);
+      compositionEndedAtRef.current = Date.now();
+      requestAnimationFrame(() => {
+        composingRef.current = false;
+      });
+    };
+
+    const isComposing = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      const nativeEvent = e.nativeEvent as KeyboardEvent & { isComposing?: boolean };
+      const justEndedComposition = Date.now() - compositionEndedAtRef.current < 100;
+      return (
+        composingRef.current ||
+        justEndedComposition ||
+        nativeEvent.isComposing ||
+        nativeEvent.keyCode === 229
+      );
+    };
+
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
       // When the mention popup is open, let it handle navigation keys
       if (mentionActive) {
@@ -26,7 +62,7 @@ const ChatTextarea = forwardRef<HTMLTextAreaElement, ChatTextareaProps>(
         }
       }
 
-      if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+      if (e.key === "Enter" && !e.shiftKey && !isComposing(e)) {
         e.preventDefault();
         onSubmit?.();
       }
@@ -42,6 +78,8 @@ const ChatTextarea = forwardRef<HTMLTextAreaElement, ChatTextareaProps>(
           className,
         )}
         onKeyDown={handleKeyDown}
+        onCompositionStart={handleCompositionStart}
+        onCompositionEnd={handleCompositionEnd}
         {...props}
       />
     );

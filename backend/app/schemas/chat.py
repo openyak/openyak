@@ -17,6 +17,7 @@ class PromptRequest(BaseModel):
     agent: str = "build"
     attachments: list[dict[str, Any]] = []
     permission_presets: dict[str, bool] | None = None
+    permission_rules: list[dict[str, Any]] | None = None
     reasoning: bool | None = None  # Explicitly enable/disable reasoning
     workspace: str | None = None  # Workspace directory restriction
     format: dict[str, Any] | None = None  # e.g. {"type": "json_schema", "json_schema": {...}}
@@ -46,6 +47,7 @@ class EditAndResendRequest(BaseModel):
     agent: str = "build"
     attachments: list[dict[str, Any]] = []
     permission_presets: dict[str, bool] | None = None
+    permission_rules: list[dict[str, Any]] | None = None
     reasoning: bool | None = None
     workspace: str | None = None  # Workspace directory restriction
     format: dict[str, Any] | None = None  # e.g. {"type": "json_schema", "json_schema": {...}}

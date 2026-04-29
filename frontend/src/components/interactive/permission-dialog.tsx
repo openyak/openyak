@@ -11,7 +11,7 @@ import type { PermissionRequest } from "@/types/streaming";
 
 interface PermissionDialogProps {
   permission: PermissionRequest;
-  onRespond: (allow: boolean) => void;
+  onRespond: (allow: boolean, remember?: boolean) => void;
 }
 
 const TOOL_EXPLANATIONS: Record<string, {
@@ -52,6 +52,85 @@ function getToolExplanation(tool: string) {
     impact: "May read or modify workspace data",
     safeguard: "Review details before allowing",
   };
+}
+
+function stringifyPermissionArguments(args: Record<string, unknown>): string {
+  try {
+    return JSON.stringify(args, null, 2);
+  } catch {
+    return String(args);
+  }
+}
+
+function getPermissionCommand(args: Record<string, unknown>): string | null {
+  const command = args.command;
+  return typeof command === "string" && command.trim() ? command : null;
+}
+
+function getPermissionTarget(args: Record<string, unknown>, patterns: string[]): string | null {
+  const filePath = args.cwd ?? args.file_path ?? args.path ?? args.url ?? args.query;
+  if (typeof filePath === "string" && filePath.trim()) return filePath;
+  const firstPattern = patterns.find((pattern) => pattern && pattern !== "*");
+  return firstPattern ?? null;
+}
+
+function PermissionDetails({
+  permission,
+  compact = false,
+}: {
+  permission: PermissionRequest;
+  compact?: boolean;
+}) {
+  const args = permission.arguments ?? {};
+  const command = getPermissionCommand(args);
+  const target = getPermissionTarget(args, permission.patterns);
+  const hasArgs = Object.keys(args).length > 0;
+  const labelClass = compact
+    ? "text-[10px] text-[var(--text-tertiary)] uppercase font-semibold mb-1"
+    : "text-[10px] text-[var(--text-tertiary)] uppercase font-semibold mb-1";
+  const codeClass = compact
+    ? "text-xs text-[var(--text-secondary)] font-mono whitespace-pre-wrap break-words max-h-36 overflow-y-auto"
+    : "text-xs text-[var(--text-secondary)] font-mono whitespace-pre-wrap break-words max-h-48 overflow-y-auto";
+
+  if (!permission.message && !target && !hasArgs) return null;
+
+  return (
+    <div className="rounded-lg bg-[var(--surface-secondary)] border border-[var(--border-default)] p-2.5 space-y-2">
+      {permission.message && (
+        <div>
+          <p className={labelClass}>Request</p>
+          <p className="text-xs text-[var(--text-secondary)] whitespace-pre-wrap break-words">
+            {permission.message}
+          </p>
+        </div>
+      )}
+
+      {target && (
+        <div>
+          <p className={labelClass}>Target</p>
+          <p className="text-xs text-[var(--text-secondary)] break-all">{target}</p>
+        </div>
+      )}
+
+      {command ? (
+        <div>
+          <p className={labelClass}>Command</p>
+          <pre className={codeClass}>{command}</pre>
+        </div>
+      ) : hasArgs ? (
+        <div>
+          <p className={labelClass}>Arguments</p>
+          <pre className={codeClass}>{stringifyPermissionArguments(args)}</pre>
+        </div>
+      ) : null}
+
+      {permission.argumentsTruncated && (
+        <p className="text-[11px] text-[var(--color-warning)]">
+          Argument preview was truncated.
+        </p>
+      )}
+    </div>
+  );
 }
 
 /** Send a browser notification if tab is not focused. */
@@ -99,7 +178,7 @@ export function PermissionDialog({ permission, onRespond }: PermissionDialogProp
       savePermissionRule(permission.tool || permission.permission, allow);
     }
     try {
-      await onRespond(allow);
+      await onRespond(allow, rememberChoice);
     } finally {
       setSubmitting(false);
     }
@@ -215,18 +294,11 @@ export function PermissionDialog({ permission, onRespond }: PermissionDialogProp
             )}
 
             {!expired && permission.patterns.length > 0 && (
-              <div className="rounded-xl bg-[var(--surface-secondary)] border border-[var(--border-default)] p-3">
-                <p className="text-[10px] text-[var(--text-tertiary)] uppercase font-semibold mb-1">
-                  Details
-                </p>
-                <div className="space-y-0.5">
-                  {permission.patterns.map((p, i) => (
-                    <p key={i} className="text-sm text-[var(--text-secondary)] break-all">
-                      {p}
-                    </p>
-                  ))}
-                </div>
-              </div>
+              <PermissionDetails permission={permission} compact />
+            )}
+
+            {!expired && permission.patterns.length === 0 && (
+              <PermissionDetails permission={permission} compact />
             )}
 
             {!expired && (
@@ -320,20 +392,7 @@ export function PermissionDialog({ permission, onRespond }: PermissionDialogProp
                 )}
               </div>
 
-              {!expired && permission.patterns.length > 0 && (
-                <div className="rounded-lg bg-[var(--surface-secondary)] border border-[var(--border-default)] p-2.5">
-                  <p className="text-[10px] text-[var(--text-tertiary)] uppercase font-semibold mb-1">
-                    Details
-                  </p>
-                  <div className="space-y-0.5">
-                    {permission.patterns.map((p, i) => (
-                      <p key={i} className="text-xs text-[var(--text-secondary)]">
-                        {p}
-                      </p>
-                    ))}
-                  </div>
-                </div>
-              )}
+              {!expired && <PermissionDetails permission={permission} />}
 
               {!expired && (
                 <>

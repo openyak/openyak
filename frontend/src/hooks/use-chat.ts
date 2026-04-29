@@ -85,6 +85,11 @@ export function useChat(currentSessionId?: string) {
           run_commands: presets.runCommands,
         };
         const hasActivePresets = Object.values(permissionPresets).some(Boolean);
+        const permissionRules = settingsState.savedPermissions.map((rule) => ({
+          action: rule.allow ? "allow" as const : "deny" as const,
+          permission: rule.tool,
+          pattern: "*",
+        }));
 
         const res = await api.post<PromptResponse>(API.CHAT.PROMPT, {
           text: text.trim(),
@@ -94,6 +99,7 @@ export function useChat(currentSessionId?: string) {
           agent: settingsState.selectedAgent,
           attachments: attachments ?? [],
           permission_presets: hasActivePresets ? permissionPresets : null,
+          permission_rules: permissionRules.length > 0 ? permissionRules : null,
           reasoning: settingsState.reasoningEnabled,
           workspace: settingsState.workspaceDirectory,
         });
@@ -191,14 +197,19 @@ export function useChat(currentSessionId?: string) {
   }, [queryClient]);
 
   const respondToPermission = useCallback(
-    async (allow: boolean) => {
+    async (allow: boolean, remember = false) => {
       const { pendingPermission: perm, streamId, clearPermissionRequest, setPermissionRequest } = useChatStore.getState();
       if (!perm || !streamId) return;
 
       const req: RespondRequest = {
         stream_id: streamId,
         call_id: perm.callId,
-        response: allow,
+        response: {
+          allowed: allow,
+          remember,
+          permission: perm.tool || perm.permission,
+          pattern: perm.patterns[0] ?? "*",
+        },
       };
 
       try {
@@ -241,6 +252,11 @@ export function useChat(currentSessionId?: string) {
           run_commands: presets.runCommands,
         };
         const hasActivePresets = Object.values(permissionPresets).some(Boolean);
+        const permissionRules = settingsState.savedPermissions.map((rule) => ({
+          action: rule.allow ? "allow" as const : "deny" as const,
+          permission: rule.tool,
+          pattern: "*",
+        }));
 
         const res = await api.post<PromptResponse>(API.CHAT.EDIT, {
           session_id: currentSessionId,
@@ -251,6 +267,7 @@ export function useChat(currentSessionId?: string) {
           agent: settingsState.selectedAgent,
           attachments: attachments ?? [],
           permission_presets: hasActivePresets ? permissionPresets : null,
+          permission_rules: permissionRules.length > 0 ? permissionRules : null,
           reasoning: settingsState.reasoningEnabled,
           workspace: settingsState.workspaceDirectory,
         });

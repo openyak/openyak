@@ -7,6 +7,7 @@ import {
   CreditCard,
   BarChart3,
   Brain,
+  ShieldCheck,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -19,6 +20,7 @@ export interface SettingsTab {
 export const SETTINGS_TABS = [
   { id: "general", icon: Settings, labelKey: "tabGeneral" },
   { id: "providers", icon: Cpu, labelKey: "tabProviders" },
+  { id: "permissions", icon: ShieldCheck, labelKey: "tabPermissions" },
   { id: "automations", icon: Timer, labelKey: "tabAutomations" },
   { id: "plugins", icon: Plug, labelKey: "tabPlugins" },
   { id: "remote", icon: Wifi, labelKey: "tabRemote" },

@@ -18,6 +18,7 @@ export interface PromptRequest {
   agent?: string;
   attachments?: FileAttachment[];
   permission_presets?: Record<string, boolean> | null;
+  permission_rules?: Array<{ action: "allow" | "deny"; permission: string; pattern?: string }> | null;
   reasoning?: boolean | null;
   workspace?: string | null;
 }
@@ -35,6 +36,7 @@ export interface EditAndResendRequest {
   agent?: string;
   attachments?: FileAttachment[];
   permission_presets?: Record<string, boolean> | null;
+  permission_rules?: Array<{ action: "allow" | "deny"; permission: string; pattern?: string }> | null;
   reasoning?: boolean | null;
   workspace?: string | null;
 }

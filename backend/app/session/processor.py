@@ -18,6 +18,7 @@ import asyncio
 import datetime
 import json
 import logging
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -30,6 +31,7 @@ from app.agent.permission import (
     evaluate,
 )
 from app.provider.registry import ProviderRegistry
+from app.schemas.agent import PermissionRule
 from app.schemas.chat import PromptRequest
 from app.schemas.message import StepFinishReason
 from app.session.llm import stream_llm
@@ -87,6 +89,12 @@ _FILE_TOOLS = frozenset({"read", "write", "edit"})
 
 # Tools that modify state — trigger todo reminders after execution
 _MODIFYING_TOOLS = frozenset({"edit", "write", "bash", "code_execute"})
+
+_PERMISSION_ARGUMENT_CHAR_LIMIT = 20_000
+_SENSITIVE_ARG_KEY_RE = re.compile(
+    r"(api[_-]?key|authorization|bearer|cookie|password|secret|token)",
+    re.IGNORECASE,
+)
 
 # Agent limits — read from Settings (user-configurable via env vars).
 # Accessed via _cfg() to avoid stale module-level reads.
@@ -583,12 +591,23 @@ class SessionProcessor:
 
                                 if _action == "ask":
                                     if job.interactive:
-                                        _allowed = await _ask_permission(
-                                            job, _ci, _tool.id,
-                                            f"Allow tool '{_tool.id}' with arguments: "
-                                            f"{json.dumps(_ta, default=str)[:200]}?",
+                                        _decision = await _ask_permission(
+                                            job,
+                                            call_id=_ci,
+                                            tool_name=_tool.id,
+                                            tool_args=_ta,
+                                            resource_pattern=_rp,
                                         )
-                                        if not _allowed:
+                                        if _decision.get("remember"):
+                                            await _remember_permission_rule(
+                                                session_factory,
+                                                job.session_id,
+                                                sp,
+                                                permission=_tool.id,
+                                                pattern=_rp,
+                                                allow=bool(_decision.get("allowed")),
+                                            )
+                                        if not _decision.get("allowed"):
                                             job.publish(SSEEvent(TOOL_ERROR, {"call_id": _ci, "error": f"User denied permission for: {_tool.id}"}))
                                             await _persist_tool_error(
                                                 session_factory, self._assistant_msg_id,
@@ -1276,29 +1295,133 @@ class SessionProcessor:
 async def _ask_permission(
     job: GenerationJob,
     call_id: str,
-    permission: str,
-    message: str,
-) -> bool:
+    tool_name: str,
+    tool_args: dict[str, Any],
+    resource_pattern: str = "*",
+) -> dict[str, bool]:
     """Ask user for permission via SSE and wait for response."""
     permission_call_id = generate_ulid()
+    arguments, truncated = _permission_arguments_for_event(tool_args)
+    message = _permission_message(tool_name, arguments, truncated)
     job.publish(
         SSEEvent(
             PERMISSION_REQUEST,
             {
                 "call_id": permission_call_id,
                 "tool_call_id": call_id,
-                "permission": permission,
+                "tool": tool_name,
+                "permission": tool_name,
+                "patterns": [resource_pattern] if resource_pattern else [],
+                "arguments": arguments,
                 "message": message,
+                "arguments_truncated": truncated,
             },
         )
     )
 
     try:
         response = await job.wait_for_response(permission_call_id, timeout=300.0)
-        return str(response).lower() in ("allow", "yes", "true", "1")
+        return _permission_decision_from_response(response)
     except TimeoutError:
-        logger.warning("Permission request timed out for %s", permission)
-        return False
+        logger.warning("Permission request timed out for %s", tool_name)
+        return {"allowed": False, "remember": False}
+
+
+def _permission_decision_from_response(response: Any) -> dict[str, bool]:
+    if isinstance(response, dict):
+        return {
+            "allowed": bool(response.get("allowed")),
+            "remember": bool(response.get("remember")),
+        }
+    allowed = str(response).lower() in ("allow", "yes", "true", "1")
+    return {"allowed": allowed, "remember": False}
+
+
+async def _remember_permission_rule(
+    _session_factory: async_sessionmaker[AsyncSession],
+    session_id: str,
+    sp: SessionPrompt,
+    *,
+    permission: str,
+    pattern: str,
+    allow: bool,
+) -> None:
+    del _session_factory, session_id
+    action: Literal["allow", "deny"] = "allow" if allow else "deny"
+    rule = PermissionRule(action=action, permission=permission, pattern=pattern or "*")
+
+    sp.session_permissions.rules = [
+        existing
+        for existing in sp.session_permissions.rules
+        if not (existing.permission == rule.permission and existing.pattern == rule.pattern)
+    ]
+    sp.session_permissions.rules.append(rule)
+    sp.merged_permissions.rules.append(rule)
+
+
+def _permission_arguments_for_event(
+    value: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """Return permission arguments suitable for SSE display.
+
+    The permission prompt must show the action being approved, but it should not
+    turn one huge file write into an unbounded SSE event. Key names that are
+    obviously secret-like are redacted; long string values are truncated with a
+    clear marker so the UI can still show the relevant target and command.
+    """
+    sanitized = _sanitize_permission_value(value)
+    encoded = json.dumps(sanitized, default=str, ensure_ascii=False)
+    if len(encoded) <= _PERMISSION_ARGUMENT_CHAR_LIMIT:
+        return cast(dict[str, Any], sanitized), False
+
+    clipped = _clip_permission_value(sanitized)
+    return cast(dict[str, Any], clipped), True
+
+
+def _sanitize_permission_value(value: Any, key: str | None = None) -> Any:
+    if key and _SENSITIVE_ARG_KEY_RE.search(key):
+        return "[redacted]"
+    if isinstance(value, dict):
+        return {
+            str(k): _sanitize_permission_value(v, str(k))
+            for k, v in value.items()
+        }
+    if isinstance(value, list):
+        return [_sanitize_permission_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_sanitize_permission_value(item) for item in value]
+    return value
+
+
+def _clip_permission_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {k: _clip_permission_value(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_clip_permission_value(item) for item in value[:50]]
+    if isinstance(value, str) and len(value) > 12_000:
+        return value[:12_000] + "\n\n[permission preview truncated]"
+    return value
+
+
+def _permission_message(
+    tool_name: str,
+    arguments: dict[str, Any],
+    truncated: bool,
+) -> str:
+    if tool_name == "bash":
+        command = arguments.get("command")
+        if isinstance(command, str) and command.strip():
+            return f"Allow running this shell command?\n\n{command}"
+        return "Allow running a shell command?"
+
+    if tool_name in {"write", "edit", "read"}:
+        file_path = arguments.get("file_path")
+        if isinstance(file_path, str) and file_path.strip():
+            suffix = " The preview was truncated." if truncated else ""
+            return f"Allow {tool_name} on {file_path}?{suffix}"
+
+    suffix = " Preview was truncated." if truncated else ""
+    return f"Allow tool '{tool_name}' with the shown arguments?{suffix}"
 
 
 async def _delete_empty_assistant_messages(

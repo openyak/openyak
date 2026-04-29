@@ -21,6 +21,7 @@ import { useChatStore } from "@/stores/chat-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useProviderModels } from "@/hooks/use-provider-models";
 import { useIndexStatus } from "@/hooks/use-index-status";
+import { formatCreditsPerM, usdToCreditsPerM } from "@/lib/pricing";
 
 interface ChatFormProps {
   isGenerating: boolean;
@@ -125,6 +126,18 @@ function attachmentSuggestions(files: FileAttachment[], t: TFunction): string[] 
   return suggestions.slice(0, 2);
 }
 
+function estimateTextTokens(text: string): number {
+  const trimmed = text.trim();
+  if (!trimmed) return 0;
+  return Math.ceil(trimmed.length / 4);
+}
+
+function formatEstimatedUsd(cost: number): string {
+  if (cost <= 0) return "$0.00";
+  if (cost < 0.01) return `$${cost.toFixed(4)}`;
+  return `$${cost.toFixed(2)}`;
+}
+
 /**
  * Find the active @mention trigger in the input text relative to the cursor position.
  * Returns { active: true, query, startIndex } if cursor is inside an @mention,
@@ -161,6 +174,8 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onStop, c
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { data: providerModels, activeProvider } = useProviderModels();
   const noModelsAvailable = !activeProvider || providerModels.length === 0;
+  const selectedModel = useSettingsStore((s) => s.selectedModel);
+  const selectedProviderId = useSettingsStore((s) => s.selectedProviderId);
 
   const sendingRef = useRef(false);
 
@@ -401,6 +416,34 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onStop, c
   }, [fixRequest, clearFixRequest, ref, resize]);
 
   const suggestions = attachmentSuggestions(attachments, t);
+  const selectedModelInfo = useMemo(
+    () =>
+      providerModels.find(
+        (model) =>
+          model.id === selectedModel &&
+          (!selectedProviderId || model.provider_id === selectedProviderId),
+      ) ?? providerModels.find((model) => model.id === selectedModel),
+    [providerModels, selectedModel, selectedProviderId],
+  );
+  const modelCostHint = useMemo(() => {
+    if (!selectedModelInfo) return null;
+    if (selectedModelInfo.provider_id === "ollama") return "Local";
+    if (selectedModelInfo.provider_id === "openai-subscription") return "Included";
+
+    const inputPrice = selectedModelInfo.pricing.prompt || 0;
+    const outputPrice = selectedModelInfo.pricing.completion || 0;
+    if (inputPrice <= 0 && outputPrice <= 0) return "Free";
+
+    const inputTokens = estimateTextTokens(input);
+    const inputCost = inputTokens * inputPrice / 1_000_000;
+    const inRate = formatCreditsPerM(usdToCreditsPerM(inputPrice));
+    const outRate = formatCreditsPerM(usdToCreditsPerM(outputPrice));
+
+    if (inputTokens > 0) {
+      return `Est. input ${formatEstimatedUsd(inputCost)} · out ${outRate}`;
+    }
+    return `In ${inRate} · out ${outRate}`;
+  }, [input, selectedModelInfo]);
   const compactingStatusText = useMemo(() => {
     if (!isCompacting) return null;
     if (!compactingLabel) return t("contextCompactingNow");
@@ -539,6 +582,15 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onStop, c
             {compactingStatusText && (
               <div className="mr-1 max-w-[220px] truncate text-[12px] font-medium text-[var(--text-secondary)]">
                 {compactingStatusText}
+              </div>
+            )}
+
+            {modelCostHint && !compactingStatusText && (
+              <div
+                className="mr-1 max-w-[260px] truncate text-[11px] font-medium text-[var(--text-tertiary)]"
+                title={modelCostHint}
+              >
+                {modelCostHint}
               </div>
             )}
 

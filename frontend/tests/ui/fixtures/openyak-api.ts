@@ -103,6 +103,7 @@ export interface OpenYakMockOptions {
 export interface OpenYakSeedOptions {
   authConnected?: boolean;
   hasCompletedOnboarding?: boolean;
+  savedPermissions?: Array<{ tool: string; allow: boolean; timestamp: number }>;
   force?: boolean;
 }
 
@@ -925,7 +926,7 @@ function seededSettings(options: OpenYakSeedOptions = {}) {
       workMode: "auto",
       reasoningEnabled: true,
       permissionPresets: { fileChanges: true, runCommands: true },
-      savedPermissions: [],
+      savedPermissions: options.savedPermissions ?? [],
       workspaceDirectory: null,
       hasSeenHints: true,
       language: "en",
@@ -962,7 +963,8 @@ export async function seedOpenYakStorage(page: Page, options: OpenYakSeedOptions
   const overwrite =
     options.force === true ||
     options.authConnected !== undefined ||
-    options.hasCompletedOnboarding !== undefined;
+    options.hasCompletedOnboarding !== undefined ||
+    options.savedPermissions !== undefined;
   await page.addInitScript(({ settings, auth, overwrite: shouldOverwrite }) => {
     const setValue = (key: string, value: string) => {
       if (shouldOverwrite || !window.localStorage.getItem(key)) {
@@ -1324,9 +1326,16 @@ function sseStreamBody(streamId: string) {
       sseEvent(1, "text-delta", { text: "I need approval before running the verification command." }),
       sseEvent(2, "permission-request", {
         call_id: "perm-run-tests",
+        tool_call_id: "tool-run-tests",
         tool: "bash",
-        permission: "Run a shell command",
+        permission: "bash",
         patterns: ["npm run preflight:ui"],
+        arguments: {
+          command: "npm run preflight:ui",
+          cwd: "/Users/alex/openyak-demo/frontend",
+        },
+        message: "Allow running this shell command?\n\nnpm run preflight:ui",
+        arguments_truncated: false,
       }),
       "",
     ].join("\n");

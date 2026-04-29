@@ -99,6 +99,7 @@ class SessionPrompt:
         self.workspace_memory_section: str | None = None
         self.system_prompt_parts: SystemPromptParts | None = None
         self.merged_permissions: list = []
+        self.request_permissions: list = []
         self.preset_permissions: list = []
         self.session_permissions: list = []
         self.is_first_turn: bool = False
@@ -228,11 +229,7 @@ class SessionPrompt:
 
         # --- 3. Create/load session and persist user message ---
         if self.skip_user_message:
-            async with self.session_factory() as db:
-                async with db.begin():
-                    session = await get_session(db, self.job.session_id)
-                    if session:
-                        self.session_permission_data = session.permission
+            pass
         else:
             async with self.session_factory() as db:
                 async with db.begin():
@@ -244,8 +241,6 @@ class SessionPrompt:
                             directory=self.request.workspace or ".",
                         )
                         self.is_first_turn = True
-                    else:
-                        self.session_permission_data = session.permission
 
                     user_msg = await create_message(
                         db,
@@ -332,13 +327,18 @@ class SessionPrompt:
             workspace_memory_section=self.workspace_memory_section,
         )
 
-        # --- 5. Merge permission rulesets (global → agent → presets → session) ---
+        # --- 5. Merge permission rulesets ---
+        # Persisted browser choices arrive as request permissions. Do not read
+        # historical Session.permission here; Settings must be the visible source
+        # of truth for remembered approvals and denials.
         self.session_permissions = parse_session_permissions(self.session_permission_data)
         self.preset_permissions = presets_to_ruleset(self.request.permission_presets)
+        self.request_permissions = parse_session_permissions(self.request.permission_rules)
         self.merged_permissions = merge_rulesets(
             GLOBAL_DEFAULTS,
             self.agent.permissions,
             self.preset_permissions,
+            self.request_permissions,
             self.session_permissions,
         )
 
@@ -892,6 +892,7 @@ class SessionPrompt:
             GLOBAL_DEFAULTS,
             self.agent.permissions,
             self.preset_permissions,
+            self.request_permissions,
             self.session_permissions,
         )
         self.system_prompt_parts = build_system_prompt(

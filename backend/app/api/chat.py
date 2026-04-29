@@ -137,6 +137,10 @@ async def start_prompt(
     stream_id = generate_ulid()
 
     job = sm.create_job(stream_id=stream_id, session_id=session_id)
+    # Browser chat jobs are interactive as soon as they are created. The SSE
+    # stream may connect a moment later, but ask-first permissions must never
+    # race ahead as non-interactive work.
+    job.interactive = True
 
     # Launch the full agent loop in a background task with concurrency limiting
     coro = run_generation(
@@ -269,6 +273,7 @@ async def edit_and_resend(
             await db.execute(sa_delete(Todo).where(Todo.session_id == body.session_id))
 
     job = sm.create_job(stream_id=stream_id, session_id=body.session_id)
+    job.interactive = True
 
     # Build a PromptRequest for run_generation (reuses existing flow)
     edit_request = PromptRequest(
@@ -278,6 +283,7 @@ async def edit_and_resend(
         agent=body.agent,
         attachments=body.attachments,
         permission_presets=body.permission_presets,
+        permission_rules=body.permission_rules,
         reasoning=body.reasoning,
         workspace=body.workspace,
     )
@@ -414,8 +420,11 @@ async def respond_to_prompt(request: Request, sm: StreamManagerDep, body: Respon
     # Broadcast a resolved event so other connected clients (e.g., the other
     # end of a PC/mobile session) can dismiss their prompt UI.
     source = (request.state.source if hasattr(request, "state") and hasattr(request.state, "source") else "local")
-    if isinstance(body.response, bool):
-        job.publish(SSEEvent(PERMISSION_RESOLVED, {"call_id": body.call_id, "allowed": body.response, "source": source}))
+    allowed = body.response
+    if isinstance(body.response, dict) and "allowed" in body.response:
+        allowed = body.response.get("allowed")
+    if isinstance(allowed, bool):
+        job.publish(SSEEvent(PERMISSION_RESOLVED, {"call_id": body.call_id, "allowed": allowed, "source": source}))
     else:
         job.publish(SSEEvent(QUESTION_RESOLVED, {"call_id": body.call_id, "source": source}))
 

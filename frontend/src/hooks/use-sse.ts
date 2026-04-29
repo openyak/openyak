@@ -522,9 +522,13 @@ export function useSSE(streamId: string | null) {
         }
         store.getState().setPermissionRequest({
           callId: data.call_id,
-          tool: data.tool ?? "",
+          toolCallId: data.tool_call_id,
+          tool: data.tool ?? data.permission ?? "",
           permission: data.permission ?? "",
           patterns: data.patterns ?? [],
+          arguments: data.arguments ?? {},
+          message: data.message,
+          argumentsTruncated: data.arguments_truncated ?? false,
         });
       }
     });

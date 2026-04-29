@@ -1,9 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
-import { mockOpenYakApi, seedOpenYakStorage } from "./fixtures/openyak-api";
+import { mockOpenYakApi, seedOpenYakStorage, type OpenYakMockState } from "./fixtures/openyak-api";
+
+let mockState: OpenYakMockState;
 
 test.beforeEach(async ({ page }) => {
   await seedOpenYakStorage(page);
-  await mockOpenYakApi(page);
+  mockState = await mockOpenYakApi(page);
 });
 
 async function openNewChat(page: Page, workspace = false) {
@@ -60,6 +62,44 @@ test.describe("OpenYak UI preflight", () => {
       await filesCard.click();
     }
     await expect(page.getByText("plan.md")).toBeVisible();
+  });
+
+  test("desktop chat path: IME Enter confirms composition without sending", async ({ page }) => {
+    await openNewChat(page);
+
+    const input = page.getByPlaceholder(/Describe the result you want/i);
+    await input.fill("你好");
+    await input.focus();
+
+    await input.dispatchEvent("compositionstart", { data: "你" });
+    await input.dispatchEvent("keydown", {
+      key: "Enter",
+      code: "Enter",
+      keyCode: 13,
+      which: 13,
+      bubbles: true,
+      cancelable: true,
+    });
+    expect(mockState.promptBodies).toHaveLength(0);
+
+    await input.dispatchEvent("compositionend", { data: "你好" });
+    await input.dispatchEvent("keydown", {
+      key: "Enter",
+      code: "Enter",
+      keyCode: 13,
+      which: 13,
+      bubbles: true,
+      cancelable: true,
+    });
+    expect(mockState.promptBodies).toHaveLength(0);
+
+    await page.waitForTimeout(120);
+    const promptResponse = page.waitForResponse((res) =>
+      res.url().includes("/api/chat/prompt") && res.status() === 200,
+    );
+    await input.press("Enter");
+    await promptResponse;
+    expect(mockState.promptBodies).toHaveLength(1);
   });
 
   test("desktop history path: sidebar navigation and persisted conversation render", async ({ page }) => {
@@ -119,7 +159,10 @@ test.describe("OpenYak UI preflight", () => {
 
     await sendPrompt(page, "Trigger permission flow for the preflight");
     await expect(page.getByText("Permission Required")).toBeVisible();
-    await expect(page.getByText("npm run preflight:ui")).toBeVisible();
+    await expect(page.getByText("Allow running this shell command?")).toBeVisible();
+    await expect(page.getByText("Command", { exact: true })).toBeVisible();
+    await expect(page.locator("pre", { hasText: "npm run preflight:ui" })).toBeVisible();
+    await expect(page.getByText("/Users/alex/openyak-demo/frontend")).toBeVisible();
 
     const respond = page.waitForResponse((res) =>
       res.url().includes("/api/chat/respond") && res.status() === 200,
@@ -127,6 +170,140 @@ test.describe("OpenYak UI preflight", () => {
     await page.getByRole("button", { name: /Allow/i }).click();
     await respond;
     await expect(page.getByText("Permission Required")).toBeHidden();
+  });
+
+  test("desktop interactive path: allow once does not persist a permission rule", async ({ page }) => {
+    await openNewChat(page);
+    await page.getByRole("button", { name: /Auto-edit/i }).click();
+    await page.getByRole("button", { name: /Ask first/i }).click();
+
+    await sendPrompt(page, "Trigger permission flow for allow once");
+    await expect(page.getByText("Permission Required")).toBeVisible();
+
+    const respond = page.waitForResponse((res) =>
+      res.url().includes("/api/chat/respond") && res.status() === 200,
+    );
+    await page.getByRole("button", { name: /Allow/i }).click();
+    await respond;
+
+    expect(mockState.chatResponses.at(-1)).toMatchObject({
+      response: {
+        allowed: true,
+        remember: false,
+        permission: "bash",
+        pattern: "npm run preflight:ui",
+      },
+    });
+
+    await openNewChat(page);
+    await sendPrompt(page, "Create a follow-up checklist");
+    expect(mockState.promptBodies.at(-1)).toMatchObject({
+      permission_rules: null,
+    });
+  });
+
+  test("desktop interactive path: always allow persists permission rules to future prompts", async ({ page }) => {
+    await openNewChat(page);
+    await page.getByRole("button", { name: /Auto-edit/i }).click();
+    await page.getByRole("button", { name: /Ask first/i }).click();
+
+    await sendPrompt(page, "Trigger permission flow for always allow");
+    await expect(page.getByText("Permission Required")).toBeVisible();
+    await page.getByRole("switch", { name: /Remember this choice for bash/i }).setChecked(true);
+
+    const respond = page.waitForResponse((res) =>
+      res.url().includes("/api/chat/respond") && res.status() === 200,
+    );
+    await page.getByRole("button", { name: /Allow/i }).click();
+    await respond;
+
+    expect(mockState.chatResponses.at(-1)).toMatchObject({
+      response: {
+        allowed: true,
+        remember: true,
+        permission: "bash",
+        pattern: "npm run preflight:ui",
+      },
+    });
+
+    await openNewChat(page);
+    await sendPrompt(page, "Create a follow-up checklist");
+    expect(mockState.promptBodies.at(-1)).toMatchObject({
+      permission_rules: [
+        {
+          action: "allow",
+          permission: "bash",
+          pattern: "*",
+        },
+      ],
+    });
+  });
+
+  test("desktop interactive path: deny once does not persist a permission rule", async ({ page }) => {
+    await openNewChat(page);
+    await page.getByRole("button", { name: /Auto-edit/i }).click();
+    await page.getByRole("button", { name: /Ask first/i }).click();
+
+    await sendPrompt(page, "Trigger permission flow for deny once");
+    await expect(page.getByText("Permission Required")).toBeVisible();
+
+    const respond = page.waitForResponse((res) =>
+      res.url().includes("/api/chat/respond") && res.status() === 200,
+    );
+    await page.getByRole("button", { name: /Deny/i }).click();
+    await respond;
+
+    expect(mockState.chatResponses.at(-1)).toMatchObject({
+      response: {
+        allowed: false,
+        remember: false,
+        permission: "bash",
+        pattern: "npm run preflight:ui",
+      },
+    });
+
+    await openNewChat(page);
+    await sendPrompt(page, "Create a follow-up checklist");
+    expect(mockState.promptBodies.at(-1)).toMatchObject({
+      permission_rules: null,
+    });
+  });
+
+  test("desktop interactive path: always deny persists permission rules to future prompts", async ({ page }) => {
+    await openNewChat(page);
+    await page.getByRole("button", { name: /Auto-edit/i }).click();
+    await page.getByRole("button", { name: /Ask first/i }).click();
+
+    await sendPrompt(page, "Trigger permission flow for always deny");
+    await expect(page.getByText("Permission Required")).toBeVisible();
+    await page.getByRole("switch", { name: /Remember this choice for bash/i }).setChecked(true);
+
+    const respond = page.waitForResponse((res) =>
+      res.url().includes("/api/chat/respond") && res.status() === 200,
+    );
+    await page.getByRole("button", { name: /Deny/i }).click();
+    await respond;
+
+    expect(mockState.chatResponses.at(-1)).toMatchObject({
+      response: {
+        allowed: false,
+        remember: true,
+        permission: "bash",
+        pattern: "npm run preflight:ui",
+      },
+    });
+
+    await openNewChat(page);
+    await sendPrompt(page, "Create a follow-up checklist");
+    expect(mockState.promptBodies.at(-1)).toMatchObject({
+      permission_rules: [
+        {
+          action: "deny",
+          permission: "bash",
+          pattern: "*",
+        },
+      ],
+    });
   });
 
   test("desktop interactive path: agent question is answered through the GUI", async ({ page }) => {
@@ -173,6 +350,10 @@ test.describe("OpenYak UI preflight", () => {
     await page.getByRole("button", { name: /Own API Key/i }).click();
     await expect(page.getByText("OpenRouter")).toBeVisible();
 
+    await page.getByRole("button", { name: "Permissions" }).click();
+    await expect(page.getByRole("heading", { name: "Permissions", exact: true })).toBeVisible();
+    await expect(page.getByText("No remembered permissions")).toBeVisible();
+
     await page.getByRole("button", { name: "Automations" }).click();
     await expect(page.getByRole("heading", { name: "Automations" })).toBeVisible();
     await expect(page.getByText("Morning brief")).toBeVisible();
@@ -206,6 +387,31 @@ test.describe("OpenYak UI preflight", () => {
     await expect(page.getByText("Delete workspace memory?")).toBeVisible();
     await page.getByRole("button", { name: "Yes, delete" }).click();
     await expect(page.getByText("Delete workspace memory?")).toBeHidden();
+  });
+
+  test("settings permissions path: remembered choices can be reviewed and cleared", async ({ page }) => {
+    await seedOpenYakStorage(page, {
+      force: true,
+      savedPermissions: [
+        { tool: "bash", allow: true, timestamp: Date.parse("2026-04-26T12:00:00.000Z") },
+        { tool: "write", allow: false, timestamp: Date.parse("2026-04-26T12:05:00.000Z") },
+      ],
+    });
+
+    await page.goto("/settings?tab=permissions");
+    await expect(page.getByRole("heading", { name: "Permissions", exact: true })).toBeVisible();
+    await expect(page.getByText("Shell", { exact: true })).toBeVisible();
+    await expect(page.getByText("All bash requests")).toBeVisible();
+    await expect(page.getByText("Write", { exact: true })).toBeVisible();
+    await expect(page.getByText("All write requests")).toBeVisible();
+
+    await page.getByRole("button", { name: "Revoke bash permission" }).click();
+    await expect(page.getByText("Shell", { exact: true })).toBeHidden();
+    await expect(page.getByText("Write", { exact: true })).toBeVisible();
+
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByRole("button", { name: "Clear all" }).click();
+    await expect(page.getByText("No remembered permissions")).toBeVisible();
   });
 
   test("settings providers path: all provider modes can be configured from GUI controls", async ({ page }) => {

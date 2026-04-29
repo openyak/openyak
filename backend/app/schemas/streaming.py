@@ -36,6 +36,9 @@ class SSEEventData(BaseModel):
     # permission_request
     permission: str | None = None
     patterns: list[str] | None = None
+    tool_call_id: str | None = None
+    message: str | None = None
+    arguments_truncated: bool | None = None
 
     # error
     error_type: str | None = None

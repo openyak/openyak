@@ -53,6 +53,9 @@ export interface SSEEventData {
   // permission_request
   permission?: string | null;
   patterns?: string[] | null;
+  tool_call_id?: string | null;
+  message?: string | null;
+  arguments_truncated?: boolean | null;
 
   // question (legacy single-question mode)
   question?: string | null;
@@ -93,9 +96,13 @@ export interface ParsedSSEEvent {
 /** Permission request from SSE stream. */
 export interface PermissionRequest {
   callId: string;
+  toolCallId?: string | null;
   tool: string;
   permission: string;
   patterns: string[];
+  arguments: Record<string, unknown>;
+  message?: string | null;
+  argumentsTruncated?: boolean;
 }
 
 /** Single option within a multi-question item. */
