@@ -15,6 +15,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tarfile
 import zipfile
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -27,9 +28,11 @@ logger = logging.getLogger(__name__)
 _GITHUB_BASE = "https://github.com/ollama/ollama/releases/latest/download"
 _DOWNLOAD_URLS: dict[str, str] = {
     "windows-amd64": f"{_GITHUB_BASE}/ollama-windows-amd64.zip",
-    "darwin-arm64": f"{_GITHUB_BASE}/ollama-darwin",
-    "darwin-amd64": f"{_GITHUB_BASE}/ollama-darwin",
-    "linux-amd64": f"{_GITHUB_BASE}/ollama-linux-amd64",
+    "windows-arm64": f"{_GITHUB_BASE}/ollama-windows-arm64.zip",
+    "darwin-arm64": f"{_GITHUB_BASE}/ollama-darwin.tgz",
+    "darwin-amd64": f"{_GITHUB_BASE}/ollama-darwin.tgz",
+    "linux-amd64": f"{_GITHUB_BASE}/ollama-linux-amd64.tar.zst",
+    "linux-arm64": f"{_GITHUB_BASE}/ollama-linux-arm64.tar.zst",
 }
 
 _HEALTH_RETRIES = 30
@@ -65,6 +68,19 @@ def _is_port_free(port: int) -> bool:
         return False
 
 
+def _download_filename(url: str, fallback: str) -> str:
+    name = url.rsplit("/", 1)[-1]
+    return name or fallback
+
+
+def _is_zip(url: str) -> bool:
+    return url.endswith(".zip")
+
+
+def _is_tar(url: str) -> bool:
+    return url.endswith((".tgz", ".tar.gz", ".tar.zst"))
+
+
 class OllamaManager:
     """Manages the Ollama binary and its ``ollama serve`` process."""
 
@@ -88,7 +104,14 @@ class OllamaManager:
     @property
     def binary_path(self) -> Path:
         name = "ollama.exe" if sys.platform == "win32" else "ollama"
-        return self.binary_dir / name
+        path = self.binary_dir / name
+        if path.exists():
+            return path
+
+        matches = sorted(self.binary_dir.rglob(name)) if self.binary_dir.exists() else []
+        if matches:
+            return matches[0]
+        return path
 
     @property
     def is_binary_installed(self) -> bool:
@@ -115,8 +138,8 @@ class OllamaManager:
 
         self.binary_dir.mkdir(parents=True, exist_ok=True)
 
-        is_zip = url.endswith(".zip")
-        download_path = self.binary_dir / ("ollama.zip" if is_zip else self.binary_path.name)
+        is_archive = _is_zip(url) or _is_tar(url)
+        download_path = self.binary_dir / (_download_filename(url, "ollama.zip") if is_archive else self.binary_path.name)
 
         yield {"status": "downloading", "completed": 0, "total": 0}
 
@@ -140,12 +163,13 @@ class OllamaManager:
             yield {"status": "error", "message": str(e)}
             return
 
-        # Extract zip on Windows
-        if is_zip:
+        # Extract release archives.
+        if is_archive:
             yield {"status": "extracting"}
             try:
-                await asyncio.to_thread(self._extract_zip, download_path)
+                await asyncio.to_thread(self._extract_archive, download_path)
                 download_path.unlink(missing_ok=True)
+                self._ensure_binary_executable()
             except Exception as e:
                 yield {"status": "error", "message": f"Extraction failed: {e}"}
                 return
@@ -155,10 +179,43 @@ class OllamaManager:
 
         yield {"status": "done"}
 
-    def _extract_zip(self, zip_path: Path) -> None:
-        """Extract ollama zip to binary_dir."""
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            zf.extractall(self.binary_dir)
+    def _extract_archive(self, archive_path: Path) -> None:
+        """Extract an Ollama release archive to binary_dir."""
+        path = str(archive_path)
+        if path.endswith(".zip"):
+            with zipfile.ZipFile(archive_path, "r") as zf:
+                for member in zf.namelist():
+                    member_path = Path(member)
+                    if member_path.is_absolute() or ".." in member_path.parts:
+                        raise RuntimeError(f"Unsafe archive member: {member}")
+                zf.extractall(self.binary_dir)
+            return
+
+        if path.endswith((".tgz", ".tar.gz")):
+            with tarfile.open(archive_path, "r:gz") as tf:
+                tf.extractall(self.binary_dir, filter="data")
+            return
+
+        if path.endswith(".tar.zst"):
+            tar = shutil.which("tar")
+            if tar is None:
+                raise RuntimeError("tar is required to extract Ollama .tar.zst releases")
+            subprocess.run(
+                [tar, "-xf", str(archive_path), "-C", str(self.binary_dir)],
+                check=True,
+                capture_output=True,
+            )
+            return
+
+        raise RuntimeError(f"Unsupported Ollama archive format: {archive_path.name}")
+
+    def _ensure_binary_executable(self) -> None:
+        """Verify the extracted Ollama binary exists and is executable."""
+        binary_path = self.binary_path
+        if not binary_path.exists():
+            raise FileNotFoundError(f"Ollama binary not found after extraction: {binary_path}")
+        if sys.platform != "win32":
+            binary_path.chmod(binary_path.stat().st_mode | 0o755)
 
     # ── Process lifecycle ─────────────────────────────────────────────────
 
