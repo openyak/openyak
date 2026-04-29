@@ -423,6 +423,8 @@ export function useSSE(streamId: string | null) {
         data.tokens ?? {},
         data.cost ?? 0,
         data.total_cost ?? null,
+        id ?? null,
+        data.session_id ?? null,
       );
 
       const terminalReasons = new Set(["stop", "length", "error", "aborted"]);

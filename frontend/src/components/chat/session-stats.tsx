@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { useTranslation } from "react-i18next";
 import { useChatStore } from "@/stores/chat-store";
 import {
@@ -8,30 +9,40 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
+/** Format a non-negative integer token count for compact display. */
 function formatTokens(n: number): string {
-  if (n < 1_000) return `${n}`;
+  if (!Number.isFinite(n) || n <= 0) return "0";
+  if (n < 1_000) return `${Math.floor(n)}`;
   if (n < 1_000_000) {
     const v = n / 1_000;
     return `${v >= 100 ? v.toFixed(0) : v.toFixed(1)}k`;
   }
-  const v = n / 1_000_000;
-  return `${v >= 100 ? v.toFixed(0) : v.toFixed(2)}M`;
+  if (n < 1_000_000_000) {
+    const v = n / 1_000_000;
+    return `${v >= 100 ? v.toFixed(0) : v.toFixed(2)}M`;
+  }
+  const v = n / 1_000_000_000;
+  return `${v.toFixed(2)}B`;
 }
 
+/** Format a non-negative USD cost; defends against NaN / negative inputs. */
 function formatCost(cost: number): string {
+  if (!Number.isFinite(cost) || cost <= 0) return "$0";
   if (cost < 0.01) return `$${cost.toFixed(4)}`;
   return `$${cost.toFixed(2)}`;
 }
 
 /**
  * Real-time session usage indicator shown in the chat header.
- * Surfaces cumulative token consumption (and cost when the provider returns
- * pricing) so users can judge how much a session has consumed without
- * digging into the Settings → Usage tab.
  *
- * Renders nothing until at least one step_finish event has been observed.
+ * Cost is surfaced only when the backend has reported a positive total — the
+ * authoritative `total_cost` arrives via SSE step_finish and is null/0 for
+ * providers without pricing (local Ollama, custom endpoints, OpenAI
+ * subscription mode). In that case we degrade to tokens-only.
+ *
+ * Renders nothing until at least one usage signal has been observed.
  */
-export function SessionStats() {
+function SessionStatsImpl() {
   const { t } = useTranslation("chat");
   const usage = useChatStore((s) => s.sessionUsage);
 
@@ -42,12 +53,17 @@ export function SessionStats() {
     usage.cacheReadTokens +
     usage.cacheWriteTokens;
 
-  if (totalTokens === 0 && usage.cost === null) {
+  // Treat 0 as "not yet priced" — the backend always emits a numeric
+  // total_cost (initialised to 0.0), so `cost === null` alone wouldn't
+  // capture the unpriced-provider case.
+  const hasCost = typeof usage.cost === "number" && usage.cost > 0;
+
+  if (totalTokens <= 0 && !hasCost) {
     return null;
   }
 
   const tokensLabel = `${formatTokens(totalTokens)} tok`;
-  const costLabel = usage.cost !== null ? `≈${formatCost(usage.cost)}` : null;
+  const costLabel = hasCost ? `≈${formatCost(usage.cost as number)}` : null;
 
   return (
     <Tooltip>
@@ -99,11 +115,11 @@ export function SessionStats() {
               />
             )}
           </div>
-          {usage.cost !== null && (
+          {hasCost && (
             <div className="border-t border-[var(--border-subtle)] pt-2">
               <UsageRow
                 label={t("sessionStats.cost", "Estimated cost")}
-                value={`≈${formatCost(usage.cost)}`}
+                value={`≈${formatCost(usage.cost as number)}`}
                 emphasize
               />
               <div className="mt-1 text-[10px] text-[var(--text-tertiary)]">
@@ -119,6 +135,8 @@ export function SessionStats() {
     </Tooltip>
   );
 }
+
+export const SessionStats = memo(SessionStatsImpl);
 
 function UsageRow({
   label,

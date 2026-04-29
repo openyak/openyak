@@ -9,12 +9,16 @@ import type { FileAttachment } from "@/types/chat";
  * Cumulative usage for the current chat session (across multiple generations).
  * Reset only on `reset()` (e.g., switching chats); preserved across `finishGeneration`.
  *
- * - `cost` mirrors the backend-authoritative `total_cost` from the latest step_finish.
- *   `null` when running on a model with no pricing (local Ollama, custom endpoints).
+ * Named `LiveSessionUsage` to disambiguate from the persisted `SessionUsage`
+ * row in `@/types/usage` (which models stored stats with `total_cost`,
+ * `total_tokens`, `message_count`).
+ *
+ * - `cost` mirrors the backend-authoritative `total_cost` from the latest
+ *   step_finish. `null` when no provider has reported pricing yet.
  * - Token fields are accumulated frontend-side from `step_finish.tokens`.
  *   Will reset on page refresh until Phase 2 wires backend persistence.
  */
-export interface SessionUsage {
+export interface LiveSessionUsage {
   inputTokens: number;
   outputTokens: number;
   reasoningTokens: number;
@@ -23,7 +27,7 @@ export interface SessionUsage {
   cost: number | null;
 }
 
-const EMPTY_SESSION_USAGE: SessionUsage = {
+const EMPTY_SESSION_USAGE: LiveSessionUsage = {
   inputTokens: 0,
   outputTokens: 0,
   reasoningTokens: 0,
@@ -31,6 +35,31 @@ const EMPTY_SESSION_USAGE: SessionUsage = {
   cacheWriteTokens: 0,
   cost: null,
 };
+
+/**
+ * Bounded LRU-ish set of step_finish event ids already applied to
+ * sessionUsage, used to drop SSE replays after Last-Event-ID resume.
+ * Lives outside the store so it does not trigger re-renders.
+ *
+ * SSE event ids in this codebase are numbers (auto-increment per stream),
+ * not strings; callers pass them through unchanged.
+ */
+const SEEN_STEP_FINISH_IDS = new Set<number>();
+const SEEN_STEP_FINISH_LIMIT = 256;
+function rememberStepFinishId(id: number | null | undefined): boolean {
+  if (id === null || id === undefined) return false; // unknown id — skip dedup
+  if (SEEN_STEP_FINISH_IDS.has(id)) return true; // already seen
+  SEEN_STEP_FINISH_IDS.add(id);
+  if (SEEN_STEP_FINISH_IDS.size > SEEN_STEP_FINISH_LIMIT) {
+    // Drop the oldest entry — Set preserves insertion order.
+    const oldest = SEEN_STEP_FINISH_IDS.values().next().value;
+    if (oldest !== undefined) SEEN_STEP_FINISH_IDS.delete(oldest);
+  }
+  return false;
+}
+function clearSeenStepFinishIds(): void {
+  SEEN_STEP_FINISH_IDS.clear();
+}
 
 interface ChatStore {
   // ─── Active generation ───
@@ -63,7 +92,7 @@ interface ChatStore {
 
   // ─── Session usage (Trust Surface — Phase 1) ───
   /** Cumulative token + cost for the current chat. Resets on chat switch. */
-  sessionUsage: SessionUsage;
+  sessionUsage: LiveSessionUsage;
 
   // ─── Actions ───
   /** Immediately show loading state + optimistic user message before API returns. */
@@ -81,6 +110,11 @@ interface ChatStore {
     tokens: Record<string, number>,
     cost: number,
     totalCost: number | null,
+    /** SSE event id; used to drop replays after Last-Event-ID resume. */
+    eventId?: number | null,
+    /** Session id from the SSE event payload; used to drop late events
+     *  arriving after the user switched chats. */
+    eventSessionId?: string | null,
   ) => void;
   addCompaction: (auto: boolean) => void;
   startCompaction: (phases: string[]) => void;
@@ -96,6 +130,13 @@ interface ChatStore {
   setModelLoading: (loading: boolean) => void;
   setCompacting: (compacting: boolean) => void;
   clearStreamingContent: () => void;
+  /**
+   * Mark a chat as the active one. Resets per-chat session usage and the
+   * step_finish dedup set; intended to be called from the sessionId-keyed
+   * effect in chat-view.tsx so direct route navigation (/c/A → /c/B) does
+   * not leak A's running totals onto B.
+   */
+  enterChat: (sessionId: string | null) => void;
   finishGeneration: () => void;
   reset: () => void;
 }
@@ -283,25 +324,17 @@ export const useChatStore = create<ChatStore>((set) => ({
       };
     }),
 
-  addStepFinish: (reason, tokens, cost, totalCost) =>
+  addStepFinish: (reason, tokens, cost, totalCost, eventId, eventSessionId) =>
     set((s) => {
       const { parts, text, reasoning } = flushBuffers(
         s.streamingParts,
         s.streamingText,
         s.streamingReasoning,
       );
-      const prev = s.sessionUsage;
-      const nextUsage: SessionUsage = {
-        inputTokens: prev.inputTokens + (tokens?.input ?? 0),
-        outputTokens: prev.outputTokens + (tokens?.output ?? 0),
-        reasoningTokens: prev.reasoningTokens + (tokens?.reasoning ?? 0),
-        cacheReadTokens: prev.cacheReadTokens + (tokens?.cache_read ?? 0),
-        cacheWriteTokens: prev.cacheWriteTokens + (tokens?.cache_write ?? 0),
-        // Backend total_cost is authoritative. Fall back to previous when omitted
-        // (e.g., providers with no pricing — keeps prior value rather than zeroing).
-        cost: totalCost ?? prev.cost,
-      };
-      return {
+      // The streaming part is always appended (it drives the UI step tracker
+      // regardless of whether the event is for this chat); the *usage*
+      // accumulator is what we guard.
+      const baseReturn = {
         streamingParts: [
           ...parts,
           {
@@ -313,8 +346,63 @@ export const useChatStore = create<ChatStore>((set) => ({
         ],
         streamingText: text,
         streamingReasoning: reasoning,
-        sessionUsage: nextUsage,
       };
+
+      // Guard 1 — drop late SSE events arriving after a chat switch.
+      // If the event carries a session_id and we know our active session,
+      // both must match before we touch the usage counter.
+      if (eventSessionId && s.sessionId && eventSessionId !== s.sessionId) {
+        return baseReturn;
+      }
+
+      // Guard 2 — drop SSE replays from Last-Event-ID resume.
+      // Token accumulation is not idempotent; cost is mirrored from
+      // backend.total_cost so it would be safe even on a replay, but token
+      // counts would double. Only dedup when an id is provided.
+      if (eventId && rememberStepFinishId(eventId)) {
+        return baseReturn;
+      }
+
+      const prev = s.sessionUsage;
+      const inputDelta = tokens?.input ?? 0;
+      const outputDelta = tokens?.output ?? 0;
+      const reasoningDelta = tokens?.reasoning ?? 0;
+      const cacheReadDelta = tokens?.cache_read ?? 0;
+      const cacheWriteDelta = tokens?.cache_write ?? 0;
+      const tokenDelta =
+        inputDelta + outputDelta + reasoningDelta + cacheReadDelta + cacheWriteDelta;
+
+      // Cost reconciliation:
+      //   1. Backend `total_cost` is the authoritative running total.
+      //   2. Treat 0 as "not yet priced" so unpriced providers (local Ollama,
+      //      custom endpoints) don't show a misleading "≈$0.0000".
+      //   3. Fallback to previous-cost + per-step cost when backend doesn't
+      //      report total_cost yet (older backend / per-step-only emitter).
+      let nextCost: number | null;
+      if (totalCost !== null && totalCost > 0) {
+        nextCost = totalCost;
+      } else if (cost > 0) {
+        nextCost = (prev.cost ?? 0) + cost;
+      } else {
+        nextCost = prev.cost; // unchanged — preserves earlier known value if any
+      }
+
+      // Skip allocating a new sessionUsage object when nothing changed
+      // (e.g., non-terminal step_finish for tool_use carries tokens=null).
+      // Saves a re-render pulse for SessionStats during streaming.
+      if (tokenDelta === 0 && nextCost === prev.cost) {
+        return baseReturn;
+      }
+
+      const nextUsage: LiveSessionUsage = {
+        inputTokens: prev.inputTokens + inputDelta,
+        outputTokens: prev.outputTokens + outputDelta,
+        reasoningTokens: prev.reasoningTokens + reasoningDelta,
+        cacheReadTokens: prev.cacheReadTokens + cacheReadDelta,
+        cacheWriteTokens: prev.cacheWriteTokens + cacheWriteDelta,
+        cost: nextCost,
+      };
+      return { ...baseReturn, sessionUsage: nextUsage };
     }),
 
   addCompaction: (auto) =>
@@ -432,6 +520,11 @@ export const useChatStore = create<ChatStore>((set) => ({
       streamingReasoning: "",
     }),
 
+  enterChat: (sessionId) => {
+    clearSeenStepFinishIds();
+    set({ sessionId, sessionUsage: EMPTY_SESSION_USAGE });
+  },
+
   finishGeneration: () =>
     set((s) => {
       const { parts } = flushBuffers(
@@ -455,7 +548,8 @@ export const useChatStore = create<ChatStore>((set) => ({
       };
     }),
 
-  reset: () =>
+  reset: () => {
+    clearSeenStepFinishIds();
     set({
       streamId: null,
       sessionId: null,
@@ -471,5 +565,6 @@ export const useChatStore = create<ChatStore>((set) => ({
       pendingQuestion: null,
       pendingPlanReview: null,
       sessionUsage: EMPTY_SESSION_USAGE,
-    }),
+    });
+  },
 }));

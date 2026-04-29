@@ -68,38 +68,39 @@ const SORT_BUTTONS_SIMPLE: { key: SortMode; i18n: string }[] = [
 const ARENA_PROVIDERS = new Set<string | null>(["openyak"]);
 
 /**
- * Variant keywords that disambiguate model tiers (Fast/Heavy/Pro/...).
- * Order matters: longer multi-word variants are matched before single-word ones
- * so "Heavy Reasoning" wins over "Heavy" alone.
+ * Variant keywords that disambiguate OpenYak's own model tiers
+ * (Fast / Heavy / Heavy Reasoning, etc.). Order matters: longer multi-word
+ * variants are matched before single-word ones.
+ *
+ * Intentionally narrow — we only run variant detection for providers where
+ * we own the naming scheme. Third-party brand names like "GLM 4.5 Air",
+ * "Gemini 2.5 Flash", "Phi-3 Mini" use these words as part of the family
+ * identity rather than as a tier, and substring matching there would split
+ * legitimate brand names and collide otherwise-distinct models in the UI.
  */
 const VARIANT_KEYWORDS = [
   "Heavy Reasoning",
   "Fast Reasoning",
   "Heavy",
   "Fast",
-  "Ultra",
-  "Pro",
-  "Max",
-  "Mini",
-  "Lite",
-  "Air",
-  "Plus",
-  "Turbo",
-  "Flash",
-  "Sonic",
-  "Thinking",
 ];
 
+/** Providers whose model names use the OpenYak Fast/Heavy variant scheme. */
+const VARIANT_AWARE_PROVIDERS = new Set<string | null>(["openyak"]);
+
 /**
- * Splits a model display name into {family, variant} so the trigger can
- * surface the variant on its own line — fixes the truncation case where
- * "Fast" / "Heavy" suffixes were being clipped.
- *
- * Returns null variant when no known keyword is detected; the caller renders
- * a single-line layout in that case.
+ * Splits a model display name into {family, variant}. Only attempts variant
+ * detection when the active provider is known to use the Fast/Heavy scheme;
+ * otherwise returns the trimmed name as family with no variant.
  */
-function splitModelDisplayName(name: string): { family: string; variant: string | null } {
+function splitModelDisplayName(
+  name: string,
+  provider: string | null,
+): { family: string; variant: string | null } {
   const trimmed = name.trim();
+  if (!VARIANT_AWARE_PROVIDERS.has(provider)) {
+    return { family: trimmed, variant: null };
+  }
   for (const kw of VARIANT_KEYWORDS) {
     // Match keyword as a trailing token (case-insensitive, optional separators).
     const re = new RegExp(`[\\s\\-_·]+${kw}\\s*$`, "i");
@@ -265,6 +266,7 @@ export function HeaderModelDropdown() {
 
   const { family: modelFamily, variant: modelVariant } = splitModelDisplayName(
     shortModel ?? "",
+    activeProvider,
   );
 
   return (

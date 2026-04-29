@@ -84,6 +84,16 @@ export function ChatView({ sessionId }: ChatViewProps) {
   // Strict Mode's dev-only double-invoke (mount → unmount → remount).
   const sessionMountedRef = useRef(false);
   useEffect(() => {
+    // Reset per-chat session usage when navigating between existing chats
+    // so /c/A → /c/B does not leak A's running token/cost totals.
+    // Skip when a generation is in flight for this very session (prevents
+    // wiping the current run's accumulator on a StrictMode remount).
+    {
+      const chatState = useChatStore.getState();
+      if (!chatState.isGenerating || chatState.sessionId !== sessionId) {
+        chatState.enterChat(sessionId);
+      }
+    }
     useArtifactStore.getState().clearAll();
     useActivityStore.getState().close();
     useWorkspaceStore.getState().resetForSession();
