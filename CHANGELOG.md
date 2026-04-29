@@ -6,6 +6,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/), and this project
 
 ## [Unreleased]
 
+## [1.1.9] - 2026-04-29
+
+### Added
+
+- **frontend (permissions):** New Settings → Permissions tab for remembered tool permission decisions. Users can review saved allow/deny rules, revoke individual entries, or clear all remembered permissions.
+- **frontend (costs):** Chat composer now surfaces a compact cost hint before sending, and active sessions show usage updates more consistently while streaming.
+- **backend (permissions):** Permission prompts now include structured request details for review, including target, command, and arguments where applicable. Sensitive and oversized values are redacted or truncated before they reach the UI.
+- **tests (permissions):** Added backend regression coverage for permission prompt payloads, remembered allow/deny rules, and allow-once behavior.
+
+### Changed
+
+- **frontend (models):** Header model picker gives long model names more room, preserves important suffixes such as Fast and Heavy, and keeps the full selected model label available so ChatGPT subscription and OpenRouter variants are easier to distinguish.
+- **providers (openai subscription):** Subscription model selection now reflects the current GPT-5.5 / GPT-5.4 experience instead of surfacing stale older entries as primary choices.
+- **frontend/backend (permissions):** "Allow once" and "always allow" are now distinct. One-time approvals stay scoped to the current request, while remembered choices are sent back to the backend as scoped permission rules for future matching.
+
+### Fixed
+
+- **frontend (IME):** Pressing Enter while composing text with an IME no longer sends the message accidentally. The textarea now tracks composition events, legacy `keyCode === 229`, and a short post-composition guard before restoring Enter-to-send behavior.
+- **frontend (streaming):** Usage stream events are isolated so a usage update cannot overwrite unrelated session state.
+- **backend/frontend (permissions):** New chat jobs become interactive earlier, reducing the race where a permission prompt could be emitted before the SSE connection was ready.
+- **frontend (errors):** FastAPI validation detail arrays now render as readable UI errors instead of raw response objects, and API error parsing is centralized across onboarding, provider settings, Ollama status, and context indicators.
+- **frontend (release build):** Fixed a production `next build` type error in the merged model dropdown fallback path before publishing the release.
+
+### Validation
+
+- **release:** Verified with backend permission tests, frontend lint, production `next build`, the full Playwright preflight suite, GUI workflow checks for model selection / permission management / usage display / IME composition, and the Release Desktop workflow across macOS Apple Silicon, macOS Intel, Windows x64, Linux `.deb`, Linux `.rpm`, and updater manifest publishing.
+
 ## [1.1.8] - 2026-04-29
 
 ### Fixed
