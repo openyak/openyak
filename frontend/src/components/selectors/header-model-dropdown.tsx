@@ -219,7 +219,7 @@ export function HeaderModelDropdown() {
 
   const selectedInfo = visibleModels.find((m) => m.id === selectedModel && m.provider_id === selectedProviderId)
     ?? visibleModels.find((m) => m.id === selectedModel);
-  const selectedLabel = selectedInfo?.name ?? (selectedModel ? (selectedModel.includes("/") ? selectedModel.split("/").pop() : selectedModel) : t("noModelFound"));
+  const selectedLabel = selectedInfo?.name ?? (selectedModel ? (selectedModel.includes("/") ? selectedModel.split("/").pop() ?? selectedModel : selectedModel) : t("noModelFound"));
   const shortModel = preserveModelSuffix(selectedLabel);
 
   // Models still loading with an active provider — show loading indicator
