@@ -13,6 +13,7 @@ import {
   Minimize2,
   MessageSquare,
   Clock3,
+  SquarePen,
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -21,10 +22,11 @@ import { cn } from "@/lib/utils";
 import { useSidebarStore, type OrganizeMode, type SortBy } from "@/stores/sidebar-store";
 
 interface ProjectsToolbarProps {
-  projectDirectories: string[];
+  projectDirectories?: string[];
+  variant?: "projects" | "chats";
 }
 
-export function ProjectsToolbar({ projectDirectories }: ProjectsToolbarProps) {
+export function ProjectsToolbar({ projectDirectories = [], variant = "projects" }: ProjectsToolbarProps) {
   const { t } = useTranslation("common");
   const router = useRouter();
   const collapseAllProjects = useSidebarStore((s) => s.collapseAllProjects);
@@ -61,6 +63,32 @@ export function ProjectsToolbar({ projectDirectories }: ProjectsToolbarProps) {
       setIsPickingDirectory(false);
     }
   };
+
+  const handleNewChat = () => {
+    router.push("/c/new");
+  };
+
+  if (variant === "chats") {
+    return (
+      <div className="flex items-center gap-0.5">
+        <FilterPopover />
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={handleNewChat}
+              className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--text-tertiary)] transition-colors hover:bg-[var(--sidebar-active)] hover:text-[var(--text-primary)]"
+              aria-label={t("newChat")}
+            >
+              <SquarePen className="h-3 w-3" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="top">{t("newChat")}</TooltipContent>
+        </Tooltip>
+      </div>
+    );
+  }
 
   return (
     <div className="flex items-center gap-0.5">

@@ -34,11 +34,20 @@ export function useMessages(sessionId: string | undefined) {
     placeholderData: keepPreviousData,
   });
 
-  // Flatten pages into a single chronological array
-  const messages = useMemo(
-    () => query.data?.pages.flatMap((p) => p.messages) ?? [],
-    [query.data],
-  );
+  // Flatten pages into a single chronological array. Reverse infinite scroll
+  // can briefly overlap the latest page with older pages after refetches.
+  const messages = useMemo(() => {
+    const byId = new Map<string, PaginatedMessages["messages"][number]>();
+    const order: string[] = [];
+    for (const message of query.data?.pages.flatMap((p) => p.messages) ?? []) {
+      if (!byId.has(message.id)) {
+        order.push(message.id);
+      }
+      // Keep the freshest copy if an overlapped page contains the same id.
+      byId.set(message.id, message);
+    }
+    return order.map((id) => byId.get(id)!);
+  }, [query.data]);
 
   const total = query.data?.pages[0]?.total ?? 0;
 

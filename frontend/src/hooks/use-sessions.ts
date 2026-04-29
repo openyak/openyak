@@ -119,6 +119,46 @@ export function usePinSession() {
   });
 }
 
+export function useArchiveSession() {
+  const qc = useQueryClient();
+  type SessionPages = InfiniteData<SessionResponse[]>;
+  return useMutation<SessionResponse, unknown, { id: string }, { previous?: SessionPages }>({
+    mutationFn: ({ id }) =>
+      api.patch<SessionResponse>(API.SESSIONS.DETAIL(id), {
+        time_archived: new Date().toISOString(),
+      }),
+    onMutate: async ({ id }) => {
+      await qc.cancelQueries({ queryKey: queryKeys.sessions.all });
+      const previous = qc.getQueryData<SessionPages>(queryKeys.sessions.all);
+      qc.setQueryData<SessionPages>(queryKeys.sessions.all, (old) => {
+        if (!old?.pages) return old;
+        return {
+          ...old,
+          pages: old.pages.map((page) => page.filter((s) => s.id !== id)),
+        };
+      });
+      return { previous };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previous) {
+        qc.setQueryData<SessionPages>(queryKeys.sessions.all, context.previous);
+      }
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: queryKeys.sessions.all }),
+  });
+}
+
+export function useUnarchiveSession() {
+  const qc = useQueryClient();
+  return useMutation<SessionResponse, unknown, { id: string }>({
+    mutationFn: ({ id }) =>
+      api.patch<SessionResponse>(API.SESSIONS.DETAIL(id), {
+        time_archived: null,
+      }),
+    onSettled: () => qc.invalidateQueries({ queryKey: queryKeys.sessions.all }),
+  });
+}
+
 export function useSearchSessions(query: string) {
   const debouncedQuery = useDebouncedValue(query, 300);
   return useQuery({

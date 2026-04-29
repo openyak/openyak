@@ -809,7 +809,7 @@ pre code {
   display: block;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
-  font-size: 0.875em;
+  font-size: 1em;
 }
 
 .prose th,
@@ -834,7 +834,7 @@ pre code {
 /* ── Table wrapper (component-provided rounded container) ── */
 
 .prose-table-wrapper {
-  font-size: 0.875em;
+  font-size: 1em;
 }
 
 .prose-table-wrapper table {

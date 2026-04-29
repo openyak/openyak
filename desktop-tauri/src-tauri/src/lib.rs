@@ -314,6 +314,10 @@ fn extract_route_from_url(raw: &str) -> Option<String> {
             Some("cancel") => Some("/billing?checkout=cancel".to_string()),
             _ => Some("/billing".to_string()),
         },
+        "chat" => url
+            .query_pairs()
+            .find_map(|(key, value)| (key == "sessionId").then(|| value.into_owned()))
+            .map(|session_id| format!("/c/_?sessionId={session_id}")),
         _ => None,
     }
 }

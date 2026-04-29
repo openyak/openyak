@@ -10,14 +10,15 @@ import { API, queryKeys } from "@/lib/constants";
 import { api } from "@/lib/api";
 import { useChatStore } from "@/stores/chat-store";
 import { useSidebarStore } from "@/stores/sidebar-store";
-import { useSessions, useDeleteSession, useRenameSession, usePinSession, useSearchSessions } from "@/hooks/use-sessions";
+import { useSessions, useDeleteSession, useRenameSession, usePinSession, useArchiveSession, useUnarchiveSession, useSearchSessions } from "@/hooks/use-sessions";
 import { useActiveSessionId } from "@/hooks/use-active-session-id";
 import { useSessionExport } from "@/hooks/use-session-export";
 import { SessionItem } from "./session-item";
 import { DeleteConfirmationDialog } from "./delete-confirmation-dialog";
 import { ProjectsToolbar } from "./projects-toolbar";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Loader2, MessageSquare, SearchX, ChevronRight, FolderClosed, FolderOpen } from "lucide-react";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { Check, ChevronRight, Copy, FolderClosed, FolderOpen, Loader2, MessageSquare, SearchX, SquarePen } from "lucide-react";
 import { getChatRoute } from "@/lib/routes";
 import { cn, groupSessionsByDate, groupSessionsByWorkspace } from "@/lib/utils";
 import type { SessionResponse } from "@/types/session";
@@ -43,6 +44,8 @@ export function SessionList() {
   const deleteSession = useDeleteSession();
   const renameSession = useRenameSession();
   const pinSession = usePinSession();
+  const archiveSession = useArchiveSession();
+  const unarchiveSession = useUnarchiveSession();
   const { exportPdf, exportMarkdown } = useSessionExport();
   const queryClient = useQueryClient();
   const searchQuery = useSidebarStore((s) => s.searchQuery);
@@ -54,11 +57,18 @@ export function SessionList() {
   const hasSearch = searchQuery.trim().length > 0;
   const { data: searchResults, isLoading: isSearching } = useSearchSessions(searchQuery);
 
-  // Flatten infinite query pages into a single array
-  const sessions = useMemo(
-    () => sessionPages?.pages.flat() ?? [],
-    [sessionPages],
-  );
+  // Flatten infinite query pages into a single, stable list. Offset pagination can
+  // briefly overlap pages after pin/archive mutations reorder the server result.
+  const sessions = useMemo(() => {
+    const seen = new Set<string>();
+    const unique: SessionResponse[] = [];
+    for (const session of sessionPages?.pages.flat() ?? []) {
+      if (seen.has(session.id)) continue;
+      seen.add(session.id);
+      unique.push(session);
+    }
+    return unique;
+  }, [sessionPages]);
 
   // Roving tabindex: track which session item is focused
   const [focusedIndex, setFocusedIndex] = useState<number>(-1);
@@ -98,7 +108,14 @@ export function SessionList() {
 
   const filtered = useMemo(() => {
     if (isContentSearch && searchResults) {
-      return searchResults.map((r) => r.session);
+      const seen = new Set<string>();
+      const unique: SessionResponse[] = [];
+      for (const result of searchResults) {
+        if (seen.has(result.session.id)) continue;
+        seen.add(result.session.id);
+        unique.push(result.session);
+      }
+      return unique;
     }
     if (!sessions.length) return [];
     if (!searchQuery.trim()) return sessions;
@@ -196,6 +213,18 @@ export function SessionList() {
     return items;
   }, [hasSearch, filtered, pinned, unpinned, snippetMap, collapsedProjects, organizeMode]);
 
+  const flatItemsSignature = useMemo(
+    () =>
+      flatItems
+        .map((item) => {
+          if (item.type === "header") return `h:${item.label}:${item.first ? "first" : "rest"}`;
+          if (item.type === "project") return `p:${item.directory}:${item.collapsed ? "closed" : "open"}`;
+          return `s:${item.session.id}:${item.session.is_pinned ? "pinned" : "chat"}:${item.snippet ? "snippet" : "plain"}`;
+        })
+        .join("|"),
+    [flatItems],
+  );
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
     count: flatItems.length,
@@ -208,6 +237,11 @@ export function SessionList() {
     },
     overscan: 10,
   });
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => virtualizer.measure());
+    return () => cancelAnimationFrame(frame);
+  }, [flatItemsSignature, virtualizer]);
 
   // Fetch next page when scrolling near bottom
   useEffect(() => {
@@ -394,6 +428,34 @@ export function SessionList() {
     pinSession.mutate({ id, is_pinned });
   }, [pinSession]);
 
+  const handleArchive = useCallback((id: string) => {
+    if (activeSessionId === id) {
+      router.push(getChatRoute());
+    }
+    archiveSession.mutate(
+      { id },
+      {
+        onSuccess: () => {
+          toast.success(t("conversationArchived"), {
+            action: {
+              label: t("undo"),
+              onClick: () => {
+                unarchiveSession.mutate(
+                  { id },
+                  {
+                    onSuccess: () => toast.success(t("conversationRestored")),
+                    onError: () => toast.error(t("restoreFailed")),
+                  },
+                );
+              },
+            },
+          });
+        },
+        onError: () => toast.error(t("archiveFailed")),
+      },
+    );
+  }, [activeSessionId, archiveSession, router, t, unarchiveSession]);
+
   const handleEditStart = useCallback((id: string) => {
     setEditingId(id);
   }, []);
@@ -461,7 +523,7 @@ export function SessionList() {
             const item = flatItems[virtualRow.index];
             const key =
               item.type === "header"
-                ? `h-${item.label}`
+                ? `h-${item.label}-${item.first ? "first" : "rest"}`
                 : item.type === "project"
                   ? `p-${item.directory}`
                   : item.session.id;
@@ -481,29 +543,21 @@ export function SessionList() {
                     <p className="text-ui-3xs font-semibold uppercase tracking-[0.12em] text-[var(--text-tertiary)]">
                       {t(item.label)}
                     </p>
-                    {item.first && !hasSearch && (
-                      <ProjectsToolbar projectDirectories={projectDirectories} />
+                    {!hasSearch && item.label === "projects" && (
+                      <ProjectsToolbar projectDirectories={projectDirectories} variant="projects" />
+                    )}
+                    {!hasSearch && item.label === "chats" && (
+                      <ProjectsToolbar variant="chats" />
                     )}
                   </div>
                 ) : item.type === "project" ? (
-                  <button
-                    type="button"
-                    onClick={() => toggleProjectCollapsed(item.directory)}
-                    className="group mx-3 flex w-[calc(100%-1.5rem)] items-center gap-1.5 rounded-lg px-2 py-1 text-sm text-[var(--text-secondary)] transition-colors hover:bg-[var(--sidebar-hover)] hover:text-[var(--text-primary)]"
-                  >
-                    <ChevronRight
-                      className={cn(
-                        "h-3 w-3 shrink-0 text-[var(--text-tertiary)] transition-transform",
-                        !item.collapsed && "rotate-90",
-                      )}
-                    />
-                    {item.collapsed ? (
-                      <FolderClosed className="h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)] transition-colors group-hover:text-[var(--text-secondary)]" />
-                    ) : (
-                      <FolderOpen className="h-3.5 w-3.5 shrink-0 text-[var(--text-secondary)] transition-colors group-hover:text-[var(--text-primary)]" />
-                    )}
-                    <span className="flex-1 truncate text-left">{item.label}</span>
-                  </button>
+                  <ProjectRow
+                    directory={item.directory}
+                    label={item.label}
+                    count={item.count}
+                    collapsed={item.collapsed}
+                    onToggle={() => toggleProjectCollapsed(item.directory)}
+                  />
                 ) : (
                   <SessionItem
                     session={item.session}
@@ -513,11 +567,11 @@ export function SessionList() {
                     onExportPdf={exportPdf}
                     onExportMarkdown={exportMarkdown}
                     onTogglePin={handleTogglePin}
+                    onArchive={handleArchive}
                     isEditing={editingId === item.session.id}
                     onEditStart={handleEditStart}
                     onEditEnd={handleEditEnd}
                     snippet={item.snippet}
-                    indent={item.indent}
                     isFocused={virtualRow.index === focusedIndex}
                   />
                 )}
@@ -539,5 +593,115 @@ export function SessionList() {
         onCancel={handleDeleteCancel}
       />
     </>
+  );
+}
+
+function ProjectRow({
+  directory,
+  label,
+  count,
+  collapsed,
+  onToggle,
+}: {
+  directory: string;
+  label: string;
+  count: number;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  const { t } = useTranslation("common");
+  const router = useRouter();
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const startNewChat = useCallback(() => {
+    router.push(`/c/new?directory=${encodeURIComponent(directory)}`);
+  }, [directory, router]);
+
+  const openDirectory = useCallback(async () => {
+    try {
+      await api.post(API.FILES.OPEN_SYSTEM, { path: directory });
+    } catch (err) {
+      console.error("Failed to open directory:", err);
+      toast.error(t("openFolderFailed"));
+    }
+  }, [directory, t]);
+
+  const copyDirectory = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(directory);
+      toast.success(t("projectPathCopied"));
+    } catch (err) {
+      console.error("Failed to copy directory:", err);
+      toast.error(t("copyFailed"));
+    }
+  }, [directory, t]);
+
+  const MenuItems = useCallback(
+    ({
+      Item,
+      Separator,
+    }: {
+      Item: typeof ContextMenuItem;
+      Separator: typeof ContextMenuSeparator;
+    }) => (
+      <>
+        <Item onSelect={startNewChat}>
+          <SquarePen />
+          {t("startNewChatInProject")}
+        </Item>
+        <Item onSelect={openDirectory}>
+          <FolderOpen />
+          {t("openInFinder")}
+        </Item>
+        <Item onSelect={copyDirectory}>
+          <Copy />
+          {t("copyWorkingDirectory")}
+        </Item>
+        <Separator />
+        <Item onSelect={onToggle}>
+          <Check className={cn(!collapsed && "opacity-0")} />
+          {t(collapsed ? "expandProject" : "collapseProject")}
+        </Item>
+      </>
+    ),
+    [collapsed, copyDirectory, onToggle, openDirectory, startNewChat, t],
+  );
+
+  return (
+    <ContextMenu onOpenChange={setMenuOpen}>
+      <ContextMenuTrigger asChild>
+        <div
+          className={cn(
+            "group/project relative mx-3 rounded-lg focus-within:bg-[var(--sidebar-active)] focus-within:shadow-[var(--sidebar-active-shadow)] data-[state=open]:bg-[var(--sidebar-active)] data-[state=open]:shadow-[var(--sidebar-active-shadow)]",
+            menuOpen && "bg-[var(--sidebar-active)] shadow-[var(--sidebar-active-shadow)]",
+          )}
+        >
+          <button
+            type="button"
+            onClick={onToggle}
+            className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1 pr-16 text-sm text-[var(--text-secondary)] transition-colors hover:bg-[var(--sidebar-hover)] hover:text-[var(--text-primary)] group-focus-within/project:text-[var(--text-primary)] group-data-[state=open]/project:text-[var(--text-primary)]"
+          >
+            <ChevronRight
+              className={cn(
+                "h-3 w-3 shrink-0 text-[var(--text-tertiary)] transition-transform",
+                !collapsed && "rotate-90",
+              )}
+            />
+            {collapsed ? (
+              <FolderClosed className="h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)] transition-colors group-hover/project:text-[var(--text-secondary)]" />
+            ) : (
+              <FolderOpen className="h-3.5 w-3.5 shrink-0 text-[var(--text-secondary)] transition-colors group-hover/project:text-[var(--text-primary)]" />
+            )}
+            <span className="flex-1 truncate text-left">{label}</span>
+          </button>
+          <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-ui-3xs text-[var(--text-tertiary)]">
+            {count}
+          </span>
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="w-52">
+        <MenuItems Item={ContextMenuItem} Separator={ContextMenuSeparator} />
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }

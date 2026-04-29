@@ -4,7 +4,8 @@ import { useState, useRef, useEffect, useCallback, memo } from "react";
 import { useTranslation } from 'react-i18next';
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { Trash2, Pencil, FileDown, FileText, Pin, PinOff, MessageCircle, EllipsisVertical } from "lucide-react";
+import { toast } from "sonner";
+import { Archive, MessageCircle, Pin, PinOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { API, queryKeys } from "@/lib/constants";
@@ -18,13 +19,6 @@ import {
   ContextMenuTrigger,
   ContextMenuSeparator,
 } from "@/components/ui/context-menu";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-  DropdownMenuSeparator,
-} from "@/components/ui/dropdown-menu";
 import type { SessionResponse } from "@/types/session";
 
 interface SessionItemProps {
@@ -35,13 +29,12 @@ interface SessionItemProps {
   onExportPdf?: (id: string, title: string) => void;
   onExportMarkdown?: (id: string, title: string) => void;
   onTogglePin?: (id: string, pinned: boolean) => void;
+  onArchive?: (id: string) => void;
   isEditing?: boolean;
   onEditStart?: (id: string) => void;
   onEditEnd?: () => void;
   snippet?: string;
   isFocused?: boolean;
-  /** Extra left indent, used when the row sits under a project group header */
-  indent?: boolean;
 }
 
 export const SessionItem = memo(function SessionItem({
@@ -52,18 +45,19 @@ export const SessionItem = memo(function SessionItem({
   onExportPdf,
   onExportMarkdown,
   onTogglePin,
+  onArchive,
   isEditing = false,
   onEditStart,
   onEditEnd,
   snippet,
   isFocused = false,
-  indent = false,
 }: SessionItemProps) {
   const { t } = useTranslation('common');
   const router = useRouter();
   const queryClient = useQueryClient();
   const { prefetch, cancel } = useDebouncedPrefetch(150);
   const [editValue, setEditValue] = useState("");
+  const [menuOpen, setMenuOpen] = useState(false);
   const [scrollVars, setScrollVars] = useState<React.CSSProperties | undefined>();
   const inputRef = useRef<HTMLInputElement>(null);
   const itemRef = useRef<HTMLDivElement>(null);
@@ -74,8 +68,13 @@ export const SessionItem = memo(function SessionItem({
   const title = rawTitle.startsWith("Channel: ")
     ? rawTitle.slice(9).replace(/^(whatsapp|discord|telegram|slack|feishu|signal|line|imessage):/, "")
     : rawTitle;
-  const relativeTime = getRelativeTimeLabel(session.time_updated, t);
+  const relativeTime = getRelativeTimeLabel(session.time_updated);
   const channelBadge = session.slug ? getChannelBadge(session.slug) : null;
+  const hasDirectory = !!session.directory && session.directory !== ".";
+  const deeplink = `openyak://chat?sessionId=${encodeURIComponent(session.id)}`;
+  const pinLabel = session.is_pinned
+    ? t('unpin', { defaultValue: 'Unpin' })
+    : t('pin', { defaultValue: 'Pin' });
 
   // Focus the item when it receives roving tabindex focus
   useEffect(() => {
@@ -136,8 +135,100 @@ export const SessionItem = memo(function SessionItem({
     [handleSubmitRename, handleCancelRename],
   );
 
+  const handleOpenDirectory = useCallback(async () => {
+    if (!hasDirectory || !session.directory) return;
+    try {
+      await api.post(API.FILES.OPEN_SYSTEM, { path: session.directory });
+    } catch (err) {
+      console.error("Failed to open directory:", err);
+      toast.error(t("openFolderFailed", { defaultValue: "Failed to open folder" }));
+    }
+  }, [hasDirectory, session.directory, t]);
+
+  const handleCopy = useCallback(async (value: string, labelKey: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast.success(t(labelKey, { defaultValue: "Copied" }));
+    } catch (err) {
+      console.error("Failed to copy:", err);
+      toast.error(t("copyFailed", { defaultValue: "Copy failed" }));
+    }
+  }, [t]);
+
+  const MenuItems = useCallback(
+    ({
+      Item,
+      Separator,
+    }: {
+      Item: typeof ContextMenuItem;
+      Separator: typeof ContextMenuSeparator;
+    }) => (
+      <>
+        <Item onSelect={() => onTogglePin?.(session.id, !session.is_pinned)}>
+          {session.is_pinned
+            ? t('unpin', { defaultValue: 'Unpin' })
+            : t('pin', { defaultValue: 'Pin' })}
+        </Item>
+        <Item onSelect={() => onEditStart?.(session.id)}>
+          {t('rename')}
+        </Item>
+        <Item onSelect={() => onArchive?.(session.id)}>
+          {t('archiveChat')}
+        </Item>
+        <Separator />
+        {hasDirectory && session.directory && (
+          <>
+            <Item onSelect={handleOpenDirectory}>
+              {t('openInFinder')}
+            </Item>
+            <Item onSelect={() => handleCopy(session.directory!, "workingDirectoryCopied")}>
+              {t('copyWorkingDirectory')}
+            </Item>
+          </>
+        )}
+        <Item onSelect={() => handleCopy(session.id, "sessionIdCopied")}>
+          {t('copySessionId')}
+        </Item>
+        <Item onSelect={() => handleCopy(deeplink, "deeplinkCopied")}>
+          {t('copyDeeplink')}
+        </Item>
+        <Separator />
+        <Item onSelect={() => onExportPdf?.(session.id, title)}>
+          {t('exportPdf')}
+        </Item>
+        <Item onSelect={() => onExportMarkdown?.(session.id, title)}>
+          {t('exportMarkdown', { defaultValue: 'Export Markdown' })}
+        </Item>
+        <Separator />
+        <Item
+          onSelect={() => onDelete(session.id, title)}
+          className="text-[var(--color-destructive)] focus:text-[var(--color-destructive)]"
+        >
+          {t('delete')}
+        </Item>
+      </>
+    ),
+    [
+      deeplink,
+      handleCopy,
+      handleOpenDirectory,
+      hasDirectory,
+      onArchive,
+      onDelete,
+      onEditStart,
+      onExportMarkdown,
+      onExportPdf,
+      onTogglePin,
+      session.directory,
+      session.id,
+      session.is_pinned,
+      t,
+      title,
+    ],
+  );
+
   return (
-    <ContextMenu>
+    <ContextMenu onOpenChange={setMenuOpen}>
       <ContextMenuTrigger asChild>
         <div
           ref={itemRef}
@@ -163,16 +254,39 @@ export const SessionItem = memo(function SessionItem({
             cancel();
           }}
           className={cn(
-            "group relative mx-3 flex cursor-pointer items-center gap-2 overflow-hidden rounded-lg text-sm transition-colors duration-150 ease-out",
-            indent ? "pl-9 pr-2" : "px-3",
-            snippet ? "py-1.5" : "py-1",
+            "group/session relative mx-3 flex cursor-pointer items-center gap-2 overflow-hidden rounded-lg text-sm transition-colors duration-150 ease-out",
+            "pl-9 pr-2",
+            snippet ? "min-h-11 py-1.5" : "h-7 py-1",
             isActive
               ? "bg-[var(--sidebar-active)] text-[var(--text-primary)] shadow-[var(--sidebar-active-shadow)]"
-              : "text-[var(--text-primary)] hover:bg-[var(--sidebar-hover)]",
+              : "text-[var(--text-primary)] hover:bg-[var(--sidebar-hover)] focus-within:bg-[var(--sidebar-active)] focus-within:shadow-[var(--sidebar-active-shadow)] data-[state=open]:bg-[var(--sidebar-active)] data-[state=open]:shadow-[var(--sidebar-active-shadow)]",
+            menuOpen && "bg-[var(--sidebar-active)] shadow-[var(--sidebar-active-shadow)]",
             isEditing && "ring-1 ring-[var(--brand-primary)]",
           )}
         >
-          <div className="flex-1 min-w-0">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              e.currentTarget.blur();
+              onTogglePin?.(session.id, !session.is_pinned);
+            }}
+            className={cn(
+              "absolute left-1.5 top-1/2 z-10 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-[var(--text-tertiary)] opacity-0 transition-opacity hover:bg-[var(--surface-tertiary)] hover:text-[var(--text-primary)] focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--brand-primary)] focus-visible:opacity-100 group-hover/session:opacity-100",
+              isEditing && "hidden",
+            )}
+            aria-label={pinLabel}
+            title={pinLabel}
+          >
+            {session.is_pinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
+          </button>
+
+          <div
+            className={cn(
+              "min-w-0 flex-1",
+              !isEditing && "pr-10",
+            )}
+          >
             {isEditing ? (
               <input
                 ref={inputRef}
@@ -197,7 +311,7 @@ export const SessionItem = memo(function SessionItem({
                   <span
                     className={cn(
                       "min-w-0 flex-1 overflow-hidden text-ellipsis",
-                      scrollVars ? "inline-block group-hover:animate-scroll-text" : "",
+                      scrollVars ? "inline-block group-hover/session:animate-scroll-text" : "",
                     )}
                   >
                     {title}
@@ -212,92 +326,45 @@ export const SessionItem = memo(function SessionItem({
             )}
           </div>
 
-          {/* Right-side slot: relative time (fades out on hover), three-dot menu (fades in) */}
+          {/* Right-side slot: relative time. Item actions live in the context menu. */}
+          {!isEditing && !menuOpen && (
+            <span
+              aria-hidden
+              className={cn(
+                "absolute right-3 top-1/2 -translate-y-1/2 text-ui-2xs text-[var(--text-tertiary)] opacity-100 transition-opacity group-hover/session:opacity-0",
+              )}
+            >
+              {relativeTime}
+            </span>
+          )}
+
           {!isEditing && (
-            <>
-              <span
-                aria-hidden
-                className="ml-auto shrink-0 text-ui-2xs text-[var(--text-tertiary)] opacity-100 transition-opacity group-hover:opacity-0"
-              >
-                {relativeTime}
-              </span>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  onClick={(e) => e.stopPropagation()}
-                  className="absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-[var(--text-tertiary)] opacity-0 transition-opacity hover:bg-[var(--surface-tertiary)] hover:text-[var(--text-primary)] focus:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100"
-                >
-                  <EllipsisVertical className="h-3.5 w-3.5" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent className="w-44" align="start" side="right">
-                <DropdownMenuItem onSelect={() => onTogglePin?.(session.id, !session.is_pinned)}>
-                  {session.is_pinned ? (
-                    <><PinOff className="h-3.5 w-3.5" />{t('unpin', { defaultValue: 'Unpin' })}</>
-                  ) : (
-                    <><Pin className="h-3.5 w-3.5" />{t('pin', { defaultValue: 'Pin' })}</>
-                  )}
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => onEditStart?.(session.id)}>
-                  <Pencil className="h-3.5 w-3.5" />
-                  {t('rename')}
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => onExportPdf?.(session.id, title)}>
-                  <FileDown className="h-3.5 w-3.5" />
-                  {t('exportPdf')}
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => onExportMarkdown?.(session.id, title)}>
-                  <FileText className="h-3.5 w-3.5" />
-                  {t('exportMarkdown', { defaultValue: 'Export Markdown' })}
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onSelect={() => onDelete(session.id, title)}
-                  className="text-[var(--color-destructive)] focus:text-[var(--color-destructive)]"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  {t('delete')}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            </>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                e.currentTarget.blur();
+                onArchive?.(session.id);
+              }}
+              className={cn(
+                "absolute right-1.5 top-1/2 z-10 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-[var(--text-tertiary)] opacity-0 transition-opacity hover:bg-[var(--surface-tertiary)] hover:text-[var(--text-primary)] focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--brand-primary)] focus-visible:opacity-100 group-hover/session:opacity-100",
+              )}
+              aria-label={t('archiveChat')}
+              title={t('archiveChat')}
+            >
+              <Archive className="h-3.5 w-3.5" />
+            </button>
           )}
         </div>
       </ContextMenuTrigger>
-      <ContextMenuContent className="w-44">
-        <ContextMenuItem onSelect={() => onTogglePin?.(session.id, !session.is_pinned)}>
-          {session.is_pinned ? (
-            <><PinOff className="h-3.5 w-3.5" />{t('unpin', { defaultValue: 'Unpin' })}</>
-          ) : (
-            <><Pin className="h-3.5 w-3.5" />{t('pin', { defaultValue: 'Pin' })}</>
-          )}
-        </ContextMenuItem>
-        <ContextMenuItem onSelect={() => onEditStart?.(session.id)}>
-          <Pencil className="h-3.5 w-3.5" />
-          {t('rename')}
-        </ContextMenuItem>
-        <ContextMenuItem onSelect={() => onExportPdf?.(session.id, title)}>
-          <FileDown className="h-3.5 w-3.5" />
-          {t('exportPdf')}
-        </ContextMenuItem>
-        <ContextMenuItem onSelect={() => onExportMarkdown?.(session.id, title)}>
-          <FileText className="h-3.5 w-3.5" />
-          {t('exportMarkdown', { defaultValue: 'Export Markdown' })}
-        </ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem
-          onSelect={() => onDelete(session.id, title)}
-          className="text-[var(--color-destructive)] focus:text-[var(--color-destructive)]"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-          {t('delete')}
-        </ContextMenuItem>
+      <ContextMenuContent className="w-48">
+        <MenuItems Item={ContextMenuItem} Separator={ContextMenuSeparator} />
       </ContextMenuContent>
     </ContextMenu>
   );
 });
 
-function getRelativeTimeLabel(date: string, t: (key: string, options?: Record<string, unknown>) => string) {
+function getRelativeTimeLabel(date: string) {
   const now = new Date();
   const d = new Date(date);
   const diff = now.getTime() - d.getTime();
@@ -306,10 +373,11 @@ function getRelativeTimeLabel(date: string, t: (key: string, options?: Record<st
   const hours = Math.floor(minutes / 60);
   const days = Math.floor(hours / 24);
 
-  if (seconds < 60) return t("justNow");
-  if (minutes < 60) return t("minutesAgo", { count: minutes });
-  if (hours < 24) return t("hoursAgo", { count: hours });
-  if (days < 7) return t("daysAgo", { count: days });
+  if (seconds < 60) return "now";
+  if (minutes < 60) return `${minutes}m`;
+  if (hours < 24) return `${hours}h`;
+  if (days < 7) return `${days}d`;
+  if (days < 30) return `${Math.floor(days / 7)}w`;
 
   return d.toLocaleDateString(undefined, {
     month: "short",

@@ -12,6 +12,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.api.pdf import markdown_to_pdf
 from app.dependencies import AgentRegistryDep, ProviderRegistryDep, SessionFactoryDep, StreamManagerDep, get_db
@@ -205,17 +206,24 @@ async def update_session_endpoint(
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    original_time_updated = session.time_updated
+    metadata_only_fields = {"is_pinned", "time_archived"}
+    preserve_time_updated = bool(body.model_fields_set) and body.model_fields_set <= metadata_only_fields
+
     if body.title is not None:
         session.title = body.title
     if body.directory is not None:
         session.directory = body.directory
         _trigger_index(request, body.directory, session_id)
-    if body.time_archived is not None:
+    if "time_archived" in body.model_fields_set:
         session.time_archived = body.time_archived
     if body.is_pinned is not None:
         session.is_pinned = body.is_pinned
     if body.permission is not None:
         session.permission = body.permission
+    if preserve_time_updated:
+        session.time_updated = original_time_updated
+        flag_modified(session, "time_updated")
 
     await db.flush()
     await db.refresh(session)
