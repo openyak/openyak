@@ -20,41 +20,12 @@ import { useAuthStore, type OpenYakUser } from "@/stores/auth-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { proxyApi, ProxyApiError } from "@/lib/proxy-api";
 import { api, apiFetch } from "@/lib/api";
+import { extractErrorMessage } from "@/lib/errors";
 import { API, IS_DESKTOP, queryKeys } from "@/lib/constants";
 import { desktopAPI } from "@/lib/tauri-api";
 
 const PROXY_URL =
   process.env.NEXT_PUBLIC_DEFAULT_PROXY_URL || "https://api.open-yak.com";
-
-/**
- * Coerces an arbitrary error response body into a user-readable string.
- *
- * FastAPI's default 422 returns `detail` as an array of validation issues
- * (`{type, loc, msg, input, ctx}`); rendering those objects directly crashes
- * React. We accept string, array, or unknown shapes and always return a
- * string the user can read.
- */
-function extractErrorMessage(body: unknown, fallback: string): string {
-  if (!body || typeof body !== "object") return fallback;
-  const detail = (body as { detail?: unknown }).detail;
-  if (typeof detail === "string") return detail;
-  if (Array.isArray(detail)) {
-    const messages = detail
-      .map((item) => {
-        if (typeof item === "string") return item;
-        if (item && typeof item === "object") {
-          const msg = (item as { msg?: unknown }).msg;
-          if (typeof msg === "string") return msg;
-        }
-        return null;
-      })
-      .filter((m): m is string => Boolean(m));
-    if (messages.length > 0) return messages.join("; ");
-  }
-  const message = (body as { message?: unknown }).message;
-  if (typeof message === "string") return message;
-  return fallback;
-}
 
 type Step = "welcome" | "auth" | "done";
 

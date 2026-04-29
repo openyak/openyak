@@ -8,6 +8,7 @@ import { useTranslation } from 'react-i18next';
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
+import { errorToMessage } from "@/lib/errors";
 import { API, queryKeys } from "@/lib/constants";
 import { useMessageStats } from "@/hooks/use-message-stats";
 import { useModels } from "@/hooks/use-models";
@@ -97,16 +98,7 @@ export function ContextIndicator({ sessionId }: ContextIndicatorProps) {
         queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all }),
       ]);
     } catch (error) {
-      const detail =
-        typeof error === "object" &&
-        error &&
-        "body" in error &&
-        typeof (error as { body?: unknown }).body === "object" &&
-        (error as { body?: Record<string, unknown> }).body &&
-        "detail" in ((error as { body?: Record<string, unknown> }).body as Record<string, unknown>)
-          ? String((((error as { body?: Record<string, unknown> }).body as Record<string, unknown>).detail) || t('contextCompactError'))
-          : t('contextCompactError');
-      toast.error(detail);
+      toast.error(errorToMessage(error, t('contextCompactError')));
     } finally {
       setIsStartingCompact(false);
     }

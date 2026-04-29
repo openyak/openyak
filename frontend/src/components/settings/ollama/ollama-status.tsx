@@ -12,7 +12,8 @@ import {
   Square,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { api, ApiError } from "@/lib/api";
+import { api } from "@/lib/api";
+import { errorToMessage } from "@/lib/errors";
 import { API } from "@/lib/constants";
 import { formatBytes, type OllamaRuntimeStatus } from "./types";
 
@@ -147,9 +148,7 @@ export function NotRunningPanel({
         <div className="flex items-center gap-1.5 text-xs text-[var(--color-destructive)]">
           <AlertCircle className="h-3.5 w-3.5 shrink-0" />
           <span>
-            {startMutation.error instanceof ApiError
-              ? ((startMutation.error.body as Record<string, string>)?.detail ?? "Failed to start")
-              : "Failed to start Ollama"}
+            {errorToMessage(startMutation.error, "Failed to start Ollama")}
           </span>
         </div>
       )}

@@ -237,13 +237,14 @@ export const api = {
     }),
 };
 
+import { errorToMessage } from "@/lib/errors";
+
+/**
+ * Extract a user-readable message from an ApiError (or any error). Handles
+ * string detail, array-form FastAPI 422 detail, and falls back gracefully.
+ */
 export function apiErrorMessage(err: unknown, fallback: string): string {
-  if (err instanceof ApiError) {
-    const detail = (err.body as Record<string, unknown> | undefined)?.detail;
-    if (typeof detail === "string" && detail.trim()) return detail;
-    return err.message || fallback;
-  }
-  return err instanceof Error ? err.message : fallback;
+  return errorToMessage(err, fallback);
 }
 
 export { ApiError };
