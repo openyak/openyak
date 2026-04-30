@@ -293,7 +293,7 @@ class SessionPrompt:
                     ws_resolved = _Path(self.workspace).resolve()
                     for att in self.request.attachments:
                         att_path = att.get("path")
-                        if not att_path or not _Path(att_path).exists():
+                        if not att_path or not _Path(att_path).is_file():
                             continue
                         try:
                             _Path(att_path).resolve().relative_to(ws_resolved)

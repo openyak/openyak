@@ -1,6 +1,6 @@
 "use client";
 
-import { X, FileText, Image, FileCode, File as FileIcon } from "lucide-react";
+import { X, FileText, Image, FileCode, File as FileIcon, Folder } from "lucide-react";
 import type { FileAttachment } from "@/types/chat";
 import type { FilePart } from "@/types/message";
 
@@ -21,7 +21,7 @@ export function FileChip({ file, onRemove }: FileChipProps) {
       <span className="truncate" title={file.name}>
         {file.name}
       </span>
-      <span className="shrink-0 text-[var(--text-tertiary)]">{sizeLabel}</span>
+      {sizeLabel && <span className="shrink-0 text-[var(--text-tertiary)]">{sizeLabel}</span>}
       {"source" in file && file.source === "referenced" && (
         <span className="shrink-0 text-[10px] text-[var(--text-tertiary)] opacity-60" title="Referenced from disk">ref</span>
       )}
@@ -39,6 +39,7 @@ export function FileChip({ file, onRemove }: FileChipProps) {
 }
 
 function getFileIcon(mimeType: string, name: string) {
+  if (mimeType === "inode/directory") return Folder;
   if (mimeType.startsWith("image/")) return Image;
   const ext = name.split(".").pop()?.toLowerCase() ?? "";
   const codeExts = new Set([
@@ -53,6 +54,7 @@ function getFileIcon(mimeType: string, name: string) {
 }
 
 function formatBytes(bytes: number): string {
+  if (bytes <= 0) return "";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;

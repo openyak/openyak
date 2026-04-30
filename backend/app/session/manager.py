@@ -573,7 +573,17 @@ def _build_user_content_with_files(
         size = fp.get("size", 0)
         ext = Path(name).suffix.lower()
 
-        if ext in _IMAGE_EXTENSIONS or mime.startswith("image/"):
+        if mime == "inode/directory" or (path and Path(path).is_dir()):
+            content.append({
+                "type": "text",
+                "text": (
+                    f'\n<directory name="{name}" path="{path}">\n'
+                    f'[Directory attached. Use the Read, Glob, Grep, or code_execute tools with this path to inspect its contents.]\n'
+                    f"</directory>\n"
+                ),
+            })
+
+        elif ext in _IMAGE_EXTENSIONS or mime.startswith("image/"):
             # Image: base64 encode for vision
             try:
                 raw = Path(path).read_bytes()

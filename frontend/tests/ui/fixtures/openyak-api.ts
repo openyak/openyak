@@ -55,6 +55,7 @@ export interface OpenYakMockState {
   providerSaves: unknown[];
   memoryUpdates: unknown[];
   fileUploads: string[];
+  attachedPaths: string[];
   binaryReads: string[];
   compactRequests: unknown[];
   sessionUpdates: unknown[];
@@ -1420,6 +1421,7 @@ export async function mockOpenYakApi(page: Page, options: OpenYakMockOptions = {
     providerSaves: [],
     memoryUpdates: [],
     fileUploads: [],
+    attachedPaths: [],
     binaryReads: [],
     compactRequests: [],
     sessionUpdates: [],
@@ -1822,6 +1824,7 @@ export async function mockOpenYakApi(page: Page, options: OpenYakMockOptions = {
         "launch-budget.xlsx",
         "launch-board-deck.pptx",
         "vendor-terms-summary.pdf",
+        "dragged-note.md",
       ];
       const filename =
         knownUploadNames.find((name) => postData?.includes(Buffer.from(name))) ?? "upload-preflight.txt";
@@ -1859,14 +1862,17 @@ export async function mockOpenYakApi(page: Page, options: OpenYakMockOptions = {
     }
     if (path === "/api/files/attach") {
       const body = requestJson(request) as { paths?: string[] } | null;
+      state.attachedPaths.push(...(body?.paths ?? []));
       return fulfillJson(route, (body?.paths ?? []).map((filePath, index) => {
         const name = filePath.replace(/\\/g, "/").split("/").pop() ?? `file-${index}`;
+        const isDirectory = name === "drag-folder" || !name.includes(".");
+        const isImage = /\.(png|jpg|jpeg|gif|webp)$/i.test(name);
         return {
           file_id: `attached-${index}`,
           name,
           path: filePath,
-          size: 256,
-          mime_type: name.endsWith(".csv") ? "text/csv" : "text/markdown",
+          size: isDirectory ? 0 : 256,
+          mime_type: isDirectory ? "inode/directory" : isImage ? "image/png" : name.endsWith(".csv") ? "text/csv" : "text/markdown",
           source: "referenced",
           content_hash: `attached-hash-${index}`,
         };

@@ -397,6 +397,22 @@ def _file_metadata(path: Path, *, source: str, content_hash: str | None = None) 
     )
 
 
+def _path_metadata(path: Path, *, source: str, content_hash: str | None = None) -> FileMetadata:
+    """Build attachment metadata for a file or directory path."""
+    if path.is_dir():
+        resolved = path.resolve()
+        return FileMetadata(
+            file_id=generate_ulid(),
+            name=resolved.name or str(resolved),
+            path=str(resolved),
+            size=0,
+            mime_type="inode/directory",
+            source=source,
+            content_hash=content_hash,
+        )
+    return _file_metadata(path, source=source, content_hash=content_hash)
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -569,17 +585,17 @@ async def browse_files(body: BrowseRequest | None = None) -> list[dict[str, Any]
 
 @router.post("/files/attach")
 async def attach_by_path(body: AttachRequest) -> list[dict[str, Any]]:
-    """Attach files by explicit paths. No copying.
+    """Attach files or directories by explicit paths. No copying.
 
-    Validates that each path exists and is a file.
+    Validates that each path exists and references it in-place.
     """
     results = []
     for p in body.paths:
         fp = Path(p)
-        if fp.is_file():
-            results.append(_file_metadata(fp, source="referenced").model_dump())
+        if fp.exists() and (fp.is_file() or fp.is_dir()):
+            results.append(_path_metadata(fp, source="referenced").model_dump())
         else:
-            logger.warning("Attach path not found or not a file: %s", p)
+            logger.warning("Attach path not found or not attachable: %s", p)
     return results
 
 
@@ -611,7 +627,7 @@ async def ingest_files(request: Request, body: IngestRequest) -> dict[str, Any]:
         ingested = 0
         for p in body.paths:
             fp = Path(p)
-            if fp.exists():
+            if fp.is_file():
                 try:
                     await manager.ingest_file(body.workspace, p)
                     ingested += 1

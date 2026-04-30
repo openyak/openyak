@@ -2,7 +2,6 @@
 
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useTranslation } from 'react-i18next';
-import type { TFunction } from 'i18next';
 import { Check, ChevronDown, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -22,6 +21,7 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { useProviderModels } from "@/hooks/use-provider-models";
 import { useIndexStatus } from "@/hooks/use-index-status";
 import { formatCreditsPerM, usdToCreditsPerM } from "@/lib/pricing";
+import { IS_DESKTOP } from "@/lib/constants";
 
 interface ChatFormProps {
   isGenerating: boolean;
@@ -111,21 +111,6 @@ function mergeAttachments(
   };
 }
 
-function attachmentSuggestions(files: FileAttachment[], t: TFunction): string[] {
-  if (files.length === 0) return [];
-  const names = files.map((f) => f.name.toLowerCase());
-  const hasSheet = names.some((n) => n.endsWith(".xlsx") || n.endsWith(".csv"));
-  const hasDoc = names.some((n) => n.endsWith(".docx") || n.endsWith(".pdf"));
-  const hasSlides = names.some((n) => n.endsWith(".pptx"));
-
-  const suggestions: string[] = [];
-  if (hasSheet) suggestions.push(t('suggestSummarize'));
-  if (hasDoc) suggestions.push(t('suggestExtract'));
-  if (hasSlides) suggestions.push(t('suggestConvert'));
-  if (files.length >= 3) suggestions.push(t('suggestCompare'));
-  return suggestions.slice(0, 2);
-}
-
 function estimateTextTokens(text: string): number {
   const trimmed = text.trim();
   if (!trimmed) return 0;
@@ -136,6 +121,77 @@ function formatEstimatedUsd(cost: number): string {
   if (cost <= 0) return "$0.00";
   if (cost < 0.01) return `$${cost.toFixed(4)}`;
   return `$${cost.toFixed(2)}`;
+}
+
+type PathBackedFile = File & {
+  path?: string;
+};
+
+function pathsFromDataTransfer(dataTransfer: DataTransfer): string[] {
+  const paths = new Set<string>();
+
+  for (const file of Array.from(dataTransfer.files) as PathBackedFile[]) {
+    if (typeof file.path === "string" && file.path) {
+      paths.add(file.path);
+    }
+  }
+
+  for (const item of Array.from(dataTransfer.items ?? [])) {
+    const file = item.kind === "file" ? item.getAsFile() as PathBackedFile | null : null;
+    if (file?.path) paths.add(file.path);
+  }
+
+  return [...paths];
+}
+
+function normalizePastedPath(rawPath: string): string | null {
+  let path = rawPath.trim();
+  if (!path) return null;
+
+  path = path.replace(/^["']|["']$/g, "");
+
+  if (path.startsWith("file://")) {
+    try {
+      const url = new URL(path);
+      const pathname = decodeURIComponent(url.pathname);
+      return /^\/[A-Za-z]:\//.test(pathname) ? pathname.slice(1) : pathname;
+    } catch {
+      return null;
+    }
+  }
+
+  const isUnixAbsolute = path.startsWith("/");
+  const isWindowsAbsolute = /^[A-Za-z]:[\\/]/.test(path);
+  const isUncPath = path.startsWith("\\\\");
+  if (!isUnixAbsolute && !isWindowsAbsolute && !isUncPath) return null;
+
+  if (isUnixAbsolute) {
+    path = path.replace(/\\([ "'()[\]{}])/g, "$1");
+  }
+
+  return path;
+}
+
+function pathsFromPastedText(text: string): string[] {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"));
+  if (lines.length === 0) return [];
+
+  const paths = lines.map(normalizePastedPath);
+  if (paths.some((path) => !path)) return [];
+
+  return [...new Set(paths as string[])];
+}
+
+function pointInsideElement(el: HTMLElement | null, position: { x: number; y: number }): boolean {
+  if (!el) return false;
+  const rect = el.getBoundingClientRect();
+  const ratio = window.devicePixelRatio || 1;
+  const contains = (x: number, y: number) =>
+    x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+  return contains(position.x / ratio, position.y / ratio) || contains(position.x, position.y);
 }
 
 /**
@@ -171,6 +227,7 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onStop, c
   const [uploading, setUploading] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const { ref, resize } = useAutoResize();
+  const dropTargetRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { data: providerModels, activeProvider } = useProviderModels();
   const noModelsAvailable = !activeProvider || providerModels.length === 0;
@@ -178,6 +235,7 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onStop, c
   const selectedProviderId = useSettingsStore((s) => s.selectedProviderId);
 
   const sendingRef = useRef(false);
+  const tauriDropHandledAtRef = useRef(0);
 
   // Track latest values for draft save-on-unmount (avoids stale closures)
   const inputRef = useRef(input);
@@ -234,6 +292,37 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onStop, c
     }
     return null;
   });
+  const isInputDisabled = isGenerating || isCompacting || noModelsAvailable;
+
+  const addAttachments = useCallback((files: FileAttachment[]) => {
+    setAttachments((prev) => {
+      const { merged, duplicateCount } = mergeAttachments(prev, files);
+      if (duplicateCount > 0) {
+        toast.info(t('duplicateFilesSkipped', { count: duplicateCount }));
+      }
+      return merged;
+    });
+    if (sessionId && effectiveWorkspace && files.length > 0) {
+      ingestFiles(sessionId, effectiveWorkspace, files.map((r) => r.path));
+    }
+  }, [effectiveWorkspace, sessionId, t]);
+
+  const handleAttachPaths = useCallback(async (paths: string[]) => {
+    const uniquePaths = [...new Set(paths.filter(Boolean))];
+    if (uniquePaths.length === 0) return;
+    setUploading(true);
+    try {
+      const attached = await attachByPath(uniquePaths);
+      if (attached.length > 0) {
+        addAttachments(attached);
+      }
+    } catch (err) {
+      console.error("Attach by path failed:", err);
+      toast.error(t('failedUpload'));
+    } finally {
+      setUploading(false);
+    }
+  }, [addAttachments, t]);
 
   const handleFiles = useCallback(async (files: FileList | File[]) => {
     setUploading(true);
@@ -241,24 +330,98 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onStop, c
       const results = await Promise.all(
         Array.from(files).map((f) => uploadFile(f))
       );
-      setAttachments((prev) => {
-        const { merged, duplicateCount } = mergeAttachments(prev, results);
-        if (duplicateCount > 0) {
-          toast.info(t('duplicateFilesSkipped', { count: duplicateCount }));
-        }
-        return merged;
-      });
-      // Ingest into FTS index immediately for existing sessions
-      if (sessionId && effectiveWorkspace && results.length > 0) {
-        ingestFiles(sessionId, effectiveWorkspace, results.map((r) => r.path));
-      }
+      addAttachments(results);
     } catch (err) {
       console.error("Upload failed:", err);
       toast.error(t('failedUpload'));
     } finally {
       setUploading(false);
     }
-  }, [effectiveWorkspace, sessionId, t]);
+  }, [addAttachments, t]);
+
+  const handleDropDataTransfer = useCallback((dataTransfer: DataTransfer) => {
+    const paths = pathsFromDataTransfer(dataTransfer);
+    if (paths.length > 0) {
+      void handleAttachPaths(paths);
+      return;
+    }
+
+    const droppedFiles = Array.from(dataTransfer.files);
+    if (droppedFiles.length === 0) return;
+    if (Date.now() - tauriDropHandledAtRef.current < 750) return;
+    window.setTimeout(() => {
+      if (Date.now() - tauriDropHandledAtRef.current < 750) return;
+      void handleFiles(droppedFiles);
+    }, 120);
+  }, [handleAttachPaths, handleFiles]);
+
+  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    if (isInputDisabled) return;
+
+    const clipboard = e.clipboardData;
+    const clipboardPaths = pathsFromDataTransfer(clipboard);
+    if (clipboardPaths.length > 0) {
+      e.preventDefault();
+      void handleAttachPaths(clipboardPaths);
+      return;
+    }
+
+    const clipboardFiles = Array.from(clipboard.files);
+    if (clipboardFiles.length > 0) {
+      e.preventDefault();
+      void handleFiles(clipboardFiles);
+      return;
+    }
+
+    const text = clipboard.getData("text/uri-list") || clipboard.getData("text/plain");
+    const pastedPaths = pathsFromPastedText(text);
+    if (pastedPaths.length > 0) {
+      e.preventDefault();
+      void handleAttachPaths(pastedPaths);
+    }
+  }, [handleAttachPaths, handleFiles, isInputDisabled]);
+
+  useEffect(() => {
+    if (!IS_DESKTOP) return;
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+
+    import("@tauri-apps/api/webview")
+      .then(({ getCurrentWebview }) =>
+        getCurrentWebview().onDragDropEvent((event) => {
+          const payload = event.payload;
+          if (payload.type === "enter" || payload.type === "over") {
+            setIsDragOver(pointInsideElement(dropTargetRef.current, payload.position));
+            return;
+          }
+          if (payload.type === "leave") {
+            setIsDragOver(false);
+            return;
+          }
+          if (payload.type === "drop") {
+            setIsDragOver(false);
+            if (!pointInsideElement(dropTargetRef.current, payload.position)) return;
+            tauriDropHandledAtRef.current = Date.now();
+            void handleAttachPaths(payload.paths);
+          }
+        }),
+      )
+      .then((fn) => {
+        if (disposed) {
+          fn();
+        } else {
+          unlisten = fn;
+        }
+      })
+      .catch((err) => {
+        console.warn("Tauri file drop listener unavailable:", err);
+      });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [handleAttachPaths]);
 
   const handleSend = useCallback(async () => {
     if (sendingRef.current || (!input.trim() && attachments.length === 0) || isGenerating || isCompacting) return;
@@ -293,17 +456,7 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onStop, c
     try {
       const results = await browseFiles();
       if (results.length > 0) {
-        setAttachments((prev) => {
-          const { merged, duplicateCount } = mergeAttachments(prev, results);
-          if (duplicateCount > 0) {
-            toast.info(t('duplicateFilesSkipped', { count: duplicateCount }));
-          }
-          return merged;
-        });
-        // Ingest into FTS index immediately for existing sessions
-        if (sessionId && effectiveWorkspace) {
-          ingestFiles(sessionId, effectiveWorkspace, results.map((r) => r.path));
-        }
+        addAttachments(results);
       }
     } catch (err) {
       console.error("Browse failed, falling back to browser picker:", err);
@@ -311,7 +464,7 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onStop, c
     } finally {
       setUploading(false);
     }
-  }, [effectiveWorkspace, sessionId, t]);
+  }, [addAttachments]);
 
   const handleRemoveAttachment = useCallback((fileId: string) => {
     setAttachments((prev) => prev.filter((a) => a.file_id !== fileId));
@@ -330,17 +483,7 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onStop, c
     try {
       const attached = await attachByPath([result.absolute_path]);
       if (attached.length > 0) {
-        setAttachments((prev) => {
-          const { merged, duplicateCount } = mergeAttachments(prev, attached);
-          if (duplicateCount > 0) {
-            toast.info(t('duplicateFilesSkipped', { count: duplicateCount }));
-          }
-          return merged;
-        });
-        // Ingest into FTS index immediately for existing sessions
-        if (sessionId && effectiveWorkspace) {
-          ingestFiles(sessionId, effectiveWorkspace, attached.map((a) => a.path));
-        }
+        addAttachments(attached);
       }
     } catch (err) {
       console.error("Failed to attach file:", err);
@@ -351,7 +494,7 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onStop, c
       ref.current?.focus();
       resize();
     });
-  }, [input, mentionStartIndex, mentionQuery, t, ref, resize, sessionId, effectiveWorkspace]);
+  }, [input, mentionStartIndex, mentionQuery, ref, resize, addAttachments]);
 
   const handleMentionClose = useCallback(() => {
     setMentionActive(false);
@@ -415,7 +558,6 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onStop, c
     });
   }, [fixRequest, clearFixRequest, ref, resize]);
 
-  const suggestions = attachmentSuggestions(attachments, t);
   const selectedModelInfo = useMemo(
     () =>
       providerModels.find(
@@ -456,12 +598,11 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onStop, c
     return t("contextCompactingNow");
   }, [compactingLabel, isCompacting, t]);
 
-  const isInputDisabled = isGenerating || isCompacting || noModelsAvailable;
-
   return (
     <div className={cn("px-4 pb-4", className)}>
       <div className="mx-auto max-w-3xl xl:max-w-4xl">
         <div
+          ref={dropTargetRef}
           className={cn(
             "relative rounded-3xl bg-[var(--surface-secondary)] shadow-[var(--shadow-sm)] transition-all duration-200 focus-within:shadow-[var(--shadow-md)]",
             isDragOver && "ring-1 ring-[var(--border-heavy)]",
@@ -474,9 +615,7 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onStop, c
           onDrop={(e) => {
             e.preventDefault();
             setIsDragOver(false);
-            if (e.dataTransfer.files.length > 0) {
-              handleFiles(e.dataTransfer.files);
-            }
+            handleDropDataTransfer(e.dataTransfer);
           }}
         >
           {/* @mention popup — positioned above the form */}
@@ -519,6 +658,7 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onStop, c
               ref={ref}
               value={input}
               onChange={handleInputChange}
+              onPaste={handlePaste}
               onSelect={handleSelect}
               onSubmit={handleSend}
               mentionActive={mentionActive}
@@ -526,24 +666,6 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onStop, c
               className="min-h-[28px] max-h-[200px] py-1"
               disabled={isInputDisabled}
             />
-
-            {suggestions.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 pt-2">
-                {suggestions.map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => {
-                      setInput((prev) => (prev ? `${prev}\n${s}` : s));
-                      requestAnimationFrame(() => ref.current?.focus());
-                    }}
-                    className="rounded-full border border-[var(--border-default)] bg-[var(--surface-primary)] px-2.5 py-1 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-heavy)] transition-colors"
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
-            )}
 
           </div>
 

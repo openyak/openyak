@@ -13,7 +13,7 @@ async function openNewChat(page: Page, workspace = false) {
     ? `/c/new?directory=${encodeURIComponent("/Users/alex/openyak-demo")}`
     : "/c/new";
   await page.goto(path);
-  await expect(page.getByRole("heading", { name: /What should (OpenYak help you do|we do in)/i })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /What should (OpenYak help you do|we do in)/i }).first()).toBeVisible();
   await expect(page.getByRole("button", { name: /Best Free/i })).toBeVisible({ timeout: 15_000 });
 }
 
@@ -22,8 +22,130 @@ async function sendPrompt(page: Page, text: string) {
   const promptResponse = page.waitForResponse((res) =>
     res.url().includes("/api/chat/prompt") && res.status() === 200,
   );
-  await page.getByRole("button", { name: /Send message/i }).click();
+  await page.locator('button[aria-label="Send message"]:not([disabled])').click();
   await promptResponse;
+}
+
+async function dispatchBrowserFileDrop(page: Page, filename: string, content: string, mimeType: string) {
+  await page.getByPlaceholder(/Describe the result you want/i).evaluate(
+    (textarea, payload) => {
+      const target = textarea.closest("div.relative.rounded-3xl");
+      if (!target) throw new Error("Composer drop target not found");
+      const file = new File([payload.content], payload.filename, { type: payload.mimeType });
+      const dataTransfer = {
+        files: [file],
+        items: [],
+      };
+      for (const eventName of ["dragover", "drop"]) {
+        const event = new Event(eventName, { bubbles: true, cancelable: true });
+        Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
+        target.dispatchEvent(event);
+      }
+    },
+    { filename, content, mimeType },
+  );
+}
+
+async function dispatchTextPaste(page: Page, text: string) {
+  await page.getByPlaceholder(/Describe the result you want/i).evaluate((textarea, pastedText) => {
+    const clipboardData = {
+      files: [],
+      items: [],
+      getData: (format: string) => format === "text/plain" ? pastedText : "",
+    };
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", { value: clipboardData });
+    textarea.dispatchEvent(event);
+  }, text);
+}
+
+async function installTauriDragDropMock(page: Page) {
+  await page.addInitScript(() => {
+    type ListenerEvent = { id: number; event: string; payload: unknown };
+    type ListenerCallback = (event: ListenerEvent) => void;
+    type TauriTestWindow = Window & {
+      __TAURI_INTERNALS__: {
+        metadata: {
+          currentWindow: { label: string };
+          currentWebview: { label: string };
+        };
+        invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+        transformCallback: (callback: ListenerCallback) => number;
+        unregisterCallback: (id: number) => void;
+        convertFileSrc: (filePath: string) => string;
+      };
+      __TAURI_EVENT_PLUGIN_INTERNALS__: {
+        unregisterListener: (event: string, eventId: number) => void;
+      };
+      __OPENYAK_TEST_EMIT_TAURI_EVENT__: (event: string, payload: unknown) => void;
+      __OPENYAK_TEST_TAURI_LISTENER_COUNT__: (event: string) => number;
+    };
+
+    const w = window as TauriTestWindow;
+    let nextCallbackId = 1;
+    let nextListenerId = 1;
+    const callbacks = new Map<number, ListenerCallback>();
+    const listeners = new Map<string, number[]>();
+    const listenerEntries = new Map<number, { event: string; handler: number }>();
+
+    w.__TAURI_INTERNALS__ = {
+      metadata: {
+        currentWindow: { label: "main" },
+        currentWebview: { label: "main" },
+      },
+      invoke: async (cmd, args = {}) => {
+        if (cmd === "get_backend_url") return "http://localhost:8000";
+        if (cmd === "get_backend_token") return "test-session-token";
+        if (cmd === "get_pending_navigation") return null;
+        if (cmd === "get_platform") return "darwin";
+        if (cmd === "is_maximized") return false;
+        if (cmd === "plugin:event|listen") {
+          const event = String(args.event);
+          const handler = Number(args.handler);
+          const listenerId = nextListenerId++;
+          listeners.set(event, [...(listeners.get(event) ?? []), handler]);
+          listenerEntries.set(listenerId, { event, handler });
+          return listenerId;
+        }
+        if (cmd === "plugin:event|unlisten") {
+          const eventId = Number(args.eventId);
+          const entry = listenerEntries.get(eventId);
+          if (entry) {
+            listeners.set(
+              entry.event,
+              (listeners.get(entry.event) ?? []).filter((handler) => handler !== entry.handler),
+            );
+            listenerEntries.delete(eventId);
+          }
+          return null;
+        }
+        return null;
+      },
+      transformCallback: (callback) => {
+        const id = nextCallbackId++;
+        callbacks.set(id, callback);
+        return id;
+      },
+      unregisterCallback: (id) => {
+        callbacks.delete(id);
+      },
+      convertFileSrc: (filePath) => filePath,
+    };
+    w.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+      unregisterListener: (event, eventId) => {
+        const entry = listenerEntries.get(eventId);
+        if (!entry || entry.event !== event) return;
+        listeners.set(event, (listeners.get(event) ?? []).filter((handler) => handler !== entry.handler));
+        listenerEntries.delete(eventId);
+      },
+    };
+    w.__OPENYAK_TEST_EMIT_TAURI_EVENT__ = (event, payload) => {
+      for (const handler of listeners.get(event) ?? []) {
+        callbacks.get(handler)?.({ id: 1, event, payload });
+      }
+    };
+    w.__OPENYAK_TEST_TAURI_LISTENER_COUNT__ = (event) => listeners.get(event)?.length ?? 0;
+  });
 }
 
 test.describe("OpenYak UI preflight", () => {
@@ -100,6 +222,74 @@ test.describe("OpenYak UI preflight", () => {
     await input.press("Enter");
     await promptResponse;
     expect(mockState.promptBodies).toHaveLength(1);
+  });
+
+  test("desktop chat path: drag-dropping a browser file attaches and sends it", async ({ page }) => {
+    await openNewChat(page);
+
+    await dispatchBrowserFileDrop(page, "dragged-note.md", "# Dragged note\n", "text/markdown");
+    await expect(page.getByText("dragged-note.md")).toBeVisible();
+    expect(mockState.fileUploads).toEqual(["dragged-note.md"]);
+
+    await sendPrompt(page, "Summarize the dropped note");
+    expect(JSON.stringify(mockState.promptBodies.at(-1))).toContain("dragged-note.md");
+  });
+
+  test("desktop chat path: pasted local file path attaches by path", async ({ page }) => {
+    await openNewChat(page);
+    const filePath = "/Users/alex/Desktop/Receipt-2768-7987-6551.pdf";
+
+    await dispatchTextPaste(page, filePath);
+
+    await expect(page.getByText("Receipt-2768-7987-6551.pdf")).toBeVisible();
+    await expect(page.getByPlaceholder(/Describe the result you want/i)).toHaveValue("");
+    expect(mockState.attachedPaths).toEqual([filePath]);
+    expect(mockState.fileUploads).toEqual([]);
+
+    await sendPrompt(page, "Extract decisions, risks, and next actions");
+    expect(JSON.stringify(mockState.promptBodies.at(-1))).toContain(filePath);
+  });
+
+  test("desktop chat path: Tauri native path drop attaches files and folders by local path", async ({ page }) => {
+    await installTauriDragDropMock(page);
+    await seedOpenYakStorage(page, { force: true });
+    await openNewChat(page);
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const w = window as Window & { __OPENYAK_TEST_TAURI_LISTENER_COUNT__?: (event: string) => number };
+          return w.__OPENYAK_TEST_TAURI_LISTENER_COUNT__?.("tauri://drag-drop") ?? 0;
+        }),
+      )
+      .toBeGreaterThan(0);
+
+    const box = await page.getByPlaceholder(/Describe the result you want/i).boundingBox();
+    expect(box).not.toBeNull();
+    const position = { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 };
+    const paths = [
+      "/Users/alex/Desktop/dragged-image.png",
+      "/Users/alex/Desktop/drag-folder",
+    ];
+
+    await page.evaluate(
+      ({ position, paths }) => {
+        const w = window as Window & { __OPENYAK_TEST_EMIT_TAURI_EVENT__: (event: string, payload: unknown) => void };
+        w.__OPENYAK_TEST_EMIT_TAURI_EVENT__("tauri://drag-enter", { paths, position });
+        w.__OPENYAK_TEST_EMIT_TAURI_EVENT__("tauri://drag-drop", { paths, position });
+      },
+      { position, paths },
+    );
+
+    await expect(page.getByText("dragged-image.png")).toBeVisible();
+    await expect(page.getByText("drag-folder")).toBeVisible();
+    expect(mockState.attachedPaths).toEqual(paths);
+    expect(mockState.fileUploads).toEqual([]);
+
+    await sendPrompt(page, "Summarize the dropped local paths");
+    const prompt = JSON.stringify(mockState.promptBodies.at(-1));
+    expect(prompt).toContain("/Users/alex/Desktop/dragged-image.png");
+    expect(prompt).toContain("/Users/alex/Desktop/drag-folder");
+    expect(prompt).toContain("inode/directory");
   });
 
   test("desktop history path: sidebar navigation and persisted conversation render", async ({ page }) => {
