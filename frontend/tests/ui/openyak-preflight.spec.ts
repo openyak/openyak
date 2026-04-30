@@ -81,7 +81,7 @@ async function installTauriDragDropMock(page: Page) {
       __OPENYAK_TEST_TAURI_LISTENER_COUNT__: (event: string) => number;
     };
 
-    const w = window as TauriTestWindow;
+    const w = window as unknown as TauriTestWindow;
     let nextCallbackId = 1;
     let nextListenerId = 1;
     const callbacks = new Map<number, ListenerCallback>();
@@ -257,7 +257,7 @@ test.describe("OpenYak UI preflight", () => {
     await expect
       .poll(() =>
         page.evaluate(() => {
-          const w = window as Window & { __OPENYAK_TEST_TAURI_LISTENER_COUNT__?: (event: string) => number };
+          const w = window as unknown as Window & { __OPENYAK_TEST_TAURI_LISTENER_COUNT__?: (event: string) => number };
           return w.__OPENYAK_TEST_TAURI_LISTENER_COUNT__?.("tauri://drag-drop") ?? 0;
         }),
       )
@@ -273,7 +273,7 @@ test.describe("OpenYak UI preflight", () => {
 
     await page.evaluate(
       ({ position, paths }) => {
-        const w = window as Window & { __OPENYAK_TEST_EMIT_TAURI_EVENT__: (event: string, payload: unknown) => void };
+        const w = window as unknown as Window & { __OPENYAK_TEST_EMIT_TAURI_EVENT__: (event: string, payload: unknown) => void };
         w.__OPENYAK_TEST_EMIT_TAURI_EVENT__("tauri://drag-enter", { paths, position });
         w.__OPENYAK_TEST_EMIT_TAURI_EVENT__("tauri://drag-drop", { paths, position });
       },
