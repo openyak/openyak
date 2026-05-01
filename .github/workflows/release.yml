@@ -381,11 +381,16 @@ jobs:
       - name: List artifacts
         run: find artifacts -type f | sort
 
+      - name: Generate SHA-256 checksums
+        run: node scripts/generate-checksums.mjs artifacts CHECKSUMS.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           draft: true
           generate_release_notes: true
+          body_path: CHECKSUMS.md
+          append_body: true
           files: |
             artifacts/windows-bundle/**/*
             artifacts/macos-aarch64-bundle/**/*
