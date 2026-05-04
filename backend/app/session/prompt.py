@@ -11,6 +11,8 @@ Separation of concerns:
 from __future__ import annotations
 
 import logging
+import os
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
@@ -36,8 +38,9 @@ from app.session.manager import (
 )
 from app.session.system_prompt import (
     SystemPromptParts,
-    _active_skills_from_registry,
+    active_skills_from_registry,
     assemble as assemble_system_prompt,
+    default_platform_name,
     default_tz_name,
     load_project_instructions,
     render_skills_section,
@@ -326,22 +329,7 @@ class SessionPrompt:
             except Exception:
                 logger.debug("Workspace memory injection skipped", exc_info=True)
 
-        # I/O is resolved here so assemble() stays pure (per ADR-0009).
-        import platform as _platform
-        from datetime import datetime as _datetime
-
-        self.system_prompt_parts = assemble_system_prompt(
-            self.agent,
-            directory=self.directory,
-            workspace=self.workspace,
-            fts_status=self.fts_status,
-            workspace_memory_section=self.workspace_memory_section,
-            project_instructions=load_project_instructions(self.directory),
-            skills_summary=render_skills_section(_active_skills_from_registry()),
-            now=_datetime.now(),
-            tz_name=default_tz_name(),
-            platform_name=_platform.system(),
-        )
+        self.system_prompt_parts = self._build_system_prompt_parts()
 
         # --- 5. Merge permission rulesets ---
         # Persisted browser choices arrive as request permissions. Do not read
@@ -911,21 +899,30 @@ class SessionPrompt:
             self.request_permissions,
             self.session_permissions,
         )
-        # I/O is resolved here so assemble() stays pure (per ADR-0009).
-        import platform as _platform
-        from datetime import datetime as _datetime
+        self.system_prompt_parts = self._build_system_prompt_parts()
 
-        self.system_prompt_parts = assemble_system_prompt(
+    # ------------------------------------------------------------------
+    # Internal: gather impure inputs and call the pure assemble().
+    # ------------------------------------------------------------------
+
+    def _build_system_prompt_parts(self) -> SystemPromptParts:
+        """Resolve every impure input and call :func:`assemble_system_prompt`.
+
+        Centralises the I/O resolution shared by :meth:`_setup` and
+        :meth:`rebuild_permissions_and_prompt` so the call sites stay
+        single-line and the impure surface is visible in one place.
+        """
+        return assemble_system_prompt(
             self.agent,
-            directory=self.directory,
+            cwd=self.directory or os.getcwd(),
             workspace=self.workspace,
             fts_status=self.fts_status,
             workspace_memory_section=self.workspace_memory_section,
             project_instructions=load_project_instructions(self.directory),
-            skills_summary=render_skills_section(_active_skills_from_registry()),
-            now=_datetime.now(),
+            skills_summary=render_skills_section(active_skills_from_registry()),
+            now=datetime.now(),
             tz_name=default_tz_name(),
-            platform_name=_platform.system(),
+            platform_name=default_platform_name(),
         )
 
 

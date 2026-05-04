@@ -42,6 +42,7 @@ _PINNED = {
     "now": _now(),
     "tz_name": "PDT",
     "platform_name": "Darwin",
+    "cwd": "/test/cwd",
 }
 
 
@@ -51,10 +52,10 @@ class TestAssemblePureness:
         assert isinstance(parts, SystemPromptParts)
 
     def test_no_global_state_consulted(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # Break the helpers that the convenience wrapper would use; assemble()
+        # Break the resolve helpers that callers normally use; assemble()
         # must not touch them.
         monkeypatch.setattr(
-            "app.session.system_prompt._active_skills_from_registry",
+            "app.session.system_prompt.active_skills_from_registry",
             lambda: (_ for _ in ()).throw(RuntimeError("must not be called")),
         )
         monkeypatch.setattr(
@@ -62,7 +63,8 @@ class TestAssemblePureness:
             lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("must not be called")),
         )
 
-        parts = assemble(_agent(), directory="/anywhere", **_PINNED)
+        pinned = {**_PINNED, "cwd": "/anywhere"}
+        parts = assemble(_agent(), **pinned)
         assert "Working directory: /anywhere" in parts.dynamic
 
 
@@ -133,19 +135,16 @@ class TestEnvironmentDeterminism:
             now=pinned_now,
             tz_name="UTC",
             platform_name="Linux",
+            cwd="/srv",
         )
         assert "Current date: 2030-01-02 (09:05 UTC)" in parts.dynamic
         assert "Current year: 2030" in parts.dynamic
         assert "Platform: Linux" in parts.dynamic
 
-    def test_directory_falls_back_to_cwd_when_none(self) -> None:
-        parts = assemble(_agent(), directory=None, **_PINNED)
-        # cwd at test time — just assert the line is present and non-empty.
-        assert "Working directory: " in parts.dynamic
-        line = next(
-            line for line in parts.dynamic.splitlines() if line.startswith("- Working directory: ")
-        )
-        assert len(line) > len("- Working directory: ")
+    def test_cwd_value_appears_verbatim(self) -> None:
+        pinned = {**_PINNED, "cwd": "/explicit/path"}
+        parts = assemble(_agent(), **pinned)
+        assert "Working directory: /explicit/path" in parts.dynamic
 
 
 class TestWorkspaceVsNoWorkspace:
@@ -157,7 +156,8 @@ class TestWorkspaceVsNoWorkspace:
         assert "# File Reference Format" not in parts.dynamic
 
     def test_no_workspace_emits_file_reference_format(self) -> None:
-        parts = assemble(_agent(), workspace=None, directory="/home/u", **_PINNED)
+        pinned = {**_PINNED, "cwd": "/home/u"}
+        parts = assemble(_agent(), workspace=None, **pinned)
         assert "# File Reference Format" in parts.dynamic
         assert "/home/u" in parts.dynamic
         assert "# Workspace Restriction" not in parts.dynamic
