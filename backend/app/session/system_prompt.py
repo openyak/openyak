@@ -1,14 +1,15 @@
 """System prompt assembly.
 
-The ``assemble`` function is **pure**: it takes already-resolved inputs and
-returns a ``SystemPromptParts``. Callers (today: ``SessionPrompt._setup``)
-resolve I/O upstream — project instructions from disk, the active skill list
-from the registry, the wall-clock time, and the platform name — then hand
-those values in. This makes ``assemble`` deterministic and unit-testable
-without touching the filesystem, the global skill registry, or the clock.
+``assemble`` is a pure function: every input is supplied by the caller. It
+performs no filesystem reads, no skill-registry lookups, and no clock or
+platform calls. Callers (today: ``SessionPrompt``) resolve the impure
+inputs upstream — project instructions from disk, the active skill list
+from the registry, the wall-clock time, the timezone name, the platform
+name, and the working directory — then hand them in.
 
-``build_system_prompt`` is kept as a thin convenience that resolves the I/O
-itself; prefer ``assemble`` in new call sites.
+Resolve helpers exposed publicly: ``load_project_instructions``,
+``render_skills_section``, ``active_skills_from_registry``,
+``default_tz_name``.
 
 Per ADR-0009 (PromptAssembler extraction).
 """
@@ -20,6 +21,7 @@ import platform as _platform
 import time as _time
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Iterable
 
 from app.schemas.agent import AgentInfo
@@ -46,8 +48,7 @@ class SystemPromptParts:
     def as_cached_blocks(self) -> list[dict[str, Any]]:
         """Format as Anthropic system message blocks with cache_control.
 
-        Returns a list suitable for the Anthropic API ``system`` parameter:
-        the cached block gets a ``cache_control`` marker so it is stored
+        The cached block gets a ``cache_control`` marker so it is stored
         server-side and reused across turns within the same session.
         """
         blocks: list[dict[str, Any]] = []
@@ -68,7 +69,7 @@ class SystemPromptParts:
 def assemble(
     agent: AgentInfo,
     *,
-    directory: str | None = None,
+    cwd: str,
     workspace: str | None = None,
     fts_status: dict | None = None,
     workspace_memory_section: str | None = None,
@@ -80,10 +81,12 @@ def assemble(
 ) -> SystemPromptParts:
     """Assemble the system prompt from caller-resolved inputs.
 
-    Pure: no filesystem reads, no registry lookups, no clock calls. Resolve
-    ``project_instructions`` via :func:`load_project_instructions`,
-    ``skills_summary`` via :func:`render_skills_section`, and ``now`` /
-    ``tz_name`` / ``platform_name`` from the caller's environment.
+    Pure: no filesystem reads, no registry lookups, no clock or platform
+    calls. The caller supplies every value, including ``cwd`` (typically
+    ``self.directory or os.getcwd()``). Use the module's resolve helpers
+    (:func:`load_project_instructions`, :func:`render_skills_section`,
+    :func:`active_skills_from_registry`, :func:`default_tz_name`) to gather
+    the inputs.
 
     Tests pin all inputs to assert exact output.
     """
@@ -104,7 +107,7 @@ def assemble(
         dynamic_parts.append(skills_summary)
 
     env_info = _environment_section(
-        directory,
+        cwd=cwd,
         workspace=workspace,
         fts_status=fts_status,
         now=now,
@@ -119,36 +122,14 @@ def assemble(
     )
 
 
-def build_system_prompt(
-    agent: AgentInfo,
-    *,
-    directory: str | None = None,
-    workspace: str | None = None,
-    fts_status: dict | None = None,
-    workspace_memory_section: str | None = None,
-) -> SystemPromptParts:
-    """Backward-compatible convenience wrapper that resolves I/O internally.
-
-    Prefer :func:`assemble` in new call sites — it leaves I/O resolution to
-    the caller, which keeps the assembly step deterministic and testable.
-    """
-    return assemble(
-        agent,
-        directory=directory,
-        workspace=workspace,
-        fts_status=fts_status,
-        workspace_memory_section=workspace_memory_section,
-        project_instructions=load_project_instructions(directory),
-        skills_summary=render_skills_section(_active_skills_from_registry()),
-        now=datetime.now(),
-        tz_name=default_tz_name(),
-        platform_name=_platform.system(),
-    )
-
-
 def default_tz_name() -> str:
     """Return the local timezone name, matching the existing prompt's format."""
     return _time.tzname[_time.daylight] if _time.daylight else _time.tzname[0]
+
+
+def default_platform_name() -> str:
+    """Return the OS platform name."""
+    return _platform.system()
 
 
 def load_project_instructions(directory: str | None) -> str | None:
@@ -185,7 +166,8 @@ def render_skills_section(active_skills: Iterable[Any]) -> str | None:
 
     Each skill must expose ``.name`` and ``.description`` attributes. Returns
     ``None`` when no skills are active. Public helper — callers fetch the
-    skill list (e.g. ``registry.active_skills()``) and pass to :func:`assemble`.
+    skill list (e.g. via :func:`active_skills_from_registry`) and pass it
+    to :func:`assemble`.
 
     The list is duplicated in the system prompt because many models route
     better when relevant capabilities are surfaced there in addition to the
@@ -218,8 +200,11 @@ def render_skills_section(active_skills: Iterable[Any]) -> str | None:
     return "\n".join(lines)
 
 
-def _active_skills_from_registry() -> list[Any]:
-    """Best-effort fetch of currently active skills, sorted by name."""
+def active_skills_from_registry() -> list[Any]:
+    """Best-effort fetch of currently active skills, sorted by name.
+
+    Returns an empty list if the registry is unavailable.
+    """
     try:
         from app.dependencies import get_skill_registry
 
@@ -230,8 +215,8 @@ def _active_skills_from_registry() -> list[Any]:
 
 
 def _environment_section(
-    directory: str | None,
     *,
+    cwd: str,
     workspace: str | None,
     fts_status: dict | None,
     now: datetime,
@@ -239,7 +224,6 @@ def _environment_section(
     platform_name: str,
 ) -> str:
     """Render the environment section from already-resolved values."""
-    cwd = directory or os.getcwd()
     today = now.strftime("%Y-%m-%d")
     current_time = now.strftime("%H:%M")
 
@@ -250,7 +234,6 @@ def _environment_section(
 - Current year: {now.year}"""
 
     if workspace:
-        from pathlib import Path
         output_dir = str(Path(workspace) / "openyak_written")
         section += f"""
 
