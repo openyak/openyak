@@ -34,7 +34,14 @@ from app.session.manager import (
     get_session,
     update_session_title,
 )
-from app.session.system_prompt import SystemPromptParts, build_system_prompt
+from app.session.system_prompt import (
+    SystemPromptParts,
+    _active_skills_from_registry,
+    assemble as assemble_system_prompt,
+    default_tz_name,
+    load_project_instructions,
+    render_skills_section,
+)
 from app.streaming.events import (
     AGENT_ERROR,
     DONE,
@@ -319,12 +326,21 @@ class SessionPrompt:
             except Exception:
                 logger.debug("Workspace memory injection skipped", exc_info=True)
 
-        self.system_prompt_parts = build_system_prompt(
+        # I/O is resolved here so assemble() stays pure (per ADR-0009).
+        import platform as _platform
+        from datetime import datetime as _datetime
+
+        self.system_prompt_parts = assemble_system_prompt(
             self.agent,
             directory=self.directory,
             workspace=self.workspace,
             fts_status=self.fts_status,
             workspace_memory_section=self.workspace_memory_section,
+            project_instructions=load_project_instructions(self.directory),
+            skills_summary=render_skills_section(_active_skills_from_registry()),
+            now=_datetime.now(),
+            tz_name=default_tz_name(),
+            platform_name=_platform.system(),
         )
 
         # --- 5. Merge permission rulesets ---
@@ -895,12 +911,21 @@ class SessionPrompt:
             self.request_permissions,
             self.session_permissions,
         )
-        self.system_prompt_parts = build_system_prompt(
+        # I/O is resolved here so assemble() stays pure (per ADR-0009).
+        import platform as _platform
+        from datetime import datetime as _datetime
+
+        self.system_prompt_parts = assemble_system_prompt(
             self.agent,
             directory=self.directory,
             workspace=self.workspace,
             fts_status=self.fts_status,
             workspace_memory_section=self.workspace_memory_section,
+            project_instructions=load_project_instructions(self.directory),
+            skills_summary=render_skills_section(_active_skills_from_registry()),
+            now=_datetime.now(),
+            tz_name=default_tz_name(),
+            platform_name=_platform.system(),
         )
 
 
