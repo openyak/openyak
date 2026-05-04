@@ -22,6 +22,8 @@ from app.auth.private_network import PrivateNetworkAccessMiddleware
 from app.auth.token import ensure_session_token
 from app.config import Settings
 from app.dependencies import (
+    get_index_manager,
+    get_stream_manager,
     set_agent_registry,
     set_connector_registry,
     set_index_manager,
@@ -397,9 +399,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Built-in FTS5 search (enabled by default)
     if settings.fts_enabled:
         from app.fts import IndexManager
-        index_manager = IndexManager()
-        app.state.index_manager = index_manager
-        set_index_manager(index_manager)
+        set_index_manager(IndexManager())
         logger.info("FTS5 search enabled")
 
     # Task scheduler (cron + interval automations)
@@ -447,8 +447,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # --- Shutdown ---
 
-    # Graceful shutdown: abort active generation jobs and wait for them
-    sm = getattr(app.state, "stream_manager", None)
+    # Graceful shutdown: abort active generation jobs and wait for them.
+    # Reads the module-level singleton (per ADR-0008); previously read from
+    # app.state.stream_manager which was never set in production, so this
+    # block was dead code.
+    sm = get_stream_manager()
     if sm is not None:
         aborted = sm.abort_all()
         if aborted:
@@ -485,8 +488,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if hasattr(app.state, "task_scheduler"):
         await app.state.task_scheduler.stop()
 
-    if hasattr(app.state, "index_manager"):
-        await app.state.index_manager.shutdown()
+    im = get_index_manager()
+    if im is not None:
+        await im.shutdown()
 
     # Stop managed Ollama process
     ollama_mgr = getattr(app.state, "ollama_manager", None)
