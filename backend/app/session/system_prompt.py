@@ -1,24 +1,26 @@
-"""System prompt builder.
+"""System prompt assembly.
 
-Assembles the full system prompt from:
-  - Agent's base prompt template
-  - Environment info (cwd, platform, date)
-  - Project instructions (if any)
+The ``assemble`` function is **pure**: it takes already-resolved inputs and
+returns a ``SystemPromptParts``. Callers (today: ``SessionPrompt._setup``)
+resolve I/O upstream — project instructions from disk, the active skill list
+from the registry, the wall-clock time, and the platform name — then hand
+those values in. This makes ``assemble`` deterministic and unit-testable
+without touching the filesystem, the global skill registry, or the clock.
 
-Supports prompt caching: static sections (agent base prompt, project instructions)
-are separated from dynamic sections (environment info, workspace memory, skills)
-so that Anthropic API prompt caching can be applied to the static portion.
+``build_system_prompt`` is kept as a thin convenience that resolves the I/O
+itself; prefer ``assemble`` in new call sites.
+
+Per ADR-0009 (PromptAssembler extraction).
 """
 
 from __future__ import annotations
 
 import os
-import platform
+import platform as _platform
 import time as _time
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from app.schemas.agent import AgentInfo
 
@@ -27,10 +29,10 @@ from app.schemas.agent import AgentInfo
 class SystemPromptParts:
     """System prompt split into cached (static) and dynamic sections.
 
-    The cached portion (agent base prompt + project instructions) is stable
-    across turns and can benefit from Anthropic's prompt caching.
-    The dynamic portion (environment info, workspace memory, skills) changes
-    each turn and should not be cached.
+    Semantically equivalent to ADR-0009's ``list[SystemPart]`` of length two —
+    the cached segment plus the dynamic segment. ``as_cached_blocks()``
+    materialises the list-of-dict form expected by ``BaseProvider.stream_chat``
+    and Anthropic prompt caching.
     """
 
     cached: str
@@ -63,44 +65,52 @@ class SystemPromptParts:
         return blocks
 
 
-def build_system_prompt(
+def assemble(
     agent: AgentInfo,
     *,
     directory: str | None = None,
     workspace: str | None = None,
     fts_status: dict | None = None,
     workspace_memory_section: str | None = None,
+    project_instructions: str | None = None,
+    skills_summary: str | None = None,
+    now: datetime,
+    tz_name: str,
+    platform_name: str,
 ) -> SystemPromptParts:
-    """Build the complete system prompt for an LLM call.
+    """Assemble the system prompt from caller-resolved inputs.
 
-    Returns a ``SystemPromptParts`` with cached (static) and dynamic sections
-    separated so callers can apply prompt caching when the provider supports it.
+    Pure: no filesystem reads, no registry lookups, no clock calls. Resolve
+    ``project_instructions`` via :func:`load_project_instructions`,
+    ``skills_summary`` via :func:`render_skills_section`, and ``now`` /
+    ``tz_name`` / ``platform_name`` from the caller's environment.
+
+    Tests pin all inputs to assert exact output.
     """
-    # --- Cached (static) sections ---
     cached_parts: list[str] = []
 
-    # Agent's base prompt (stable across turns)
     if agent.system_prompt:
         cached_parts.append(agent.system_prompt)
 
-    # Project instructions (stable across turns)
-    project_instructions = _load_project_instructions(directory)
     if project_instructions:
         cached_parts.append(project_instructions)
 
-    # --- Dynamic sections (change each turn) ---
     dynamic_parts: list[str] = []
 
-    # Workspace-scoped memory
     if workspace_memory_section:
         dynamic_parts.append(workspace_memory_section)
 
-    skills_info = _skills_awareness_section()
-    if skills_info:
-        dynamic_parts.append(skills_info)
+    if skills_summary:
+        dynamic_parts.append(skills_summary)
 
-    # Environment info (timestamp changes every minute)
-    env_info = _environment_section(directory, workspace=workspace, fts_status=fts_status)
+    env_info = _environment_section(
+        directory,
+        workspace=workspace,
+        fts_status=fts_status,
+        now=now,
+        tz_name=tz_name,
+        platform_name=platform_name,
+    )
     dynamic_parts.append(env_info)
 
     return SystemPromptParts(
@@ -109,22 +119,138 @@ def build_system_prompt(
     )
 
 
-def _environment_section(directory: str | None = None, *, workspace: str | None = None, fts_status: dict | None = None) -> str:
-    """Generate environment context section."""
+def build_system_prompt(
+    agent: AgentInfo,
+    *,
+    directory: str | None = None,
+    workspace: str | None = None,
+    fts_status: dict | None = None,
+    workspace_memory_section: str | None = None,
+) -> SystemPromptParts:
+    """Backward-compatible convenience wrapper that resolves I/O internally.
+
+    Prefer :func:`assemble` in new call sites — it leaves I/O resolution to
+    the caller, which keeps the assembly step deterministic and testable.
+    """
+    return assemble(
+        agent,
+        directory=directory,
+        workspace=workspace,
+        fts_status=fts_status,
+        workspace_memory_section=workspace_memory_section,
+        project_instructions=load_project_instructions(directory),
+        skills_summary=render_skills_section(_active_skills_from_registry()),
+        now=datetime.now(),
+        tz_name=default_tz_name(),
+        platform_name=_platform.system(),
+    )
+
+
+def default_tz_name() -> str:
+    """Return the local timezone name, matching the existing prompt's format."""
+    return _time.tzname[_time.daylight] if _time.daylight else _time.tzname[0]
+
+
+def load_project_instructions(directory: str | None) -> str | None:
+    """Load project-specific instructions from conventional locations.
+
+    Returns the formatted ``# Project Instructions`` section or ``None`` if
+    no instruction file is found. Public helper — callers resolve this and
+    pass the result to :func:`assemble`.
+    """
+    if not directory:
+        return None
+
+    candidates = [
+        os.path.join(directory, "AGENTS.md"),
+        os.path.join(directory, ".openyak", "instructions.md"),
+        os.path.join(directory, ".openyak", "instructions"),
+    ]
+
+    for path in candidates:
+        if os.path.isfile(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    content = f.read().strip()
+                if content:
+                    return f"# Project Instructions\n{content}"
+            except OSError:
+                continue
+
+    return None
+
+
+def render_skills_section(active_skills: Iterable[Any]) -> str | None:
+    """Render the skill-routing section from a sorted list of active skills.
+
+    Each skill must expose ``.name`` and ``.description`` attributes. Returns
+    ``None`` when no skills are active. Public helper — callers fetch the
+    skill list (e.g. ``registry.active_skills()``) and pass to :func:`assemble`.
+
+    The list is duplicated in the system prompt because many models route
+    better when relevant capabilities are surfaced there in addition to the
+    skill tool's own description.
+    """
+    skills = list(active_skills)
+    if not skills:
+        return None
+
+    shown = skills[:12]
+    remaining = len(skills) - len(shown)
+
+    lines = [
+        "# Skill Routing",
+        "If the task matches one of the skills below, call the `skill` tool before major work.",
+        "Use skills for specialised workflows or output-generation tasks. Do not load a skill just to read a file.",
+        "",
+        "Currently available skills:",
+    ]
+
+    for skill in shown:
+        desc = (skill.description or "").strip()
+        if len(desc) > 90:
+            desc = desc[:87] + "..."
+        lines.append(f"- {skill.name}: {desc}")
+
+    if remaining > 0:
+        lines.append(f"- (and {remaining} more available via the `skill` tool)")
+
+    return "\n".join(lines)
+
+
+def _active_skills_from_registry() -> list[Any]:
+    """Best-effort fetch of currently active skills, sorted by name."""
+    try:
+        from app.dependencies import get_skill_registry
+
+        registry = get_skill_registry()
+        return sorted(registry.active_skills(), key=lambda s: s.name.lower())
+    except Exception:
+        return []
+
+
+def _environment_section(
+    directory: str | None,
+    *,
+    workspace: str | None,
+    fts_status: dict | None,
+    now: datetime,
+    tz_name: str,
+    platform_name: str,
+) -> str:
+    """Render the environment section from already-resolved values."""
     cwd = directory or os.getcwd()
-    now = datetime.now()
     today = now.strftime("%Y-%m-%d")
     current_time = now.strftime("%H:%M")
-    tz_name = _time.tzname[_time.daylight] if _time.daylight else _time.tzname[0]
-    plat = platform.system()
 
     section = f"""# Environment
 - Working directory: {cwd}
-- Platform: {plat}
+- Platform: {platform_name}
 - Current date: {today} ({current_time} {tz_name})
 - Current year: {now.year}"""
 
     if workspace:
+        from pathlib import Path
         output_dir = str(Path(workspace) / "openyak_written")
         section += f"""
 
@@ -166,74 +292,3 @@ Do not return relative paths like `src/main.py` when an absolute path is availab
 - Full-text `search` tool will be available once indexing completes"""
 
     return section
-
-
-def _load_project_instructions(directory: str | None) -> str | None:
-    """Load project-specific instructions from conventional locations."""
-    if not directory:
-        return None
-
-    # Check common instruction file locations
-    candidates = [
-        os.path.join(directory, "AGENTS.md"),
-        os.path.join(directory, ".openyak", "instructions.md"),
-        os.path.join(directory, ".openyak", "instructions"),
-    ]
-
-    for path in candidates:
-        if os.path.isfile(path):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    content = f.read().strip()
-                if content:
-                    return f"# Project Instructions\n{content}"
-            except OSError:
-                continue
-
-    return None
-
-
-def _skills_awareness_section() -> str | None:
-    """Return a compact summary of currently enabled skills.
-
-    This intentionally duplicates a small amount of information from the skill
-    tool description because many models route better when relevant capabilities
-    are surfaced in the system prompt itself.
-    """
-    try:
-        from app.dependencies import get_skill_registry
-
-        registry = get_skill_registry()
-        active = sorted(registry.active_skills(), key=lambda s: s.name.lower())
-    except Exception:
-        return None
-
-    if not active:
-        return None
-
-    shown = active[:12]
-    remaining = len(active) - len(shown)
-
-    lines = [
-        "# Skill Routing",
-        "If the task matches one of the skills below, call the `skill` tool before major work.",
-        "Use skills for specialised workflows or output-generation tasks. Do not load a skill just to read a file.",
-        "",
-        "Currently available skills:",
-    ]
-
-    for skill in shown:
-        desc = (skill.description or "").strip()
-        if len(desc) > 90:
-            desc = desc[:87] + "..."
-        lines.append(f"- {skill.name}: {desc}")
-
-    if remaining > 0:
-        lines.append(f"- (and {remaining} more available via the `skill` tool)")
-
-    return "\n".join(lines)
-
-
-
-# _skills_section removed — skill listing now lives only in SkillTool.description
-# to avoid token duplication. See app/tool/builtin/skill.py.
