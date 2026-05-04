@@ -1,0 +1,16 @@
+# Defer `NativeDialog` extraction; add telemetry on `/api/files/browse*` and decide based on real fallback rate
+
+The frontend already implements Tauri-first dispatch for native dialogs ([frontend/src/lib/upload.ts:39-72](frontend/src/lib/upload.ts#L39-L72) and [:77-104](frontend/src/lib/upload.ts#L77-L104)): under `IS_DESKTOP`, `browseFiles()` and `browseDirectory()` call `@tauri-apps/plugin-dialog`'s `open()` directly and only fall back to `POST /api/files/browse*` on import failure. The backend's ~280 lines of platform-dispatch code (`api/files.py:88-405`) therefore runs in two scenarios: (a) Tauri plugin-dialog import fails on desktop — rare, possibly never in production — or (b) a remote-access user triggers `browseFiles()` from a browser, in which case the OS dialog opens on the server and the user can't see it (the path is logically broken in remote mode and is not used; remote uploads go through `<input type="file">` → `/api/files/upload`).
+
+The candidate as originally framed was "extract `NativeDialog` Module to clean up `api/files.py`." Under the deletion test, that extraction would formalize vestigial code: the `_dialog_*` functions have **zero non-route callers** in `backend/`, `frontend/`, or any script. The two endpoints exist solely as a Tauri-failure fallback whose real-world hit rate we don't currently measure.
+
+We therefore defer the extraction. Before the next release we add lightweight telemetry — count + log on `/files/browse` and `/files/browse-directory` — to measure how often the fallback actually triggers. After one release of data:
+
+- If the fallback rate is essentially zero, delete `/files/browse` + `/files/browse-directory` along with all `_dialog_*` / `_dir_dialog_*` platform plumbing in `api/files.py` and the corresponding fallback branches in `frontend/src/lib/upload.ts`. ADR-0001 (Tauri commands are shell-only) and the existing frontend dispatch are sufficient — the backend has no business owning native dialog logic.
+- If the fallback rate is meaningfully nonzero, extract the `NativeDialog` Module per the original deepening plan: `pick_files()` / `pick_directory()` module-level functions, private `_PlatformDialog` Protocol with macOS / Windows / Linux / Fake adapters, lazy platform import inside `_get_impl()`.
+
+## Considered options
+
+- **Extract `NativeDialog` Module now.** Rejected for now: pre-pays maintenance cost on code with no demonstrated production callers. If telemetry shows real usage, this becomes the right answer.
+- **Delete `/api/files/browse*` outright now.** Rejected for now: removes a fallback path without data on whether anyone depends on it. One release of telemetry closes that uncertainty cheaply.
+- **Build a `TauriIpcDialogAdapter` so the backend can call into Tauri's plugin-dialog on desktop.** Rejected: Tauri spawns the Python backend with `stdin(Stdio::null())`, no return channel exists, and `#[tauri::command]` handlers are reachable only from the webview. Adding the channel would require either inverting control via frontend HTTP polling or building a sidecar JSON-RPC stack — weeks of work for a feature the frontend already triggers directly. ADR-0001 (Tauri commands shell-only) is the correct answer; native dialog logic stays where it already runs in the desktop case (frontend-initiated Tauri plugin-dialog).
