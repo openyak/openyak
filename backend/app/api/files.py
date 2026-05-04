@@ -22,6 +22,40 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+
+# ---------------------------------------------------------------------------
+# Telemetry — ADR-0010
+# ---------------------------------------------------------------------------
+
+def _log_browse_telemetry(
+    event: str,
+    request: Request | None,
+    outcome: str,
+    *,
+    paths_count: int | None = None,
+    error: str | None = None,
+) -> None:
+    """Emit one structured log line per /files/browse* hit.
+
+    Per ADR-0010 the backend native-dialog code paths may be vestigial —
+    the frontend (`upload.ts`) prefers Tauri's plugin-dialog and only falls
+    back to these endpoints on import failure. After one release of this
+    signal we decide between extraction and deletion based on hit rate.
+    """
+    ua = request.headers.get("user-agent", "") if request is not None else ""
+    caller = "tauri" if "tauri" in ua.lower() else "browser"
+    fields = [
+        f"event={event}",
+        f"outcome={outcome}",
+        f"caller={caller}",
+        f"server={platform.system()}",
+    ]
+    if paths_count is not None:
+        fields.append(f"paths={paths_count}")
+    if error:
+        fields.append(f"error={error[:120]!r}")
+    logger.info("telemetry.files_browse %s", " ".join(fields))
+
 # Upload destination — relative to backend working directory
 UPLOAD_DIR = Path("data/uploads")
 
@@ -88,6 +122,8 @@ def remove_from_hash_index(content_hash: str | None) -> None:
 async def _open_native_file_dialog(
     multiple: bool = True,
     title: str = "Select files",
+    *,
+    request: Request | None = None,
 ) -> list[str]:
     """Open an OS-native file dialog and return selected paths.
 
@@ -107,6 +143,7 @@ async def _open_native_file_dialog(
             return await _dialog_linux(multiple, title)
     except Exception as e:
         logger.warning("Native file dialog failed: %s", e)
+        _log_browse_telemetry("files_browse", request, "error", error=str(e))
         return []
 
 
@@ -228,7 +265,11 @@ async def _dialog_linux(multiple: bool, title: str) -> list[str]:
 # Native directory dialog (platform-specific)
 # ---------------------------------------------------------------------------
 
-async def _open_native_directory_dialog(title: str = "Select directory") -> str | None:
+async def _open_native_directory_dialog(
+    title: str = "Select directory",
+    *,
+    request: Request | None = None,
+) -> str | None:
     """Open an OS-native folder picker and return the selected path."""
     system = platform.system()
     try:
@@ -240,6 +281,7 @@ async def _open_native_directory_dialog(title: str = "Select directory") -> str 
             return await _dir_dialog_linux(title)
     except Exception as e:
         logger.warning("Native directory dialog failed: %s", e)
+        _log_browse_telemetry("files_browse_directory", request, "error", error=str(e))
         return None
 
 
@@ -520,10 +562,19 @@ async def open_with_system(body: FileContentRequest) -> dict[str, str]:
 
 
 @router.post("/files/browse-directory")
-async def browse_directory(body: BrowseDirectoryRequest | None = None) -> dict[str, str | None]:
+async def browse_directory(
+    request: Request,
+    body: BrowseDirectoryRequest | None = None,
+) -> dict[str, str | None]:
     """Open native directory picker dialog. Returns selected path or null."""
     req = body or BrowseDirectoryRequest()
-    path = await _open_native_directory_dialog(title=req.title)
+    path = await _open_native_directory_dialog(title=req.title, request=request)
+    _log_browse_telemetry(
+        "files_browse_directory",
+        request,
+        "success" if path else "cancel",
+        paths_count=1 if path else 0,
+    )
     return {"path": path}
 
 
@@ -567,19 +618,31 @@ async def list_directory(body: ListDirectoryRequest | None = None) -> dict[str, 
 
 
 @router.post("/files/browse")
-async def browse_files(body: BrowseRequest | None = None) -> list[dict[str, Any]]:
+async def browse_files(
+    request: Request,
+    body: BrowseRequest | None = None,
+) -> list[dict[str, Any]]:
     """Open native file dialog and return metadata for selected files.
 
     No files are copied — paths reference the originals.
     """
     req = body or BrowseRequest()
-    paths = await _open_native_file_dialog(multiple=req.multiple, title=req.title)
+    paths = await _open_native_file_dialog(
+        multiple=req.multiple, title=req.title, request=request
+    )
 
     results = []
     for p in paths:
         fp = Path(p)
         if fp.is_file():
             results.append(_file_metadata(fp, source="referenced").model_dump())
+
+    _log_browse_telemetry(
+        "files_browse",
+        request,
+        "success" if results else "cancel",
+        paths_count=len(results),
+    )
     return results
 
 
