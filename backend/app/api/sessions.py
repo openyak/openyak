@@ -15,7 +15,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.api.pdf import markdown_to_pdf
-from app.dependencies import AgentRegistryDep, ProviderRegistryDep, SessionFactoryDep, StreamManagerDep, get_db
+from app.dependencies import (
+    AgentRegistryDep,
+    ProviderRegistryDep,
+    SessionFactoryDep,
+    StreamManagerDep,
+    get_db,
+    get_index_manager,
+)
 from app.models.session import Session
 from app.models.session_file import SessionFile
 from app.schemas.session import SessionCreate, SessionResponse, SessionSearchResult, SessionUpdate
@@ -395,7 +402,7 @@ async def delete_session_endpoint(
         raise HTTPException(status_code=404, detail="Session not found")
 
     # Clean up FTS resources for this session
-    index_manager = getattr(request.app.state, "index_manager", None)
+    index_manager = get_index_manager()
     if index_manager is not None:
         try:
             await index_manager.cleanup_session(session_id)

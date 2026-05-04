@@ -15,6 +15,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.dependencies import get_index_manager
 from app.models.scheduled_task import ScheduledTask
 from app.models.task_run import TaskRun
 from app.schemas.chat import PromptRequest
@@ -336,7 +337,7 @@ async def _run_session(
                 provider_registry=app_state.provider_registry,
                 agent_registry=app_state.agent_registry,
                 tool_registry=app_state.tool_registry,
-                index_manager=getattr(app_state, "index_manager", None),
+                index_manager=get_index_manager(),
             ),
             timeout=task_snapshot.get("timeout", 1800),
         )
