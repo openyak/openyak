@@ -1,0 +1,23 @@
+# Extract `ContextWindow` and `PromptAssembler` from `SessionPrompt`; keep the step loop intact
+
+`backend/app/session/prompt.py` (~970 lines) interleaves five concerns: model/Provider resolution, system prompt assembly, Message persistence, context-window budgeting + Compaction, and step-retry/continuation policy. Two of those concerns are extracted; the other three stay where they are.
+
+**`ContextWindow`** owns the four-stage funnel today inlined at `prompt.py` ~lines 384–620: `microcompact_messages` → `apply_tool_result_budget` → `context_collapse` → full LLM-based compaction (via an `on_summarize` callback). Public Interface is one method — `fit(messages, scheduled_tools, *, on_summarize, token_counter) -> FitOutcome` — with `FitOutcome(messages, compaction_part, tokens_saved, strategy, summary_metadata)`. The Module is **per-Session stateful**: it carries `_context_collapse_exhausted` and `_consecutive_compact_failures` privately across `fit()` calls (the existing circuit-breaker semantics on `prompt.py:144` and `prompt.py:387`), but those fields are not exposed on the Interface.
+
+**`PromptAssembler`** is a pure module-level function: `assemble(inputs: PromptInputs) -> list[SystemPart]` where `SystemPart = {"text": str, "cache": bool}`. It returns a list rather than a string so callers can place Anthropic-style prompt-cache breakpoints — the existing `BaseProvider.stream_chat` signature already accepts `system: str | list[dict[str, Any]]` ([backend/app/provider/base.py:30](backend/app/provider/base.py#L30)), so this aligns with the Provider Interface as it stands today, even though no caller currently emits the structured form. I/O (loading WorkspaceMemory, FTS status) stays in `SessionPrompt._setup()`; the pure function only receives already-resolved values.
+
+**`LoopController` is deliberately NOT extracted.** Todo recovery, `continuation_attempts`, and microcompact decisions are deeply coupled to step-loop state at `prompt.py:621-651`. Pulling them out would create a leaky Interface — the deletion test fails.
+
+## Considered options
+
+- **Inject `BudgetPolicy` / `CompactionStrategy` / `Compactor` / `PromptSource` Protocols on a Composer** (max-flexibility design). Rejected: of the four, only `CompactionStrategy` (3 production tactics today) and `PromptSource` (3 production sources today) pass the two-adapter rule. `Compactor` has only one adapter (persistence is mandated by ADR-0005, no alternate execution mode), and the speculative sources (Skill extension, A/B router, per-Workspace override) have zero production callers — they would be hypothetical seams. The single funnel inside `ContextWindow` already names its four stages, so a future RAG strategy is a 1-day mechanical insertion at that point, with the second adapter actually existing rather than predicted.
+- **Direct `Provider` injection into `ContextWindow` for summarization** (concrete-class design). Rejected: violates the test constraint that `ContextWindow` must be unit-testable without a live Provider. The callback path lets tests pass `token_counter=lambda m, t: 200_000` and `on_summarize=lambda ms: fake_compaction_result()` without stubbing a full Provider.
+- **`PromptAssembler` returning `str`**. Rejected: silently loses the prompt-cache breakpoint expression that the existing `BaseProvider` Interface already supports — a forward-leaning capability regression with no offsetting simplicity.
+
+## Consequences
+
+- `ContextWindow` is constructed once per Session in `_setup()` and reused across every `fit()` call in `_loop()`.
+- The `on_summarize` callback is a closure SessionPrompt builds — it captures Provider, Agent, model id, and the **pre-compaction WorkspaceMemory queueing logic** (today at `prompt.py:568-589`). `ContextWindow` does not know that WorkspaceMemory exists; the "queue important info before summarization" semantics live inside the callback wrapper. This keeps `ContextWindow`'s domain crisp ("decide whether to summarize") and lets WorkspaceMemory queueing evolve without churning the seam.
+- `FitOutcome.summary_metadata: dict | None` is a passthrough channel — `on_summarize` returns whatever it likes (model id, latency, token count); `ContextWindow` doesn't interpret, the caller logs.
+- Migration is sequenced: **PromptAssembler first** (half-day, mechanical, zero loop-semantics risk), **ContextWindow second** (1–2 days, touches `_loop()` state — must preserve the two circuit-breaker variables exactly).
+- `ContextWindow` and `PromptAssembler` are implementation Modules; **CONTEXT.md is not updated** — neither name surfaces in user-facing concepts (`Compaction`, the user-perceivable concept, is already in CONTEXT.md and its semantics are unchanged by this extraction).
