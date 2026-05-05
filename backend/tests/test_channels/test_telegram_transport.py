@@ -275,6 +275,79 @@ async def test_e2e_inbound_update_publishes_to_bus_and_send_calls_bot():
     assert "reply" in call.kwargs["text"]
 
 
+async def test_group_open_policy_passes_unmentioned_through_transport():
+    """Regression: `group_policy="open"` must accept group messages
+    even when they don't @mention the bot or reply to it.
+
+    Background: the transport used to short-circuit non-mentioning
+    group messages before constructing a ChatInbound, regardless of
+    config — silently breaking deployments that opted into `open`.
+    The fix moves the entire policy decision into ChatChannel; the
+    transport just translates the vendor event.
+    """
+    config = TelegramConfig(
+        token="x",
+        allow_from=["*"],
+        react_emoji="",
+        streaming=False,
+        group_policy="open",
+    )
+    bus = MessageBus()
+    channel = TelegramChannel(config, bus)
+    channel.transport._app = MagicMock()
+    channel.transport._bot_user_id = 1
+    channel.transport._bot_username = "openyak_bot"
+    channel.transport._on_inbound = channel._handle_inbound_envelope
+    channel._running = True
+
+    user = _fake_user(user_id=42, username="alice")
+    # Supergroup message, plain text, no @mention, no reply-to-bot.
+    message = _fake_message(
+        text="just chatting in the group",
+        chat_id=200,
+        chat_type="supergroup",
+        user=user,
+    )
+    update = SimpleNamespace(message=message, effective_user=user)
+    await channel.transport._on_message(update, ctx=SimpleNamespace())
+
+    inbound = await bus.consume_inbound()
+    assert inbound.chat_id == "200"
+    assert inbound.content == "just chatting in the group"
+    assert inbound.metadata["is_group"] is True
+
+
+async def test_group_mention_policy_drops_unmentioned_through_transport():
+    """Counterpart: `group_policy="mention"` (the default) still drops
+    group messages that don't @mention or reply to the bot."""
+    config = TelegramConfig(
+        token="x",
+        allow_from=["*"],
+        react_emoji="",
+        streaming=False,
+        group_policy="mention",
+    )
+    bus = MessageBus()
+    channel = TelegramChannel(config, bus)
+    channel.transport._app = MagicMock()
+    channel.transport._bot_user_id = 1
+    channel.transport._bot_username = "openyak_bot"
+    channel.transport._on_inbound = channel._handle_inbound_envelope
+    channel._running = True
+
+    user = _fake_user(user_id=42, username="alice")
+    message = _fake_message(
+        text="just chatting",
+        chat_id=300,
+        chat_type="supergroup",
+        user=user,
+    )
+    update = SimpleNamespace(message=message, effective_user=user)
+    await channel.transport._on_message(update, ctx=SimpleNamespace())
+
+    assert bus.inbound_size == 0
+
+
 async def test_inbound_command_routed_via_forward_command():
     config = TelegramConfig(token="x", allow_from=["*"], react_emoji="", streaming=False)
     bus = MessageBus()

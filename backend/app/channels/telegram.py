@@ -470,12 +470,11 @@ class TelegramTransport:
         user = update.effective_user
         self._remember_thread_context(message)
 
-        if not await self._is_group_message_for_bot(message):
-            # Group filter at the transport: messages we shouldn't even
-            # consider (no mention, no reply to bot in mention-only
-            # groups). ChatChannel's group_policy provides defence-in-
-            # depth on top.
-            return
+        # Group-policy gating happens at ChatChannel — the transport's
+        # job is to translate vendor events into ChatInbound envelopes
+        # with `is_group` / `is_mention_to_bot` / `is_reply_to_bot`
+        # populated correctly. ChatChannel reads `config.group_policy`
+        # and decides whether to drop or dispatch.
 
         content_parts: list[str] = []
         media_paths: list[str] = []
@@ -647,13 +646,6 @@ class TelegramTransport:
     def _is_reply_to_bot(self, message) -> bool:
         reply_user = getattr(getattr(message, "reply_to_message", None), "from_user", None)
         return bool(self._bot_user_id and reply_user and reply_user.id == self._bot_user_id)
-
-    async def _is_group_message_for_bot(self, message) -> bool:
-        if message.chat.type == "private":
-            return True
-        if await self._is_mentioned(message):
-            return True
-        return self._is_reply_to_bot(message)
 
     async def _extract_reply_context(self, message) -> str | None:
         reply = getattr(message, "reply_to_message", None)
