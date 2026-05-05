@@ -47,6 +47,7 @@ from app.channels.bus.queue import MessageBus
 from app.channels.chat.profile import ChatProfile
 from app.channels.chat.transport import (
     ChatInbound,
+    NonRetryableTransportError,
     VendorMessageRef,
     VendorTransport,
 )
@@ -140,7 +141,15 @@ class ChatChannel(BaseChannel):
     # ------------------------------------------------------------------
 
     async def _handle_inbound_envelope(self, env: ChatInbound) -> None:
-        """Callback for the transport. Applies policy, then dispatches."""
+        """Callback for the transport. Applies policy, then dispatches.
+
+        Note the allowlist is checked *here* (before reactions / typing /
+        media-group buffering kick in) AND again inside
+        :meth:`BaseChannel._handle_message` (defence-in-depth, in case
+        a future subclass calls ``_handle_message`` directly without
+        going through this envelope). The early check also avoids
+        side-effecting the vendor with reactions for blocked senders.
+        """
         if not self.is_allowed(env.sender_id):
             logger.info(
                 "%s: dropped inbound from sender %s (not in allow_from)",
@@ -197,6 +206,13 @@ class ChatChannel(BaseChannel):
         try:
             await asyncio.sleep(self.profile.media_group_buffer_ms / 1000)
             buf = self._media_group_buffers.pop(key, None)
+            # Pop the task ref *before* dispatching so a new event with
+            # the same media_group_id arriving during dispatch sees no
+            # task entry and schedules a fresh flush. Without this, a
+            # late-arriving event on the same key could create a new
+            # buffer that nobody flushes (the task entry from this run
+            # is still present until our `finally` below).
+            self._media_group_tasks.pop(key, None)
             if buf is None:
                 return
             content = "\n".join(buf.contents) if buf.contents else "[empty message]"
@@ -209,6 +225,8 @@ class ChatChannel(BaseChannel):
                 session_key=buf.session_key,
             )
         finally:
+            # Defensive — only fires if `await asyncio.sleep` was
+            # cancelled before the explicit pop above ran.
             self._media_group_tasks.pop(key, None)
 
     async def _dispatch_inbound(self, env: ChatInbound) -> None:
@@ -225,7 +243,16 @@ class ChatChannel(BaseChannel):
         )
 
     async def _react_to_inbound(self, env: ChatInbound) -> None:
-        """Best-effort emoji reaction on the inbound message."""
+        """Best-effort emoji reaction on the inbound message.
+
+        The reaction is paired with :meth:`_remove_inbound_reaction` at
+        send time. Removal is keyed off the inbound's ``message_id``,
+        which the agent must echo back via
+        ``OutboundMessage.metadata['message_id']`` for cleanup to find
+        the matching token. If the agent drops that field, reactions
+        accumulate on the vendor side until the message ages out — see
+        :meth:`_remove_reaction_by_keys` for the lookup contract.
+        """
         emoji = self._react_emoji()
         if not emoji:
             return
@@ -349,7 +376,11 @@ class ChatChannel(BaseChannel):
         meta: dict[str, Any],
     ) -> None:
         buf = self._stream_bufs.get(chat_id)
-        if not buf or not buf.ref or not buf.text:
+        if not buf or not buf.ref or not buf.text.strip():
+            # ``buf.text`` may be whitespace-only if the stream produced
+            # only padding deltas. Most vendors reject empty/whitespace
+            # text on edit_message; mirror the send_delta happy path's
+            # `.strip()` guard so the finaliser is symmetric.
             return
         if stream_id is not None and buf.stream_id is not None and buf.stream_id != stream_id:
             return
@@ -402,8 +433,11 @@ class ChatChannel(BaseChannel):
                 try:
                     await self.transport.show_typing(chat_id)
                 except Exception as exc:
+                    # Best-effort by design — a single transient
+                    # failure shouldn't permanently silence the
+                    # indicator for this chat. Log and try again on
+                    # the next tick.
                     logger.debug("%s: typing indicator failed: %s", self.name, exc)
-                    return
                 await asyncio.sleep(self.profile.typing_indicator_interval)
         except asyncio.CancelledError:
             pass
@@ -479,8 +513,9 @@ class ChatChannel(BaseChannel):
 
         Catches every ``Exception`` so the retry policy is uniform across
         vendor SDKs (each raises its own exception types for timeouts /
-        rate limits / network errors). Vendors that need to surface a
-        non-retryable error should reraise from inside the transport.
+        rate limits / network errors). Transports that need to flag a
+        permanent failure raise :class:`NonRetryableTransportError`,
+        which we re-raise immediately without burning more attempts.
         """
         attempts = max(1, self.profile.send_retries)
         delay = self.profile.send_retry_base_delay
@@ -488,6 +523,8 @@ class ChatChannel(BaseChannel):
         for attempt in range(1, attempts + 1):
             try:
                 return await fn(*args, **kwargs)
+            except NonRetryableTransportError:
+                raise
             except Exception as exc:
                 last_exc = exc
                 if attempt == attempts:

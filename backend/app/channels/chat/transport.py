@@ -23,6 +23,18 @@ from typing import Any, Awaitable, Callable, Literal, Protocol, runtime_checkabl
 MediaKind = Literal["photo", "voice", "audio", "video", "animation", "document"]
 
 
+class NonRetryableTransportError(Exception):
+    """Vendor signal that a transport call must not be retried.
+
+    ``ChatChannel._with_retry`` catches this specifically and re-raises
+    on the first occurrence — the exponential-backoff loop only fires
+    for plain :class:`Exception` subclasses. Vendor transports raise
+    this for permanent failures the channel layer can't recover from
+    (e.g. malformed payload, unauthorised credential, deleted chat
+    target) so retrying would just burn rate-limit budget.
+    """
+
+
 @dataclass(frozen=True)
 class VendorMessageRef:
     """Opaque reference to a message that lives on the vendor side.
