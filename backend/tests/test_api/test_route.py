@@ -13,6 +13,8 @@ import httpx
 import pytest
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api._route import Route, RouteSignatureError, _validate_and_bind
 from app.errors import Conflict, NotFound, register_error_handlers
@@ -73,6 +75,37 @@ def test_validation_accepts_typed_path_only_manager():
     assert plan.queries == {}
     assert plan.body_param is None
     assert plan.body_fields == []
+
+
+class _UnrelatedBody(BaseModel):
+    other_field: str
+
+
+def test_validation_rejects_basemodel_param_when_no_body_declared():
+    async def bad(payload: _UnrelatedBody) -> str:
+        return payload.other_field
+
+    with pytest.raises(RouteSignatureError, match="route declares no"):
+        _validate_and_bind(bad, path="", body=None)
+
+
+def test_validation_rejects_basemodel_param_that_doesnt_match_body():
+    class DeclaredBody(BaseModel):
+        x: int
+
+    async def bad(payload: _UnrelatedBody) -> str:
+        return payload.other_field
+
+    with pytest.raises(RouteSignatureError, match="does not match the declared body"):
+        _validate_and_bind(bad, path="", body=DeclaredBody)
+
+
+def test_validation_rejects_underscore_body_param_name():
+    async def bad(_body: str) -> str:
+        return _body
+
+    with pytest.raises(RouteSignatureError, match="forbidden param"):
+        _validate_and_bind(bad, path="", body=None)
 
 
 # ---------------------------------------------------------------------------
@@ -348,3 +381,85 @@ def test_stream_handler_must_accept_stream_id():
 
     with pytest.raises(RouteSignatureError, match="stream_id"):
         route.stream("/x", handler=no_stream_id, method="GET")
+
+
+# ---------------------------------------------------------------------------
+# AsyncSession injection — most-exercised dep path in PR-C
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_async_session_injected_via_get_db(db_engine, session_factory):
+    """Manager declaring `db: AsyncSession` gets a live, working session."""
+    from app.dependencies import get_db
+
+    captured: dict[str, AsyncSession] = {}
+
+    async def list_via_db(db: AsyncSession) -> list[dict]:
+        captured["db"] = db
+        result = await db.execute(text("select 1"))
+        return [{"x": result.scalar()}]
+
+    app = FastAPI()
+    register_error_handlers(app)
+
+    async def _override_get_db():
+        async with session_factory() as session:
+            async with session.begin():
+                yield session
+
+    app.dependency_overrides[get_db] = _override_get_db
+
+    route = Route(prefix="/db")
+    route.list("", manager=list_via_db, response_model=list[dict])
+    app.include_router(route.api_router)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/db")
+
+    assert resp.status_code == 200
+    assert resp.json() == [{"x": 1}]
+    assert isinstance(captured["db"], AsyncSession)
+
+
+# ---------------------------------------------------------------------------
+# `request.state.user` coercion — defends the audit parser
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_audit_user_coerced_when_state_user_is_object(caplog):
+    """Non-string `request.state.user` is coerced — protects key=value parsing."""
+
+    class _UserObj:
+        def __str__(self) -> str:
+            return "user-42"
+
+    app = FastAPI()
+    register_error_handlers(app)
+
+    @app.middleware("http")
+    async def set_object_user(request: Request, call_next):
+        request.state.user = _UserObj()
+        return await call_next(request)
+
+    async def echo() -> dict:
+        return {"ok": True}
+
+    route = Route(prefix="/u")
+    route.list("", manager=echo, response_model=dict)
+    app.include_router(route.api_router)
+
+    transport = httpx.ASGITransport(app=app)
+    with caplog.at_level(logging.INFO, logger="app.audit"):
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+            resp = await c.get("/u")
+            assert resp.status_code == 200
+
+    audit_records = [r for r in caplog.records if r.message.startswith("audit ")]
+    assert len(audit_records) == 1
+    assert "user=user-42" in audit_records[0].message
+    # Critically: no whitespace inside the user value, so parser sees one field.
+    user_field = next(p for p in audit_records[0].message.split() if p.startswith("user="))
+    assert user_field == "user=user-42"
