@@ -1,4 +1,21 @@
-"""Session CRUD endpoints."""
+"""Session CRUD endpoints — wired through the Route Module (ADR-0007).
+
+The 11 endpoints split between:
+
+- ``Route``-decorated CRUD: ``list / get / create / update / delete`` for
+  ``/sessions`` and ``/sessions/{id}``, plus ``list`` for ``/sessions/search``.
+  These call into ``app/session/manager.py`` cascades — ``create_session_and_index``,
+  ``update_session``, ``delete_session_cascade`` — that own the multi-step
+  orchestration (FTS reindex on directory change, stream abort + uploads
+  cleanup on delete) per ADR-0007.
+- ``Route.custom``: the four endpoints that are not CRUD — todos / files /
+  compact / export-pdf / export-md. Each is a hand-written async handler
+  that gets audit logging and ``DomainError`` mapping for free; their
+  shapes (binary ``Response`` for exports, optional body for compact,
+  in-line file-system probing for files) don't fit the typed-Manager
+  contract and pretending otherwise would invent more decorator surface
+  than warranted.
+"""
 
 from __future__ import annotations
 
@@ -7,43 +24,43 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import Depends, Request
 from fastapi.responses import Response
-from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm.attributes import flag_modified
 
+from app.api._route import Route
 from app.api.pdf import markdown_to_pdf
-from app.errors import Conflict, DomainError, InternalError, NotFound, UpstreamError
 from app.dependencies import (
     AgentRegistryDep,
     ProviderRegistryDep,
     SessionFactoryDep,
     StreamManagerDep,
     get_db,
-    get_index_manager,
+    get_session_factory,
 )
-from app.models.session import Session
+from app.errors import DomainError, InternalError, NotFound
 from app.models.session_file import SessionFile
-from app.schemas.session import SessionCreate, SessionResponse, SessionSearchResult, SessionUpdate
-from app.session.compaction import run_compaction
+from app.schemas.session import (
+    SessionCompactionRequest,
+    SessionCreate,
+    SessionResponse,
+    SessionSearchResult,
+    SessionUpdate,
+)
 from app.session.manager import (
-    create_session,
-    delete_session_uploads,
+    compact_session_cascade,
+    create_session_and_index,
+    delete_session_cascade,
     get_messages,
     get_session,
     list_sessions,
     search_sessions,
-    update_session_title,
+    update_session,
 )
-from app.storage.repository import delete_by_id
-from app.streaming.manager import GenerationJob
-from app.utils.id import generate_ulid
 
 log = logging.getLogger(__name__)
 
-router = APIRouter()
 _PATH_PATTERN = re.compile(r"(/[^\s`]+?\.[A-Za-z0-9]{1,10})")
 _CREATION_HINT_PATTERN = re.compile(
     r"\b(created?|written|saved|generated|exported|output)\b",
@@ -58,30 +75,87 @@ _BULLET_FILENAME_PATTERN = re.compile(
 )
 
 
-class SessionCompactionRequest(BaseModel):
-    model_id: str | None = None
+# ---------------------------------------------------------------------------
+# Route registrations — order matters for FastAPI: more specific paths
+# (`/sessions/search`) must register before parameterised ones
+# (`/sessions/{session_id}`) so the literal route wins.
+# ---------------------------------------------------------------------------
+
+route = Route(tags=["sessions"])
+
+route.list(
+    "/sessions",
+    manager=list_sessions,
+    response_model=list[SessionResponse],
+)
+
+route.list(
+    "/sessions/search",
+    manager=search_sessions,
+    response_model=list[SessionSearchResult],
+)
+
+route.create(
+    "/sessions",
+    manager=create_session_and_index,
+    body=SessionCreate,
+    response_model=SessionResponse,
+    status_code=201,
+)
+
+route.get(
+    "/sessions/{session_id}",
+    manager=get_session,
+    response_model=SessionResponse,
+    not_found_on_none=True,
+    not_found_message="Session not found",
+)
+
+route.update(
+    "/sessions/{session_id}",
+    manager=update_session,
+    body=SessionUpdate,
+    response_model=SessionResponse,
+)
+
+route.delete(
+    "/sessions/{session_id}",
+    manager=delete_session_cascade,
+)
 
 
-def _trigger_index(request: Request, directory: str | None, session_id: str | None = None) -> None:
-    """Fire-and-forget: start FTS indexing for *directory* if enabled."""
-    if not directory or not session_id:
-        return
-    manager = getattr(request.app.state, "index_manager", None)
-    if manager is None:
-        return
-    import asyncio
-    asyncio.create_task(
-        manager.ensure_index(directory, session_id),
-        name=f"fts-trigger-{session_id[:12]}",
-    )
+# ---------------------------------------------------------------------------
+# Hand-written custom handlers — non-CRUD shapes
+# ---------------------------------------------------------------------------
 
 
-def _extract_file_paths_from_messages(messages: list, session_directory: str | None) -> list[str]:
-    """Best-effort recovery of files that were created during older sessions.
+async def _list_session_todos(
+    session_id: str,
+    request: Request,
+) -> dict:
+    """Return the in-memory todo list for ``session_id``.
 
-    This is intentionally conservative: it should recover explicit creation
-    outputs from older code_execute-style sessions, but it must not treat files
-    merely *read* during analysis as generated workspace files.
+    ``get_todos`` reads from a side-channel keyed off ``session_id`` rather
+    than the DB, so we pass through to the existing helper.
+    """
+    from app.tool.builtin.todo import get_todos
+
+    session_factory = get_session_factory()
+    if session_factory is None:
+        return {"todos": []}
+    todos = await get_todos(session_id, session_factory)
+    return {"todos": todos}
+
+
+def _extract_file_paths_from_messages(
+    messages: list,
+    session_directory: str | None,
+) -> list[str]:
+    """Best-effort recovery of files created during older sessions.
+
+    Conservative: recovers explicit creation outputs from ``code_execute``-
+    style sessions but does not treat files merely *read* during analysis
+    as generated workspace files.
     """
     if not session_directory:
         return []
@@ -108,7 +182,6 @@ def _extract_file_paths_from_messages(messages: list, session_directory: str | N
             else:
                 continue
 
-            # Case 1: direct absolute paths in explicit creation/writing context.
             for raw_match in _PATH_PATTERN.findall(payload):
                 candidate = str(Path(raw_match).resolve())
                 if not Path(candidate).is_file():
@@ -120,8 +193,6 @@ def _extract_file_paths_from_messages(messages: list, session_directory: str | N
                 seen.add(candidate)
                 found.append(candidate)
 
-            # Case 2: assistant summaries like:
-            # "Created in /path/to/dir:" + bullet list of filenames
             created_in_match = _CREATED_IN_PATTERN.search(payload)
             if created_in_match:
                 target_dir = str(Path(created_in_match.group(1)).resolve())
@@ -141,125 +212,12 @@ def _extract_file_paths_from_messages(messages: list, session_directory: str | N
     return found
 
 
-@router.get("/sessions", response_model=list[SessionResponse])
-async def list_sessions_endpoint(
-    db: AsyncSession = Depends(get_db),
-    limit: int = 50,
-    offset: int = 0,
-    project_id: str | None = None,
-) -> list[SessionResponse]:
-    """List sessions."""
-    sessions = await list_sessions(db, limit=limit, offset=offset, project_id=project_id)
-    return [SessionResponse.model_validate(s) for s in sessions]
-
-
-@router.get("/sessions/search", response_model=list[SessionSearchResult])
-async def search_sessions_endpoint(
-    q: str,
-    db: AsyncSession = Depends(get_db),
-    limit: int = 20,
-    offset: int = 0,
-) -> list[SessionSearchResult]:
-    """Search sessions by title and message content."""
-    if not q.strip():
-        return []
-    results = await search_sessions(db, q.strip(), limit=limit, offset=offset)
-    return [
-        SessionSearchResult(
-            session=SessionResponse.model_validate(r["session"]),
-            snippet=r["snippet"],
-        )
-        for r in results
-    ]
-
-
-@router.post("/sessions", response_model=SessionResponse, status_code=201)
-async def create_session_endpoint(
-    request: Request,
-    body: SessionCreate,
-    db: AsyncSession = Depends(get_db),
-) -> SessionResponse:
-    """Create a new session."""
-    session = await create_session(
-        db,
-        project_id=body.project_id,
-        directory=body.directory,
-        title=body.title,
-    )
-    _trigger_index(request, body.directory, session.id)
-    return SessionResponse.model_validate(session)
-
-
-@router.get("/sessions/{session_id}", response_model=SessionResponse)
-async def get_session_endpoint(
-    session_id: str,
-    db: AsyncSession = Depends(get_db),
-) -> SessionResponse:
-    """Get session details."""
-    session = await get_session(db, session_id)
-    if session is None:
-        raise NotFound("Session not found")
-    return SessionResponse.model_validate(session)
-
-
-@router.patch("/sessions/{session_id}", response_model=SessionResponse)
-async def update_session_endpoint(
-    request: Request,
-    session_id: str,
-    body: SessionUpdate,
-    db: AsyncSession = Depends(get_db),
-) -> SessionResponse:
-    """Update session fields."""
-    session = await get_session(db, session_id)
-    if session is None:
-        raise NotFound("Session not found")
-
-    original_time_updated = session.time_updated
-    metadata_only_fields = {"is_pinned", "time_archived"}
-    preserve_time_updated = bool(body.model_fields_set) and body.model_fields_set <= metadata_only_fields
-
-    if body.title is not None:
-        session.title = body.title
-    if body.directory is not None:
-        session.directory = body.directory
-        _trigger_index(request, body.directory, session_id)
-    if "time_archived" in body.model_fields_set:
-        session.time_archived = body.time_archived
-    if body.is_pinned is not None:
-        session.is_pinned = body.is_pinned
-    if body.permission is not None:
-        session.permission = body.permission
-    if preserve_time_updated:
-        session.time_updated = original_time_updated
-        flag_modified(session, "time_updated")
-
-    await db.flush()
-    await db.refresh(session)
-    return SessionResponse.model_validate(session)
-
-
-@router.get("/sessions/{session_id}/todos")
-async def get_session_todos(
+async def _list_session_files(
     session_id: str,
     request: Request,
-) -> dict:
-    """Get current todo list for a session."""
-    from app.tool.builtin.todo import get_todos
-
-    session_factory = getattr(request.app.state, "session_factory", None)
-    if session_factory is None:
-        return {"todos": []}
-    todos = await get_todos(session_id, session_factory)
-    return {"todos": todos}
-
-
-@router.get("/sessions/{session_id}/files")
-async def get_session_files(
-    session_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Get tracked workspace files for a session."""
-
+    """Return tracked workspace files for ``session_id``."""
     session = await get_session(db, session_id)
     if session is None or not session.directory:
         return {"files": []}
@@ -285,7 +243,6 @@ async def get_session_files(
             "tool": entry.tool_id,
         })
 
-    # Backward-compatible fallback for older sessions that were never tracked.
     output_dir = Path(session.directory).resolve() / "openyak_written"
     if output_dir.is_dir():
         for entry in sorted(output_dir.iterdir(), key=lambda e: e.stat().st_mtime):
@@ -300,9 +257,6 @@ async def get_session_files(
                 "tool": "artifact",
             })
 
-    # Legacy fallback for older code_execute-created files: recover paths from
-    # persisted tool outputs and assistant text when SessionFile tracking did
-    # not yet record them.
     if not files:
         messages = await get_messages(db, session_id, limit=500, offset=0)
         recovered_paths = _extract_file_paths_from_messages(messages, session.directory)
@@ -320,8 +274,7 @@ async def get_session_files(
     return {"files": files}
 
 
-@router.post("/sessions/{session_id}/compact")
-async def compact_session_endpoint(
+async def _compact_session(
     session_id: str,
     session_factory: SessionFactoryDep,
     provider_registry: ProviderRegistryDep,
@@ -330,96 +283,25 @@ async def compact_session_endpoint(
     db: AsyncSession = Depends(get_db),
     body: SessionCompactionRequest | None = None,
 ) -> dict[str, object]:
-    """Trigger manual context compaction for a session."""
-    
-    session = await get_session(db, session_id)
-    if session is None:
-        raise NotFound("Session not found")
+    """Trigger manual context compaction.
 
-    if stream_manager and any(job.session_id == session_id and not job.completed for job in stream_manager._jobs.values()):
-        raise Conflict("Session is currently generating")
-
-    job = GenerationJob(stream_id=f"manual-compact-{generate_ulid()}", session_id=session_id)
-    result_payload: dict[str, object] = {"ok": False}
-
-    async def _run() -> None:
-        nonlocal result_payload
-        async with session_factory() as s:
-            async with s.begin():
-                live = await get_session(s, session_id)
-                if live is not None:
-                    live.time_compacting = datetime.now(timezone.utc)
-
-        try:
-            result = await run_compaction(
-                session_id,
-                job=job,
-                session_factory=session_factory,
-                provider_registry=provider_registry,
-                agent_registry=agent_registry,
-                model_id=body.model_id if body else None,
-                visible_summary=True,
-            )
-            if not result.summary and result.pruned_parts == 0:
-                raise Conflict("Nothing to compact yet")
-            if not result.summary:
-                raise UpstreamError("Compaction pruned context but did not produce an AI summary")
-            result_payload = {
-                "ok": True,
-                "summary_created": True,
-                "pruned_parts": result.pruned_parts,
-                "visible_summary": True,
-            }
-        finally:
-            async with session_factory() as s:
-                async with s.begin():
-                    live = await get_session(s, session_id)
-                    if live is not None:
-                        live.time_compacting = None
-            job.complete()
-
-    await _run()
-    return result_payload
-
-
-@router.delete("/sessions/{session_id}")
-async def delete_session_endpoint(
-    session_id: str,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-) -> dict:
-    """Delete a session and its associated upload files."""
-    # Abort any running generation streams for this session first
-    # to prevent FK constraint errors from in-flight DB writes.
-    from app.streaming.manager import StreamManager
-
-    sm: StreamManager | None = getattr(request.app.state, "stream_manager", None)
-    if sm is not None:
-        sm.abort_session(session_id)
-
-    await delete_session_uploads(db, session_id)
-    deleted = await delete_by_id(db, Session, session_id)
-    if not deleted:
-        raise NotFound("Session not found")
-
-    # Clean up FTS resources for this session
-    index_manager = get_index_manager()
-    if index_manager is not None:
-        try:
-            await index_manager.cleanup_session(session_id)
-        except Exception:
-            pass
-
-    return {"deleted": True}
-
-
-# ---------------------------------------------------------------------------
-# Conversation export
-# ---------------------------------------------------------------------------
+    Custom (not ``route.create``) because the body is genuinely optional —
+    clients may POST with no body. ``route.create`` would force a required
+    ``SessionCompactionRequest`` body and break that contract.
+    """
+    return await compact_session_cascade(
+        db,
+        session_id,
+        body,
+        session_factory,
+        provider_registry,
+        agent_registry,
+        stream_manager,
+    )
 
 
 def _messages_to_markdown(title: str, messages: list) -> str:
-    """Convert a list of Message ORM objects into a formatted markdown string."""
+    """Format a list of Message ORM objects as a Markdown transcript."""
     now_str = datetime.now(timezone.utc).strftime("%B %d, %Y at %I:%M %p UTC")
     lines = [f"# {title}", f"*Exported on {now_str}*", "", "---", ""]
 
@@ -428,7 +310,6 @@ def _messages_to_markdown(title: str, messages: list) -> str:
         role = data.get("role", "user")
         label = "You" if role == "user" else "Assistant"
 
-        # Collect text parts only — skip reasoning, tools, steps, etc.
         text_parts: list[str] = []
         for part in msg.parts:
             pd = part.data or {}
@@ -450,12 +331,25 @@ def _messages_to_markdown(title: str, messages: list) -> str:
     return "\n".join(lines)
 
 
-@router.get("/sessions/{session_id}/export-pdf")
-async def export_session_pdf(
+def _content_disposition(title: str, ext: str) -> str:
+    """RFC-5987 ``Content-Disposition`` for an export filename."""
+    from urllib.parse import quote
+
+    safe_title = "".join(
+        c if c.isascii() and (c.isalnum() or c in " _-") else "_" for c in title
+    )
+    utf8_title = quote(title, safe="")
+    return (
+        f'attachment; filename="{safe_title}.{ext}"; '
+        f"filename*=UTF-8''{utf8_title}.{ext}"
+    )
+
+
+async def _export_session_pdf(
     session_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    """Export an entire conversation as a formatted PDF."""
+    """Export a session as PDF."""
     session = await get_session(db, session_id)
     if session is None:
         raise NotFound("Session not found")
@@ -466,23 +360,10 @@ async def export_session_pdf(
     try:
         md_content = _messages_to_markdown(title, messages)
         pdf_bytes = markdown_to_pdf(md_content)
-
-        # RFC 5987: filename for ASCII fallback, filename* for UTF-8 (Unicode titles)
-        from urllib.parse import quote
-        safe_title = "".join(
-            c if c.isascii() and (c.isalnum() or c in " _-") else "_" for c in title
-        )
-        utf8_title = quote(title, safe="")
-
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",
-            headers={
-                "Content-Disposition": (
-                    f'attachment; filename="{safe_title}.pdf"; '
-                    f"filename*=UTF-8''{utf8_title}.pdf"
-                ),
-            },
+            headers={"Content-Disposition": _content_disposition(title, "pdf")},
         )
     except DomainError:
         raise
@@ -491,12 +372,11 @@ async def export_session_pdf(
         raise InternalError(str(exc)) from exc
 
 
-@router.get("/sessions/{session_id}/export-md")
-async def export_session_markdown(
+async def _export_session_markdown(
     session_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    """Export an entire conversation as a Markdown file."""
+    """Export a session as Markdown."""
     session = await get_session(db, session_id)
     if session is None:
         raise NotFound("Session not found")
@@ -505,19 +385,21 @@ async def export_session_markdown(
     title = session.title or "Conversation"
     md_content = _messages_to_markdown(title, messages)
 
-    from urllib.parse import quote
-    safe_title = "".join(
-        c if c.isascii() and (c.isalnum() or c in " _-") else "_" for c in title
-    )
-    utf8_title = quote(title, safe="")
-
     return Response(
         content=md_content.encode("utf-8"),
         media_type="text/markdown; charset=utf-8",
-        headers={
-            "Content-Disposition": (
-                f'attachment; filename="{safe_title}.md"; '
-                f"filename*=UTF-8''{utf8_title}.md"
-            ),
-        },
+        headers={"Content-Disposition": _content_disposition(title, "md")},
     )
+
+
+route.custom("GET", "/sessions/{session_id}/todos", handler=_list_session_todos)
+route.custom("GET", "/sessions/{session_id}/files", handler=_list_session_files)
+route.custom("POST", "/sessions/{session_id}/compact", handler=_compact_session)
+route.custom("GET", "/sessions/{session_id}/export-pdf", handler=_export_session_pdf)
+route.custom("GET", "/sessions/{session_id}/export-md", handler=_export_session_markdown)
+
+
+# Exposed for app/api/router.py — preserves the existing
+# `from app.api import sessions as sessions_api; include_router(sessions_api.router)`
+# contract.
+router = route.api_router

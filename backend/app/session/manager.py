@@ -2,18 +2,31 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy import func, select, text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
+from sqlalchemy.orm.attributes import flag_modified
 
+from app.agent.agent import AgentRegistry
+from app.errors import Conflict, NotFound, UpstreamError
 from app.models.message import Message, Part
 from app.models.session import Session
-from app.storage.repository import create, get_all, get_by_id
+from app.provider.registry import ProviderRegistry
+from app.schemas.session import (
+    SessionCompactionRequest,
+    SessionResponse,
+    SessionSearchResult,
+    SessionUpdate,
+)
+from app.storage.repository import create, delete_by_id, get_all, get_by_id
+from app.streaming.manager import GenerationJob, StreamManager
 from app.utils.id import generate_ulid
 
 logger = logging.getLogger(__name__)
@@ -65,16 +78,24 @@ async def list_sessions(
 
 async def search_sessions(
     db: AsyncSession,
-    query: str,
+    q: str,
     *,
     limit: int = 20,
     offset: int = 0,
-) -> list[dict[str, Any]]:
+) -> list[SessionSearchResult]:
     """Search sessions by title and message text content.
 
-    Returns a list of dicts with 'session' (Session) and 'snippet' (str|None).
-    Content matches include a text excerpt; title-only matches have snippet=None.
+    Returns a list of :class:`SessionSearchResult`. Content matches include a
+    text excerpt; title-only matches have ``snippet=None``. An empty or
+    whitespace-only ``q`` returns ``[]`` without touching the DB.
+
+    The parameter is named ``q`` (not ``query``) because the route layer
+    binds Manager params to URL queries by name, and the public API has
+    always exposed this as ``?q=...``.
     """
+    if not q.strip():
+        return []
+    query = q.strip()
     # Single query that returns all session columns + snippet,
     # avoiding the N+1 problem of looping get_by_id per result.
     stmt = text("""
@@ -128,14 +149,16 @@ async def search_sessions(
     sessions_result = await db.execute(sessions_stmt)
     session_map = {s.id: s for s in sessions_result.scalars().all()}
 
-    results: list[dict[str, Any]] = []
+    results: list[SessionSearchResult] = []
     for row in rows:
         session = session_map.get(row["id"])
         if session:
-            results.append({
-                "session": session,
-                "snippet": row["snippet"],
-            })
+            results.append(
+                SessionSearchResult(
+                    session=SessionResponse.model_validate(session),
+                    snippet=row["snippet"],
+                )
+            )
     return results
 
 
@@ -683,3 +706,194 @@ def _build_user_content_with_files(
             })
 
     return content
+
+
+# ---------------------------------------------------------------------------
+# Session cascades — multi-step orchestration consumed by the Route Module
+# decorated /sessions endpoints (per ADR-0007). Each cascade takes typed
+# primitives plus long-lived services already in `_TYPE_TO_INJECTOR`; no
+# Request, no app.state. Optional services (e.g. `IndexManager`, which is
+# absent when FTS is disabled) are reached for internally rather than
+# injected, to keep the dep map non-Optional.
+# ---------------------------------------------------------------------------
+
+
+def _trigger_index(directory: str | None, session_id: str) -> None:
+    """Fire-and-forget FTS index for *directory* if FTS is configured."""
+    from app.dependencies import get_index_manager
+
+    if not directory:
+        return
+    index_manager = get_index_manager()
+    if index_manager is None:
+        return
+    asyncio.create_task(
+        index_manager.ensure_index(directory, session_id),
+        name=f"fts-trigger-{session_id[:12]}",
+    )
+
+
+async def create_session_and_index(
+    db: AsyncSession,
+    *,
+    project_id: str | None = None,
+    directory: str | None = None,
+    title: str | None = None,
+) -> Session:
+    """Create a session and trigger FTS indexing for its directory."""
+    session = await create_session(
+        db,
+        project_id=project_id,
+        directory=directory,
+        title=title,
+    )
+    _trigger_index(directory, session.id)
+    return session
+
+
+async def update_session(
+    db: AsyncSession,
+    session_id: str,
+    body: SessionUpdate,
+) -> Session:
+    """Apply partial updates to a session.
+
+    Raises :class:`NotFound` if the session doesn't exist. Triggers FTS
+    reindex on directory change. Preserves ``time_updated`` for
+    metadata-only updates (pin / archive) so the session list ordering
+    doesn't reshuffle on those toggles.
+    """
+    session = await get_session(db, session_id)
+    if session is None:
+        raise NotFound("Session not found")
+
+    original_time_updated = session.time_updated
+    metadata_only_fields = {"is_pinned", "time_archived"}
+    preserve_time_updated = (
+        bool(body.model_fields_set)
+        and body.model_fields_set <= metadata_only_fields
+    )
+
+    if body.title is not None:
+        session.title = body.title
+    if body.directory is not None:
+        session.directory = body.directory
+        _trigger_index(body.directory, session_id)
+    if "time_archived" in body.model_fields_set:
+        session.time_archived = body.time_archived
+    if body.is_pinned is not None:
+        session.is_pinned = body.is_pinned
+    if body.permission is not None:
+        session.permission = body.permission
+    if preserve_time_updated:
+        session.time_updated = original_time_updated
+        flag_modified(session, "time_updated")
+
+    await db.flush()
+    await db.refresh(session)
+    return session
+
+
+async def delete_session_cascade(
+    db: AsyncSession,
+    session_id: str,
+    stream_manager: StreamManager,
+) -> dict[str, bool]:
+    """Delete a session, abort in-flight streams, and clean up FTS.
+
+    Streams are aborted *before* the row delete so in-flight DB writes
+    don't trip foreign-key constraints. Raises :class:`NotFound` if no
+    row was deleted.
+    """
+    from app.dependencies import get_index_manager
+
+    if stream_manager is not None:
+        stream_manager.abort_session(session_id)
+
+    await delete_session_uploads(db, session_id)
+    deleted = await delete_by_id(db, Session, session_id)
+    if not deleted:
+        raise NotFound("Session not found")
+
+    index_manager = get_index_manager()
+    if index_manager is not None:
+        try:
+            await index_manager.cleanup_session(session_id)
+        except Exception:
+            logger.warning(
+                "FTS cleanup failed for session %s",
+                session_id,
+                exc_info=True,
+            )
+
+    return {"deleted": True}
+
+
+async def compact_session_cascade(
+    db: AsyncSession,
+    session_id: str,
+    body: SessionCompactionRequest | None,
+    session_factory: async_sessionmaker[AsyncSession],
+    provider_registry: ProviderRegistry,
+    agent_registry: AgentRegistry,
+    stream_manager: StreamManager,
+) -> dict[str, object]:
+    """Run manual compaction for a session.
+
+    Raises :class:`NotFound` when the session doesn't exist,
+    :class:`Conflict` when a generation is already running on this
+    session or there is nothing to compact, and :class:`UpstreamError`
+    when the provider pruned context but failed to produce a summary.
+    """
+    from app.session.compaction import run_compaction
+
+    session = await get_session(db, session_id)
+    if session is None:
+        raise NotFound("Session not found")
+
+    if stream_manager and any(
+        job.session_id == session_id and not job.completed
+        for job in stream_manager._jobs.values()
+    ):
+        raise Conflict("Session is currently generating")
+
+    job = GenerationJob(
+        stream_id=f"manual-compact-{generate_ulid()}",
+        session_id=session_id,
+    )
+
+    async with session_factory() as s:
+        async with s.begin():
+            live = await get_session(s, session_id)
+            if live is not None:
+                live.time_compacting = datetime.now(timezone.utc)
+
+    try:
+        result = await run_compaction(
+            session_id,
+            job=job,
+            session_factory=session_factory,
+            provider_registry=provider_registry,
+            agent_registry=agent_registry,
+            model_id=body.model_id if body else None,
+            visible_summary=True,
+        )
+        if not result.summary and result.pruned_parts == 0:
+            raise Conflict("Nothing to compact yet")
+        if not result.summary:
+            raise UpstreamError(
+                "Compaction pruned context but did not produce an AI summary"
+            )
+        return {
+            "ok": True,
+            "summary_created": True,
+            "pruned_parts": result.pruned_parts,
+            "visible_summary": True,
+        }
+    finally:
+        async with session_factory() as s:
+            async with s.begin():
+                live = await get_session(s, session_id)
+                if live is not None:
+                    live.time_compacting = None
+        job.complete()

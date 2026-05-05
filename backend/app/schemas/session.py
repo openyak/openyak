@@ -63,3 +63,9 @@ class SessionList(BaseModel):
 
     items: list[SessionResponse]
     total: int
+
+
+class SessionCompactionRequest(BaseModel):
+    """Optional body for POST /sessions/{id}/compact."""
+
+    model_id: str | None = None

@@ -32,14 +32,25 @@ import inspect
 import logging
 import re
 import time
+import typing
 import uuid
 from typing import Any, Awaitable, Callable, Type, get_type_hints
 
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.dependencies import get_db
+from app.agent.agent import AgentRegistry
+from app.dependencies import (
+    get_agent_registry,
+    get_db,
+    get_provider_registry,
+    get_session_factory,
+    get_stream_manager,
+)
+from app.errors import NotFound
+from app.provider.registry import ProviderRegistry
+from app.streaming.manager import StreamManager
 
 audit_log = logging.getLogger("app.audit")
 
@@ -48,11 +59,33 @@ class RouteSignatureError(TypeError):
     """Raised at decoration time when a Manager signature is invalid for Route."""
 
 
-# Plain type → dependency injector for known long-lived services. Kept
-# minimal in PR-B; extended as sub-issues need additional injections.
+# Plain type → dependency injector for known long-lived services. Generic
+# aliases (e.g. ``async_sessionmaker[AsyncSession]``) are matched via
+# ``typing.get_origin`` so callers can keep their natural type annotations.
+# Each entry is added when a sub-issue's Manager calls for it; do not add
+# entries speculatively (one-adapter rule).
 _TYPE_TO_INJECTOR: dict[type, Callable[..., Any]] = {
     AsyncSession: get_db,
+    StreamManager: get_stream_manager,
+    ProviderRegistry: get_provider_registry,
+    AgentRegistry: get_agent_registry,
+    async_sessionmaker: get_session_factory,
 }
+
+
+def _resolve_injector(ann: Any) -> Callable[..., Any] | None:
+    """Map a type annotation to its dependency injector, if any.
+
+    Handles plain classes (``AsyncSession``) and generic aliases
+    (``async_sessionmaker[AsyncSession]``) — both resolve to the same
+    injector since the request-time value is identical.
+    """
+    if isinstance(ann, type) and ann in _TYPE_TO_INJECTOR:
+        return _TYPE_TO_INJECTOR[ann]
+    origin = typing.get_origin(ann)
+    if origin is not None and origin in _TYPE_TO_INJECTOR:
+        return _TYPE_TO_INJECTOR[origin]
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -98,8 +131,16 @@ def _log_stream_close(
 
 
 def _resolve_user(request: Request) -> str:
-    """Best-effort caller identity for audit. Anonymous if unauthenticated."""
-    return getattr(request.state, "user", None) or "anonymous"
+    """Best-effort caller identity for audit.
+
+    Contract: ``AuthMiddleware`` sets ``request.state.user`` to a ``str | None``
+    user-id (or leaves it unset for unauthenticated requests). The ``str()``
+    coercion defends against future drift — if the value ever becomes a
+    ``User`` object or dict, an unconverted value would render as
+    ``user={'id': ...}`` and silently break the ``key=value`` audit parser.
+    """
+    raw = getattr(request.state, "user", None)
+    return str(raw) if raw else "anonymous"
 
 
 # ---------------------------------------------------------------------------
@@ -108,7 +149,7 @@ def _resolve_user(request: Request) -> str:
 
 
 _PATH_PLACEHOLDER = re.compile(r"\{([^}:]+)(?::[^}]*)?\}")
-_FORBIDDEN_PARAM_NAMES = {"request", "response", "app"}
+_FORBIDDEN_PARAM_NAMES = {"request", "response", "app", "_body"}
 _FORBIDDEN_PARAM_TYPES: tuple[type, ...] = (Request, Response)
 
 
@@ -168,14 +209,23 @@ def _validate_and_bind(
                 "Route does not pass FastAPI primitives to Managers."
             )
 
-        # Body-as-whole-model: typed as a BaseModel subclass and matches the
-        # declared body parameter exactly.
-        if (
-            body is not None
-            and isinstance(ann, type)
-            and issubclass(ann, BaseModel)
-            and ann is body
-        ):
+        # Body-as-whole-model: typed as a BaseModel subclass. Must match the
+        # declared body, otherwise FastAPI would later try to resolve the
+        # mismatched model from query params and surface a confusing error
+        # far from the cause — fail fast at decoration time instead.
+        if isinstance(ann, type) and issubclass(ann, BaseModel):
+            if body is None:
+                raise RouteSignatureError(
+                    f"Manager `{manager.__qualname__}` param "
+                    f"`{name}: {ann.__name__}` is a BaseModel but the route "
+                    "declares no `body=...`."
+                )
+            if ann is not body:
+                raise RouteSignatureError(
+                    f"Manager `{manager.__qualname__}` param "
+                    f"`{name}: {ann.__name__}` does not match the declared "
+                    f"body `{body.__name__}`."
+                )
             if plan.body_param is not None:
                 raise RouteSignatureError(
                     f"Manager `{manager.__qualname__}` declares two body-typed params."
@@ -191,7 +241,7 @@ def _validate_and_bind(
             plan.body_fields.append(name)
             continue
 
-        if isinstance(ann, type) and ann in _TYPE_TO_INJECTOR:
+        if _resolve_injector(ann) is not None:
             plan.deps[name] = ann
             continue
 
@@ -247,14 +297,19 @@ def _build_endpoint(
 
             result = await manager(**mgr_kwargs)
             if result is None and not_found_on_none:
-                from app.errors import NotFound  # local import: avoids cycle in tests
-                status_code = 404
                 raise NotFound(not_found_message)
             return result
         except Exception as exc:
             status_code = getattr(exc, "status_code", 500)
             raise
         finally:
+            # Audit reflects the Manager's outcome. If response_model
+            # serialization fails downstream of this `finally` (e.g. the
+            # Manager returned a value the schema can't validate), the
+            # audit line records status=success while the client receives
+            # 500. That matches the "Manager succeeded; failure was at the
+            # boundary" reading; dashboards consuming audit should treat
+            # 500s in error-handler logs as the authoritative count.
             duration_ms = int((time.perf_counter() - started) * 1000)
             _log_audit(
                 user=_resolve_user(request),
@@ -279,7 +334,7 @@ def _build_endpoint(
             )
         )
     for name, ann in plan.deps.items():
-        injector = _TYPE_TO_INJECTOR[ann]
+        injector = _resolve_injector(ann)
         parameters.append(
             inspect.Parameter(
                 name,
@@ -289,7 +344,7 @@ def _build_endpoint(
             )
         )
     for name, original in plan.queries.items():
-        default = original.default if original.default is not inspect.Parameter.empty else inspect.Parameter.empty
+        default = original.default
         parameters.append(
             inspect.Parameter(
                 name,
