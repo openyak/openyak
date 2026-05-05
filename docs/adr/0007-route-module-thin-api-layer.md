@@ -13,3 +13,30 @@ Endpoints in `backend/app/api/` are written with a `Route` decorator family — 
 - Long-lived services (`stream_manager`, `index_manager`) move from `app.state` to module-level singletons so Managers can call them without FastAPI coupling. See ADR-0008.
 - Migration is incremental: `Route` and plain FastAPI `@router.get` coexist during the transition; rewrite proceeds file-by-file, starting with `backend/app/api/sessions.py`.
 - A `TestRouteRegistry` adapter lets unit tests dispatch `(verb, path, body, user) → handler return value` without spinning up the FastAPI app or ASGI lifespan.
+
+## Addendum: audit shape (2026-05-04)
+
+The original decision said "audit by default" but did not pin what audit looks like. Pinning it here so every `Route`-decorated endpoint emits a uniform shape and downstream tooling (log search, dashboards) can rely on it.
+
+**Non-streaming routes — one line per request, emitted on close:**
+
+```
+logger.info("audit", extra={"user": ..., "route": ..., "status_code": ..., "duration_ms": ...})
+```
+
+Same four-field shape as the `/files/browse*` telemetry shipped in #59 so a single log parser handles both. No new sink, no DB-backed audit table.
+
+**Streaming routes (`route.stream`) — two lines per stream sharing a `stream_id`:**
+
+- **Open** (when the response stream is acquired):
+  `logger.info("audit.stream.open", extra={"stream_id": ..., "user": ..., "route": ..., "started_at": ...})`
+- **Close** (on completion, abort, or error):
+  `logger.info("audit.stream.close", extra={"stream_id": ..., "outcome": "completed" | "aborted" | "error", "duration_ms": ..., "error_class": ...})`
+
+Why two lines instead of one:
+- The single before/after model that `Route` uses for non-streaming requests cannot fire "after" — for SSE the response begins immediately and ends an unbounded time later. Logging only on open loses outcome; logging only on close loses the start signal that a stream existed at all (important for orphan detection if the worker dies mid-stream).
+- A correlated pair is cheap (the `stream_id` already exists in `GenerationJob`) and makes both queries trivial: "how many streams started today" (count opens) and "what fraction completed cleanly" (join on `stream_id`).
+
+**No per-chunk audit.** Considered and rejected: a 30-second generation with 200 chunks × concurrent streams blows up audit volume by 2-3 orders of magnitude with no analytical payoff — chunk-level data is already in the streaming replay buffer (ADR-0004) when needed. The audit layer's unit of accountability is the request lifecycle, not the wire frame.
+
+The decorator owns log emission; route handlers do not call `logger.info("audit ...")` themselves. If a handler needs richer business-event logging it does so under a different logger name to keep the audit channel clean.
