@@ -7,7 +7,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.api.pdf import markdown_to_pdf
+from app.errors import Conflict, DomainError, InternalError, NotFound, UpstreamError
 from app.dependencies import (
     AgentRegistryDep,
     ProviderRegistryDep,
@@ -197,7 +198,7 @@ async def get_session_endpoint(
     """Get session details."""
     session = await get_session(db, session_id)
     if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise NotFound("Session not found")
     return SessionResponse.model_validate(session)
 
 
@@ -211,7 +212,7 @@ async def update_session_endpoint(
     """Update session fields."""
     session = await get_session(db, session_id)
     if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise NotFound("Session not found")
 
     original_time_updated = session.time_updated
     metadata_only_fields = {"is_pinned", "time_archived"}
@@ -333,10 +334,10 @@ async def compact_session_endpoint(
     
     session = await get_session(db, session_id)
     if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise NotFound("Session not found")
 
     if stream_manager and any(job.session_id == session_id and not job.completed for job in stream_manager._jobs.values()):
-        raise HTTPException(status_code=409, detail="Session is currently generating")
+        raise Conflict("Session is currently generating")
 
     job = GenerationJob(stream_id=f"manual-compact-{generate_ulid()}", session_id=session_id)
     result_payload: dict[str, object] = {"ok": False}
@@ -360,9 +361,9 @@ async def compact_session_endpoint(
                 visible_summary=True,
             )
             if not result.summary and result.pruned_parts == 0:
-                raise HTTPException(status_code=409, detail="Nothing to compact yet")
+                raise Conflict("Nothing to compact yet")
             if not result.summary:
-                raise HTTPException(status_code=502, detail="Compaction pruned context but did not produce an AI summary")
+                raise UpstreamError("Compaction pruned context but did not produce an AI summary")
             result_payload = {
                 "ok": True,
                 "summary_created": True,
@@ -399,7 +400,7 @@ async def delete_session_endpoint(
     await delete_session_uploads(db, session_id)
     deleted = await delete_by_id(db, Session, session_id)
     if not deleted:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise NotFound("Session not found")
 
     # Clean up FTS resources for this session
     index_manager = get_index_manager()
@@ -457,7 +458,7 @@ async def export_session_pdf(
     """Export an entire conversation as a formatted PDF."""
     session = await get_session(db, session_id)
     if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise NotFound("Session not found")
 
     messages = await get_messages(db, session_id)
     title = session.title or "Conversation"
@@ -483,11 +484,11 @@ async def export_session_pdf(
                 ),
             },
         )
-    except HTTPException:
+    except DomainError:
         raise
     except Exception as exc:
         log.exception("Session PDF export failed")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise InternalError(str(exc)) from exc
 
 
 @router.get("/sessions/{session_id}/export-md")
@@ -498,7 +499,7 @@ async def export_session_markdown(
     """Export an entire conversation as a Markdown file."""
     session = await get_session(db, session_id)
     if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise NotFound("Session not found")
 
     messages = await get_messages(db, session_id)
     title = session.title or "Conversation"
