@@ -21,6 +21,7 @@ from app.auth.middleware import AuthMiddleware
 from app.auth.private_network import PrivateNetworkAccessMiddleware
 from app.auth.token import ensure_session_token
 from app.config import Settings
+from app.errors import register_error_handlers
 from app.dependencies import (
     get_index_manager,
     get_stream_manager,
@@ -661,6 +662,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # privileged endpoint regardless of which interface the request
     # arrived on.
     app.add_middleware(AuthMiddleware)
+
+    # DomainError → JSONResponse. Registered before routers so handlers
+    # raised from any subsequently mounted endpoint are mapped consistently.
+    register_error_handlers(app)
 
     # Mount routers
     app.include_router(health_router)
