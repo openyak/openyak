@@ -8,7 +8,7 @@ RecordingTransport stands in for any real vendor SDK.
 
 from __future__ import annotations
 
-import asyncio
+import dataclasses
 from types import SimpleNamespace
 
 import pytest
@@ -19,6 +19,7 @@ from app.channels.chat import (
     ChatChannel,
     ChatInbound,
     ChatProfile,
+    NonRetryableTransportError,
     RecordingTransport,
     VendorMessageRef,
 )
@@ -236,8 +237,11 @@ async def test_media_group_coalesces_into_single_dispatch():
             message_id=str(100 + i),
         ))
 
-    # Wait past the buffer window
-    await asyncio.sleep(0.05)
+    # Drain the specific flush task instead of sleeping past a wallclock
+    # window — keeps the test stable on loaded CI.
+    flush_task = next(iter(channel._media_group_tasks.values()))
+    await flush_task
+
     assert bus.inbound_size == 1
     msg = await bus.consume_inbound()
     assert msg.content == "caption-0"
@@ -354,28 +358,43 @@ async def test_streaming_end_finalises_with_full_text():
 
 
 async def test_streaming_end_with_overlong_text_chunks_remainder():
+    """End-of-stream with text > max_message_len edits the streamed
+    message in place (first chunk) and sends the rest as follow-ups."""
     profile = _make_profile(max_message_len=5, stream_edit_interval=0.0)
     channel, _, transport = _make_channel(profile=profile)
     await channel.start()
 
-    await channel.send_delta("c-1", "hello", metadata={"_stream_id": "s1"})
+    await channel.send_delta("c-1", "abcdefghij", metadata={"_stream_id": "s1"})
     await channel.send_delta("c-1", "", metadata={"_stream_id": "s1", "_stream_end": True})
-
-    # First chunk replaces the streamed message via edit; remainder go via
-    # send_text. With "hello" (5 chars) plus extra chunks we need len > 5.
-    # Re-run with longer text:
-    channel._stream_bufs.clear()
-    transport.calls.clear()
-
-    await channel.send_delta("c-1", "abcdefghij", metadata={"_stream_id": "s2"})
-    await channel.send_delta("c-1", "", metadata={"_stream_id": "s2", "_stream_end": True})
 
     sends = [c for c in transport.calls if c.method == "send_text"]
     edits = [c for c in transport.calls if c.method == "edit_text"]
-    # Initial send_text on first delta; final edit on end; one extra
-    # send_text for the chunked remainder.
-    assert len(sends) == 2
+    # 1 initial send_text on first delta; ≥1 edit_text on end (final
+    # edit places the first chunk); 1 send_text per overflow chunk.
+    assert len(sends) == 2  # initial + 1 overflow
     assert len(edits) >= 1
+
+
+async def test_streaming_end_skips_finalisation_when_buffer_is_whitespace():
+    """Whitespace-only buffers (e.g. the model emitted only padding)
+    must not trigger a final edit_text — most vendors reject empty/
+    whitespace text on edit and the channel would surface a transport
+    error for what is really a no-op."""
+    channel, _, transport = _make_channel()
+    await channel.start()
+
+    # Force the buffer state without going through the (whitespace-
+    # rejecting) send_delta happy path.
+    from app.channels.chat.channel import _StreamBuf
+    channel._stream_bufs["c-1"] = _StreamBuf(
+        text="   \n  ",
+        ref=VendorMessageRef(chat_id="c-1", message_id="42"),
+        stream_id="s1",
+    )
+    await channel.send_delta("c-1", "", metadata={"_stream_id": "s1", "_stream_end": True})
+
+    edits = [c for c in transport.calls if c.method == "edit_text"]
+    assert edits == []
 
 
 # ---------------------------------------------------------------------------
@@ -411,6 +430,50 @@ async def test_send_retries_exhaust_and_raise():
         ))
 
 
+async def test_non_retryable_error_skips_retry_loop():
+    """A NonRetryableTransportError is re-raised immediately without
+    burning the remaining attempt budget."""
+    profile = _make_profile(send_retries=5)
+    transport = RecordingTransport()
+    transport.fail_next("send_text", NonRetryableTransportError("permanent"))
+
+    channel, _, _ = _make_channel(profile=profile, transport=transport)
+    await channel.start()
+
+    with pytest.raises(NonRetryableTransportError, match="permanent"):
+        await channel.send(OutboundMessage(
+            channel="base", chat_id="c-1", content="hi", metadata={},
+        ))
+    sends = [c for c in transport.calls if c.method == "send_text"]
+    assert len(sends) == 1
+
+
+# ---------------------------------------------------------------------------
+# Typing indicator
+# ---------------------------------------------------------------------------
+
+
+async def test_typing_loop_continues_through_transient_failure():
+    """A single show_typing failure must not silence the indicator
+    permanently — the loop continues on the next interval."""
+    profile = _make_profile(typing_indicator_interval=0.01)
+    transport = RecordingTransport()
+    # Fail once, then subsequent calls succeed.
+    transport.fail_next("show_typing", RuntimeError("transient"))
+
+    channel, _, _ = _make_channel(profile=profile, transport=transport)
+    await channel.start()
+    channel._start_typing("c-1")
+
+    # Let the loop iterate enough times to retry past the failure.
+    import asyncio as _asyncio
+    await _asyncio.sleep(0.05)
+    channel._stop_typing("c-1")
+
+    typings = [c for c in transport.calls if c.method == "show_typing"]
+    assert len(typings) >= 2  # one failed, one or more succeeded
+
+
 # ---------------------------------------------------------------------------
 # supports_streaming wiring
 # ---------------------------------------------------------------------------
@@ -422,16 +485,7 @@ async def test_supports_streaming_requires_config_and_profile():
     assert channel.supports_streaming is False
 
     # profile.supports_edit=False
-    no_edit_profile = _make_profile()
-    no_edit_profile = ChatProfile(
-        max_message_len=no_edit_profile.max_message_len,
-        stream_edit_interval=no_edit_profile.stream_edit_interval,
-        media_group_buffer_ms=no_edit_profile.media_group_buffer_ms,
-        typing_indicator_interval=no_edit_profile.typing_indicator_interval,
-        send_retries=no_edit_profile.send_retries,
-        send_retry_base_delay=no_edit_profile.send_retry_base_delay,
-        supports_edit=False,
-    )
+    no_edit_profile = dataclasses.replace(_make_profile(), supports_edit=False)
     channel, _, _ = _make_channel(profile=no_edit_profile)
     assert channel.supports_streaming is False
 

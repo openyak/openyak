@@ -20,6 +20,7 @@ from app.channels.chat.recording import RecordingTransport, RecordedCall
 from app.channels.chat.transport import (
     ChatInbound,
     MediaKind,
+    NonRetryableTransportError,
     VendorMessageRef,
     VendorTransport,
 )
@@ -29,6 +30,7 @@ __all__ = [
     "ChatInbound",
     "ChatProfile",
     "MediaKind",
+    "NonRetryableTransportError",
     "RecordedCall",
     "RecordingTransport",
     "VendorMessageRef",
