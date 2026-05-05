@@ -42,3 +42,5 @@ Why two lines instead of one:
 **No per-chunk audit.** Considered and rejected: a 30-second generation with 200 chunks × concurrent streams blows up audit volume by 2-3 orders of magnitude with no analytical payoff — chunk-level data is already in the streaming replay buffer (ADR-0004) when needed. The audit layer's unit of accountability is the request lifecycle, not the wire frame.
 
 The decorator owns log emission; route handlers do not call `logger.info("audit ...")` themselves. If a handler needs richer business-event logging it does so under a different logger name to keep the audit channel clean.
+
+**Logger name: `app.audit`.** All four lines (`audit`, `audit.stream.open`, `audit.stream.close`) are emitted on this logger so consumers can grep / filter / route them as a single channel.

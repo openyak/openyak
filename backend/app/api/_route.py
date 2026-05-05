@@ -32,15 +32,25 @@ import inspect
 import logging
 import re
 import time
+import typing
 import uuid
 from typing import Any, Awaitable, Callable, Type, get_type_hints
 
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.dependencies import get_db
+from app.agent.agent import AgentRegistry
+from app.dependencies import (
+    get_agent_registry,
+    get_db,
+    get_provider_registry,
+    get_session_factory,
+    get_stream_manager,
+)
 from app.errors import NotFound
+from app.provider.registry import ProviderRegistry
+from app.streaming.manager import StreamManager
 
 audit_log = logging.getLogger("app.audit")
 
@@ -49,11 +59,33 @@ class RouteSignatureError(TypeError):
     """Raised at decoration time when a Manager signature is invalid for Route."""
 
 
-# Plain type → dependency injector for known long-lived services. Kept
-# minimal in PR-B; extended as sub-issues need additional injections.
+# Plain type → dependency injector for known long-lived services. Generic
+# aliases (e.g. ``async_sessionmaker[AsyncSession]``) are matched via
+# ``typing.get_origin`` so callers can keep their natural type annotations.
+# Each entry is added when a sub-issue's Manager calls for it; do not add
+# entries speculatively (one-adapter rule).
 _TYPE_TO_INJECTOR: dict[type, Callable[..., Any]] = {
     AsyncSession: get_db,
+    StreamManager: get_stream_manager,
+    ProviderRegistry: get_provider_registry,
+    AgentRegistry: get_agent_registry,
+    async_sessionmaker: get_session_factory,
 }
+
+
+def _resolve_injector(ann: Any) -> Callable[..., Any] | None:
+    """Map a type annotation to its dependency injector, if any.
+
+    Handles plain classes (``AsyncSession``) and generic aliases
+    (``async_sessionmaker[AsyncSession]``) — both resolve to the same
+    injector since the request-time value is identical.
+    """
+    if isinstance(ann, type) and ann in _TYPE_TO_INJECTOR:
+        return _TYPE_TO_INJECTOR[ann]
+    origin = typing.get_origin(ann)
+    if origin is not None and origin in _TYPE_TO_INJECTOR:
+        return _TYPE_TO_INJECTOR[origin]
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +241,7 @@ def _validate_and_bind(
             plan.body_fields.append(name)
             continue
 
-        if isinstance(ann, type) and ann in _TYPE_TO_INJECTOR:
+        if _resolve_injector(ann) is not None:
             plan.deps[name] = ann
             continue
 
@@ -302,7 +334,7 @@ def _build_endpoint(
             )
         )
     for name, ann in plan.deps.items():
-        injector = _TYPE_TO_INJECTOR[ann]
+        injector = _resolve_injector(ann)
         parameters.append(
             inspect.Parameter(
                 name,
