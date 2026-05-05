@@ -18,20 +18,22 @@ Endpoints in `backend/app/api/` are written with a `Route` decorator family — 
 
 The original decision said "audit by default" but did not pin what audit looks like. Pinning it here so every `Route`-decorated endpoint emits a uniform shape and downstream tooling (log search, dashboards) can rely on it.
 
+**Format: `key=value` fields concatenated into the log message string.** Not `extra={...}` — Python's stdlib logger silently drops `extra` keys unless the formatter is explicitly configured to render them, and the project ships with the default formatter by design (no JSON / structlog handler). The `_log_browse_telemetry` helper introduced in #59 is the reference pattern; PR-B adds a parallel `_log_audit` helper. A single `key=value` parser handles both telemetry channels.
+
 **Non-streaming routes — one line per request, emitted on close:**
 
 ```
-logger.info("audit", extra={"user": ..., "route": ..., "status_code": ..., "duration_ms": ...})
+audit user={user} route={route} status_code={status} duration_ms={ms}
 ```
 
-Same four-field shape as the `/files/browse*` telemetry shipped in #59 so a single log parser handles both. No new sink, no DB-backed audit table.
+No new sink, no DB-backed audit table.
 
 **Streaming routes (`route.stream`) — two lines per stream sharing a `stream_id`:**
 
 - **Open** (when the response stream is acquired):
-  `logger.info("audit.stream.open", extra={"stream_id": ..., "user": ..., "route": ..., "started_at": ...})`
+  `audit.stream.open stream_id={id} user={user} route={route} started_at={ts}`
 - **Close** (on completion, abort, or error):
-  `logger.info("audit.stream.close", extra={"stream_id": ..., "outcome": "completed" | "aborted" | "error", "duration_ms": ..., "error_class": ...})`
+  `audit.stream.close stream_id={id} outcome={completed|aborted|error} duration_ms={ms} [error_class={cls}]`
 
 Why two lines instead of one:
 - The single before/after model that `Route` uses for non-streaming requests cannot fire "after" — for SSE the response begins immediately and ends an unbounded time later. Logging only on open loses outcome; logging only on close loses the start signal that a stream existed at all (important for orphan detection if the worker dies mid-stream).
