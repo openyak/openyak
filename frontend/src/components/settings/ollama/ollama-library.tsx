@@ -23,6 +23,7 @@ interface PullProgress {
   completed?: number;
   total?: number;
   message?: string;
+  reason?: string;
 }
 
 export function ModelLibrary({
@@ -161,10 +162,15 @@ export function ModelLibrary({
                 const data = JSON.parse(line.slice(6));
                 setPullProgress(data);
                 if (data.status === "error") {
-                  setTimeout(() => {
-                    setPullProgress(null);
-                    setPullingModel(null);
-                  }, 3000);
+                  // Errors with a structured `reason` (e.g. cloud_model_unsupported)
+                  // tend to carry actionable redirect text — keep them visible
+                  // until the user dismisses with the X button.
+                  if (!data.reason) {
+                    setTimeout(() => {
+                      setPullProgress(null);
+                      setPullingModel(null);
+                    }, 3000);
+                  }
                   return;
                 }
               } catch {
@@ -410,19 +416,30 @@ function ModelCard({
         {model.sizes.map((size) => {
           const fullName = `${model.name}:${size}`;
           const isInstalled = installedNames.has(fullName);
+          const isCloud = size.toLowerCase() === "cloud";
+          const cloudTooltip =
+            "Cloud-hosted Ollama model — not yet supported in OpenYak. Use a local-weights tag, or pick ChatGPT / OpenRouter in Settings → Providers.";
           return (
             <button
               key={size}
-              onClick={() => !isInstalled && !isPulling && onPull(fullName)}
-              disabled={isInstalled || isPulling}
+              onClick={() => !isInstalled && !isPulling && !isCloud && onPull(fullName)}
+              disabled={isInstalled || isPulling || isCloud}
               className={cn(
                 "px-1.5 py-0.5 text-ui-3xs rounded border transition-colors",
                 isInstalled
                   ? "border-[var(--color-success)]/30 bg-[var(--color-success)]/10 text-[var(--color-success)] cursor-default"
-                  : "border-[var(--border-default)] text-[var(--text-secondary)] hover:border-[var(--brand-primary)] hover:text-[var(--brand-primary)] cursor-pointer",
-                isPulling && !isInstalled && "opacity-50 cursor-not-allowed",
+                  : isCloud
+                    ? "border-[var(--border-default)] bg-[var(--surface-tertiary)] text-[var(--text-tertiary)] cursor-not-allowed"
+                    : "border-[var(--border-default)] text-[var(--text-secondary)] hover:border-[var(--brand-primary)] hover:text-[var(--brand-primary)] cursor-pointer",
+                isPulling && !isInstalled && !isCloud && "opacity-50 cursor-not-allowed",
               )}
-              title={isInstalled ? "Installed" : `Pull ${fullName}`}
+              title={
+                isInstalled
+                  ? "Installed"
+                  : isCloud
+                    ? cloudTooltip
+                    : `Pull ${fullName}`
+              }
             >
               {isInstalled && <Check className="h-2.5 w-2.5 inline mr-0.5" />}
               {size}
