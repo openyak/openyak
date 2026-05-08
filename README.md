@@ -6,7 +6,7 @@
   <a href="https://github.com/openyak/openyak/stargazers"><img src="https://img.shields.io/github/stars/openyak/openyak?style=flat-square" alt="GitHub Stars" /></a>
   <a href="https://github.com/openyak/openyak/blob/main/LICENSE"><img src="https://img.shields.io/github/license/openyak/openyak?style=flat-square" alt="License" /></a>
   <a href="https://github.com/openyak/openyak/releases/latest"><img src="https://img.shields.io/github/v/release/openyak/openyak?style=flat-square" alt="Latest Release" /></a>
-  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-blue?style=flat-square" alt="Platform: macOS | Windows | Linux" />
+  <img src="https://img.shields.io/badge/platform-macOS-blue?style=flat-square" alt="Platform: macOS" />
   <a href="https://github.com/openyak/openyak/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome" /></a>
 </p>
 
@@ -28,8 +28,8 @@ OpenYak is built for real work, not just one-off chat prompts.
 
 - **Work from your actual files.** Upload DOCX, XLSX, PPTX, PDFs, CSVs, and local project context, then ask for briefs, tables, follow-ups, plans, and reusable artifacts.
 - **Keep the workflow in one thread.** Start with analysis, continue into a RACI, ask for a follow-up email, and preserve context across long conversations.
-- **Choose your model path.** Use free models, bring your own API key, connect a ChatGPT subscription, or run local models through [Ollama](https://ollama.com).
-- **Stay local by default.** Files, conversations, memory, and generated artifacts are stored on your device. Cloud model calls go directly to the model provider you choose.
+- **Run models locally on macOS.** OpenYak v2 is built around [Rapid-MLX](https://github.com/raullenchai/Rapid-MLX) for Apple Silicon — install once with Homebrew or pip, then point OpenYak at `http://localhost:8000/v1`. For any other inference server, use the Custom Endpoint mode.
+- **Stay local by default.** Files, conversations, memory, and generated artifacts are stored on your device. There is no managed account and no hosted proxy — model calls go straight to whatever endpoint you point OpenYak at.
 - **Use it from another device.** Remote access lets you scan a QR code and send tasks to your desktop through a secure tunnel.
 
 ## What It Feels Like
@@ -97,21 +97,20 @@ Professional workflows include failure states. Upload errors and missing inputs 
 
 | Platform | Architecture | Formats |
 |----------|--------------|---------|
-| macOS | Apple Silicon / Intel | `.dmg`, `.app` |
-| Windows | x64 | `.exe` installer |
-| Linux | x64 | `.deb`, `.rpm` |
+| macOS | Apple Silicon | `.dmg`, `.app` |
 
 > [Download the latest release](https://github.com/openyak/openyak/releases/latest) or visit [open-yak.com/download](https://open-yak.com/download/).
 >
-> Linux users can also read [LINUX.md](LINUX.md) for requirements and troubleshooting.
+> v2.0.0 is **macOS-only** (Apple Silicon). Windows and Linux builds were dropped — see [ADR-0011](docs/adr/0011-v2-macos-only-rapid-mlx-pivot.md) for the rationale. v1.x binaries for those platforms remain on the [releases page](https://github.com/openyak/openyak/releases) but are no longer updated.
 
 ## Get Started
 
-1. **Install OpenYak** for your platform.
-2. **Connect a model** using free cloud models, your own API key, ChatGPT subscription, or local Ollama.
-3. **Start a new conversation** and attach a real file.
-4. **Ask for a deliverable**, not just a summary: brief, action plan, RACI, email, table, or artifact.
-5. **Review the result** in the chat and artifact panel, then continue in the same thread.
+1. **Install OpenYak** from the latest macOS release.
+2. **Install [Rapid-MLX](https://github.com/raullenchai/Rapid-MLX)** — `brew install raullenchai/rapid-mlx/rapid-mlx` or `pip install rapid-mlx`, then run `rapid-mlx serve <model>` in a terminal. Or skip this step and use the Custom Endpoint mode to point at any other OpenAI-compatible server.
+3. **Open Settings → Providers** and confirm OpenYak detects your local endpoint at `http://localhost:8000/v1`.
+4. **Start a new conversation** and attach a real file.
+5. **Ask for a deliverable**, not just a summary: brief, action plan, RACI, email, table, or artifact.
+6. **Review the result** in the chat and artifact panel, then continue in the same thread.
 
 Example prompt:
 
@@ -123,27 +122,12 @@ Finally, write a follow-up email I can send to the team directly.
 
 ## Supported Providers
 
-### Cloud and Subscription
+OpenYak v2 ships with two model-access modes. There is no managed account, no hosted proxy, and no built-in catalog of cloud providers — see [ADR-0011](docs/adr/0011-v2-macos-only-rapid-mlx-pivot.md) for why.
 
-| Provider | Access | Notes |
-|----------|--------|-------|
-| OpenRouter | Built-in | Free models and premium models |
-| OpenAI | BYOK | Bring your own API key |
-| Anthropic | BYOK | Bring your own API key |
-| Google | BYOK | Gemini models |
-| DeepSeek | BYOK | Direct provider key |
-| Groq | BYOK | Fast hosted inference |
-| Mistral | BYOK | Direct provider key |
-| xAI | BYOK | Grok models |
-| Qwen | BYOK | Direct provider key |
-| Kimi | BYOK | Moonshot models |
-| MiniMax | BYOK | Direct provider key |
-| Zhipu | BYOK | Direct provider key |
-| ChatGPT | Subscription | Use an existing ChatGPT Plus, Pro, Team, or Enterprise plan when available |
-
-### Local
-
-Run any model available through [Ollama](https://ollama.com). Local models are auto-detected and can be used without an internet connection.
+| Mode | Notes |
+|------|-------|
+| Rapid-MLX (Local) | Recommended runtime on Apple Silicon. Install via Homebrew or pip; OpenYak detects the CLI and connects to `http://localhost:8000/v1`. |
+| Custom Endpoint | Any OpenAI-compatible base URL — vLLM, llama.cpp server, an Ollama instance you manage yourself, a self-hosted gateway, or a colleague's MLX rig on the network. |
 
 ## Core Capabilities
 
@@ -153,7 +137,7 @@ Run any model available through [Ollama](https://ollama.com). Local models are a
 - **Long-context work:** continue from analysis to planning to follow-up without starting over.
 - **Remote access:** connect from mobile through QR code and Cloudflare Tunnel.
 - **Automations:** schedule recurring cleanup, reporting, and file workflows.
-- **Privacy controls:** local storage, BYOK options, and local model support.
+- **Privacy controls:** local storage, no managed account, and local-first model serving via Rapid-MLX.
 
 ## For Developers
 
@@ -180,25 +164,37 @@ This starts the backend on port `8000` and the frontend on port `3000`. For deep
 <details>
 <summary>Does my data leave my machine?</summary>
 
-Files, conversations, memory, and generated artifacts are stored locally. If you use a cloud model, the prompt and relevant context are sent directly to the model provider you selected. You can also use local Ollama models for offline work.
+Files, conversations, memory, and generated artifacts are stored locally. v2 has no managed account and no hosted proxy — model calls go directly to whatever endpoint you configure (Rapid-MLX on `localhost`, or whatever Custom Endpoint URL you point at). If you point at a remote endpoint, the prompt and relevant context obviously go there.
 </details>
 
 <details>
 <summary>Do I need an OpenYak account?</summary>
 
-No. OpenYak is designed to work without a required OpenYak account. You can use free models, bring provider keys, connect a subscription, or run local models depending on your setup.
+No. v2 removed managed accounts entirely. The only thing you need is an OpenAI-compatible model endpoint to point OpenYak at — by default, that means installing Rapid-MLX locally.
+</details>
+
+<details>
+<summary>What happened to the OpenYak free tier / hosted proxy?</summary>
+
+The hosted proxy at `api.open-yak.com` is being shut down 30 days after the v2.0.0 release. Existing v1 users will get an in-app notice and an email with migration instructions. v2 is local-first only — see [ADR-0011](docs/adr/0011-v2-macos-only-rapid-mlx-pivot.md) for the rationale.
+</details>
+
+<details>
+<summary>What about Windows and Linux?</summary>
+
+v2 is macOS-only (Apple Silicon). v1.x binaries for Windows and Linux remain on the [releases page](https://github.com/openyak/openyak/releases) but are no longer updated. The pivot reasoning is in [ADR-0011](docs/adr/0011-v2-macos-only-rapid-mlx-pivot.md).
 </details>
 
 <details>
 <summary>How is OpenYak different from ChatGPT or Claude.ai?</summary>
 
-OpenYak runs on your desktop and is designed around local files, artifacts, tools, and workflow continuity. Web chat products are great assistants; OpenYak is closer to a local workbench for files and repeatable office tasks.
+OpenYak runs on your Mac and is designed around local files, artifacts, tools, and workflow continuity. Web chat products are great assistants; OpenYak is closer to a local workbench for files and repeatable office tasks.
 </details>
 
 <details>
 <summary>Can I use it offline?</summary>
 
-Yes. Install Ollama, download a model, and OpenYak can run locally without cloud model calls.
+Yes. Install Rapid-MLX, pull a model with `rapid-mlx serve <model>`, and OpenYak runs entirely offline.
 </details>
 
 <details>
