@@ -171,15 +171,6 @@ app/
 | POST | `/api/files/upload` | 上传文件 |
 | GET/POST | `/api/config` | 获取/设置应用配置 |
 | GET | `/api/usage` | Token 用量追踪 |
-| GET | `/api/ollama/status` | Ollama 运行状态（二进制、运行中、版本） |
-| POST | `/api/ollama/setup` | 下载 Ollama + 启动服务（SSE 进度流） |
-| POST | `/api/ollama/start` | 启动 Ollama 服务 |
-| POST | `/api/ollama/stop` | 停止 Ollama 服务 |
-| GET | `/api/ollama/models` | 列出本地已安装的 Ollama 模型 |
-| GET | `/api/ollama/models/library` | 浏览模型库（搜索、排序、翻页） |
-| POST | `/api/ollama/models/pull` | 下载模型（SSE 进度流） |
-| DELETE | `/api/ollama/models/{name}` | 删除本地模型 |
-| DELETE | `/api/ollama/uninstall` | 移除 Ollama 二进制 + 可选删除模型 |
 | | **频道（OpenClaw）** | |
 | GET | `/api/channels/openclaw/status` | OpenClaw 运行状态 |
 | POST | `/api/channels/openclaw/setup` | 安装 OpenClaw 二进制（SSE 进度流） |
@@ -243,12 +234,11 @@ app/
 
 ## LLM 提供者
 
-21 个 BYOK 提供者 + Ollama 本地 + ChatGPT 订阅：
+21 个 BYOK 提供者 + ChatGPT 订阅：
 
 | 提供者 | 类型 | 说明 |
 |--------|------|------|
 | OpenRouter | 聚合器 | 主要提供者，100+ 模型，支持 reasoning token |
-| Ollama | 本地 | 托管二进制生命周期，自动下载，启动预热 |
 | ChatGPT 订阅 | OAuth | 接入现有 ChatGPT Plus/Team 订阅 |
 | OpenAI | BYOK | 直接 API 密钥 |
 | Anthropic | BYOK（原生 SDK） | 通过 Anthropic SDK 接入 Claude 模型 |
@@ -323,9 +313,6 @@ curl http://localhost:8000/api/agents
 | `OPENYAK_COMPACTION_AUTO` | 自动上下文压缩 | `true` |
 | `OPENYAK_DAILY_SEARCH_LIMIT` | 每日网页搜索配额 | `20` |
 | `OPENYAK_FTS_ENABLED` | 全文搜索索引 | `true` |
-| `OPENYAK_OLLAMA_BASE_URL` | Ollama 服务地址（setup 自动设置） | `` |
-| `OPENYAK_OLLAMA_AUTO_START` | 启动时自动启动托管的 Ollama | `true` |
-| `OPENYAK_OLLAMA_LAST_MODEL` | 上次使用的模型（用于启动预热） | `` |
 | `OPENYAK_OPENCLAW_ENABLED` | 启用 OpenClaw IM 桥接 | `false` |
 | `OPENYAK_OPENCLAW_URL` | OpenClaw WebSocket 地址 | `ws://127.0.0.1:18789` |
 | `OPENYAK_PROXY_URL` | OpenYak Cloud 代理地址（计费模式） | `` |

@@ -9,7 +9,6 @@ from app.api import artifacts as artifacts_api
 from app.api import automations as automations_api
 from app.api import workspace_memory as workspace_memory_api
 from app.api import channels as channels_api
-from app.api import ollama as ollama_api
 from app.api import chat as chat_api
 from app.api import config as config_api
 from app.api import connectors as connectors_api
@@ -48,6 +47,5 @@ api_router.include_router(google_auth_api.router, tags=["google"])
 api_router.include_router(plugins_api.router, tags=["plugins"])
 api_router.include_router(remote_api.router, tags=["remote"])
 api_router.include_router(automations_api.router, tags=["automations"])
-api_router.include_router(ollama_api.router, tags=["ollama"])
 api_router.include_router(channels_api.router, tags=["channels"])
 api_router.include_router(workspace_memory_api.router, tags=["workspace-memory"])

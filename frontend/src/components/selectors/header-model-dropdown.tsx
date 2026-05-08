@@ -445,7 +445,7 @@ function ModelRow({
     (sortBy === "popular" && arena && arena.popularityRank > 0);
 
   const providerLabel = PROVIDER_LABELS[model.provider_id] ?? model.provider_id;
-  const showProviderBadge = model.provider_id !== "openrouter" && model.provider_id !== "openai-subscription" && model.provider_id !== "ollama";
+  const showProviderBadge = model.provider_id !== "openrouter" && model.provider_id !== "openai-subscription";
 
   return (
     <CommandItem
@@ -477,10 +477,6 @@ function ModelRow({
       {isSubscription ? (
         <span className="ml-2 shrink-0 text-[10px] font-medium text-[var(--brand-primary)] bg-[var(--brand-primary)]/10 px-1.5 py-0.5 rounded">
           INCLUDED
-        </span>
-      ) : model.provider_id === "ollama" ? (
-        <span className="ml-2 shrink-0 text-[10px] font-medium text-[var(--text-tertiary)] bg-[var(--surface-tertiary)] px-1.5 py-0.5 rounded">
-          LOCAL
         </span>
       ) : free ? (
         <span className="ml-2 shrink-0 text-[10px] font-medium text-[var(--color-success)] bg-[var(--color-success)]/10 px-1.5 py-0.5 rounded">

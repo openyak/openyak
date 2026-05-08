@@ -229,14 +229,6 @@ class SessionPrompt:
             or (self.model_info and getattr(self.model_info.capabilities, "prompt_caching", False))
         )
 
-        # Remember last-used Ollama model for startup pre-warming
-        if self.provider.id == "ollama":
-            try:
-                from app.api.config import _update_env_file
-                _update_env_file("OPENYAK_OLLAMA_LAST_MODEL", model_id.removeprefix("ollama/"))
-            except Exception:
-                pass
-
         # --- 3. Create/load session and persist user message ---
         if self.skip_user_message:
             pass

@@ -14,11 +14,6 @@ interface OpenAISubscriptionStatus {
   needs_reauth?: boolean;
 }
 
-interface OllamaRuntimeStatus {
-  binary_installed: boolean;
-  running: boolean;
-}
-
 /**
  * Auto-detect and set activeProvider when it is null.
  * Should be called at the layout level so it runs regardless of which page the user visits.
@@ -50,13 +45,6 @@ export function useAutoDetectProvider(): { hasProvider: boolean } {
     queryFn: () => api.get<OpenAISubscriptionStatus>(API.CONFIG.OPENAI_SUBSCRIPTION),
   });
 
-  const { data: ollamaRuntimeStatus } = useQuery({
-    queryKey: ["ollamaRuntime"],
-    queryFn: () => api.get<OllamaRuntimeStatus>(API.OLLAMA.STATUS),
-    refetchInterval: activeProvider === null ? 10_000 : false,
-  });
-
-  const ollamaConnected = !!ollamaRuntimeStatus?.running;
   const hasAnyDirectProvider = (providers ?? []).some((p) => p.is_configured);
 
   useEffect(() => {
@@ -66,7 +54,6 @@ export function useAutoDetectProvider(): { hasProvider: boolean } {
     else if (isConnected) setActiveProvider("openyak");
     else if (localStatus?.is_connected) setActiveProvider("local");
     else if (keyStatus?.is_configured || hasAnyDirectProvider) setActiveProvider("byok");
-    else if (ollamaConnected) setActiveProvider("ollama");
   }, [
     activeProvider,
     openaiSubStatus?.is_connected,
@@ -74,7 +61,6 @@ export function useAutoDetectProvider(): { hasProvider: boolean } {
     keyStatus?.is_configured,
     hasAnyDirectProvider,
     localStatus?.is_connected,
-    ollamaConnected,
     setActiveProvider,
     settingsHydrated,
     authHydrated,

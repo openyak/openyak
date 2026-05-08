@@ -82,7 +82,7 @@ interface ChatStore {
   /** Current reasoning_delta buffer. */
   streamingReasoning: string;
 
-  // ─── Model loading (Ollama cold start) ───
+  // ─── Model loading (local-runtime cold start) ───
   isModelLoading: boolean;
 
   // ─── Interactive prompts ───
@@ -374,8 +374,8 @@ export const useChatStore = create<ChatStore>((set) => ({
 
       // Cost reconciliation:
       //   1. Backend `total_cost` is the authoritative running total.
-      //   2. Treat 0 as "not yet priced" so unpriced providers (local Ollama,
-      //      custom endpoints) don't show a misleading "≈$0.0000".
+      //   2. Treat 0 as "not yet priced" so unpriced providers (local
+      //      runtime, custom endpoints) don't show a misleading "≈$0.0000".
       //   3. Fallback to previous-cost + per-step cost when backend doesn't
       //      report total_cost yet (older backend / per-step-only emitter).
       let nextCost: number | null;

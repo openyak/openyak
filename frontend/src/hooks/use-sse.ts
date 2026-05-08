@@ -266,7 +266,10 @@ export function useSSE(streamId: string | null) {
         },
       });
 
-    // Model loading (Ollama cold start)
+    // Model loading (local-runtime cold start). The signal is currently
+    // unused after the Ollama cut, but the wiring is preserved so PR 5
+    // can re-emit it from the Rapid-MLX sidecar without re-plumbing the
+    // store / assistant-message consumer chain.
     client.on(SSE_EVENTS.MODEL_LOADING, (_data, id) => {
       persistedLastEventId = id;
       store.getState().setModelLoading(true);

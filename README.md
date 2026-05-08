@@ -28,7 +28,7 @@ OpenYak is built for real work, not just one-off chat prompts.
 
 - **Work from your actual files.** Upload DOCX, XLSX, PPTX, PDFs, CSVs, and local project context, then ask for briefs, tables, follow-ups, plans, and reusable artifacts.
 - **Keep the workflow in one thread.** Start with analysis, continue into a RACI, ask for a follow-up email, and preserve context across long conversations.
-- **Choose your model path.** Use free models, bring your own API key, connect a ChatGPT subscription, or run local models through [Ollama](https://ollama.com).
+- **Choose your model path.** Use free models, bring your own API key, connect a ChatGPT subscription, or point at a local OpenAI-compatible endpoint.
 - **Stay local by default.** Files, conversations, memory, and generated artifacts are stored on your device. Cloud model calls go directly to the model provider you choose.
 - **Use it from another device.** Remote access lets you scan a QR code and send tasks to your desktop through a secure tunnel.
 
@@ -108,7 +108,7 @@ Professional workflows include failure states. Upload errors and missing inputs 
 ## Get Started
 
 1. **Install OpenYak** for your platform.
-2. **Connect a model** using free cloud models, your own API key, ChatGPT subscription, or local Ollama.
+2. **Connect a model** using free cloud models, your own API key, ChatGPT subscription, or a local OpenAI-compatible endpoint.
 3. **Start a new conversation** and attach a real file.
 4. **Ask for a deliverable**, not just a summary: brief, action plan, RACI, email, table, or artifact.
 5. **Review the result** in the chat and artifact panel, then continue in the same thread.
@@ -143,7 +143,7 @@ Finally, write a follow-up email I can send to the team directly.
 
 ### Local
 
-Run any model available through [Ollama](https://ollama.com). Local models are auto-detected and can be used without an internet connection.
+Point OpenYak at any local OpenAI-compatible endpoint (e.g. `http://localhost:8000/v1`). Local models can be used without an internet connection.
 
 ## Core Capabilities
 
@@ -180,7 +180,7 @@ This starts the backend on port `8000` and the frontend on port `3000`. For deep
 <details>
 <summary>Does my data leave my machine?</summary>
 
-Files, conversations, memory, and generated artifacts are stored locally. If you use a cloud model, the prompt and relevant context are sent directly to the model provider you selected. You can also use local Ollama models for offline work.
+Files, conversations, memory, and generated artifacts are stored locally. If you use a cloud model, the prompt and relevant context are sent directly to the model provider you selected. You can also point OpenYak at a local OpenAI-compatible endpoint for offline work.
 </details>
 
 <details>
@@ -198,7 +198,7 @@ OpenYak runs on your desktop and is designed around local files, artifacts, tool
 <details>
 <summary>Can I use it offline?</summary>
 
-Yes. Install Ollama, download a model, and OpenYak can run locally without cloud model calls.
+Yes. Run a local OpenAI-compatible server (e.g. on `localhost:8000/v1`) and point OpenYak at it; everything stays on the machine.
 </details>
 
 <details>

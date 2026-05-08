@@ -8,8 +8,6 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
-import httpx
-
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -166,53 +164,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             await registry.refresh_models()
         except Exception as e:
             logger.warning("Failed to refresh models after subscription provider registration: %s", e)
-
-    # Ollama runtime manager (always created — manages binary + process)
-    from app.ollama.manager import OllamaManager
-
-    data_dir = Path.cwd()  # Desktop mode: run.py sets cwd to the data directory
-    ollama_manager = OllamaManager(data_dir=data_dir)
-    app.state.ollama_manager = ollama_manager
-
-    # If Ollama URL is configured, register provider.
-    # If the managed binary is installed and auto-start is on, start the process.
-    if settings.ollama_base_url:
-        from app.provider.ollama import OllamaProvider
-
-        # Try to auto-start managed Ollama if binary exists
-        if ollama_manager.is_binary_installed and settings.ollama_auto_start:
-            try:
-                base_url = await ollama_manager.start()
-                ollama_provider = OllamaProvider(base_url=base_url)
-                # Update settings in case port changed
-                settings.ollama_base_url = base_url
-            except Exception as e:
-                logger.warning("Failed to auto-start managed Ollama: %s — trying configured URL", e)
-                ollama_provider = OllamaProvider(base_url=settings.ollama_base_url)
-        else:
-            ollama_provider = OllamaProvider(base_url=settings.ollama_base_url)
-
-        registry.register(ollama_provider)
-        try:
-            await registry.refresh_models()
-        except Exception as e:
-            logger.warning("Ollama connection failed on startup: %s — will retry on first request", e)
-
-        # Pre-warm last-used model so the first chat request is fast
-        last_model = settings.ollama_last_model
-        if last_model:
-            async def _warmup_model(base_url: str, model: str) -> None:
-                try:
-                    async with httpx.AsyncClient(timeout=120.0) as client:
-                        await client.post(
-                            f"{base_url}/api/generate",
-                            json={"model": model, "prompt": "", "keep_alive": "10m"},
-                        )
-                    logger.info("Ollama: pre-warmed model %s", model)
-                except Exception as exc:
-                    logger.debug("Ollama warmup skipped for %s: %s", model, exc)
-
-            asyncio.create_task(_warmup_model(ollama_provider._base_url, last_model))
 
     # Pre-fetch models.dev catalog (remote model metadata: pricing, capabilities)
     from app.provider.models_dev import models_dev
@@ -415,6 +366,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from app.channels.manager import ChannelManager
     from app.channels.adapter import AgentAdapter
 
+    # Desktop mode: run.py chdirs into --data-dir, so cwd is the right place
+    # to load channels.json from. Used to be set up alongside the ollama
+    # manager startup; ollama is gone but channels still needs the path.
+    data_dir = Path.cwd()
     message_bus = MessageBus()
     channels_config = load_channels_config(data_dir / "channels.json")
     channel_manager = ChannelManager(channels_config, message_bus)
@@ -492,11 +447,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     im = get_index_manager()
     if im is not None:
         await im.shutdown()
-
-    # Stop managed Ollama process
-    ollama_mgr = getattr(app.state, "ollama_manager", None)
-    if ollama_mgr and ollama_mgr.is_running:
-        await ollama_mgr.stop()
 
     await engine.dispose()
 
