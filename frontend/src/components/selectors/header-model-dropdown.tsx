@@ -155,14 +155,6 @@ export function HeaderModelDropdown() {
         const preferred = visibleModels.find((m) => m.id === "openyak/best-free");
         const fallback = visibleModels.find((m) => isFreeModel(m));
         chosen = preferred ?? fallback ?? visibleModels[0];
-      } else if (activeProvider === "chatgpt") {
-        // Prefer the newest flagship (5.5), fall back to 5.4 if the user's
-        // subscription tier hasn't rolled it out yet, then to whatever the
-        // backend did return.
-        const preferred =
-          visibleModels.find((m) => m.id === "openai-subscription/gpt-5.5") ??
-          visibleModels.find((m) => m.id === "openai-subscription/gpt-5.4");
-        chosen = preferred ?? visibleModels[0];
       } else {
         chosen = visibleModels[0];
       }
@@ -176,7 +168,6 @@ export function HeaderModelDropdown() {
     let pinned: ModelInfo | null = null;
     const free: ModelInfo[] = [];
     const paid: ModelInfo[] = [];
-    const isSubscription = activeProvider === "chatgpt";
 
     for (const m of visibleModels) {
       if (m.id === "openyak/best-free" && activeProvider === "openyak") pinned = m;
@@ -184,8 +175,7 @@ export function HeaderModelDropdown() {
       else paid.push(m);
     }
 
-    // Subscription models: keep backend order (newest first). Others: sort normally.
-    if (!isSubscription) {
+    {
       const makeSortFn = () => (a: ModelInfo, b: ModelInfo) => {
         if (sortBy === "price") return a.pricing.prompt - b.pricing.prompt;
         if (sortBy === "quality") {
@@ -436,7 +426,6 @@ function ModelRow({
   t: (key: string) => string;
 }) {
   const free = isFreeModel(model);
-  const isSubscription = model.provider_id === "openai-subscription";
   const inputCredits = usdToCreditsPerM(model.pricing.prompt);
   const outputCredits = usdToCreditsPerM(model.pricing.completion);
 
@@ -445,7 +434,7 @@ function ModelRow({
     (sortBy === "popular" && arena && arena.popularityRank > 0);
 
   const providerLabel = PROVIDER_LABELS[model.provider_id] ?? model.provider_id;
-  const showProviderBadge = model.provider_id !== "openrouter" && model.provider_id !== "openai-subscription" && model.provider_id !== "ollama";
+  const showProviderBadge = model.provider_id !== "openrouter" && model.provider_id !== "ollama";
 
   return (
     <CommandItem
@@ -474,11 +463,7 @@ function ModelRow({
         </span>
       )}
       {/* Right-side badge: contextual based on sort mode */}
-      {isSubscription ? (
-        <span className="ml-2 shrink-0 text-[10px] font-medium text-[var(--brand-primary)] bg-[var(--brand-primary)]/10 px-1.5 py-0.5 rounded">
-          INCLUDED
-        </span>
-      ) : model.provider_id === "ollama" ? (
+      {model.provider_id === "ollama" ? (
         <span className="ml-2 shrink-0 text-[10px] font-medium text-[var(--text-tertiary)] bg-[var(--surface-tertiary)] px-1.5 py-0.5 rounded">
           LOCAL
         </span>

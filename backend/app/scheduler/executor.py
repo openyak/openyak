@@ -392,7 +392,7 @@ def _set_session_title(
 def _resolve_default_model(app_state: Any) -> str | None:
     """Pick the best default model for scheduled tasks.
 
-    Priority: subscription models > paid OpenRouter models > free models.
+    Priority: paid OpenRouter models > free models.
     """
     registry = getattr(app_state, "provider_registry", None)
     if registry is None:
@@ -401,10 +401,6 @@ def _resolve_default_model(app_state: Any) -> str | None:
     all_models = registry.all_models()
     if not all_models:
         return None
-
-    subscription = [m for m in all_models if m.provider_id == "openai-subscription"]
-    if subscription:
-        return subscription[0].id
 
     paid = [m for m in all_models if m.pricing.prompt > 0 or m.pricing.completion > 0]
     if paid:

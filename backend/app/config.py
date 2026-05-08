@@ -85,13 +85,6 @@ class Settings(BaseSettings):
     # --- MCP (loaded from YAML) ---
     mcp: dict[str, Any] | None = None
 
-    # --- OpenAI OAuth (ChatGPT Subscription) ---
-    openai_oauth_access_token: str = ""
-    openai_oauth_refresh_token: str = ""
-    openai_oauth_account_id: str = ""
-    openai_oauth_expires_at: int = 0  # milliseconds since epoch
-    openai_oauth_email: str = ""
-
     # --- Google Workspace MCP Proxy ---
     google_client_id: str = ""
     google_client_secret: str = ""

@@ -28,7 +28,7 @@ OpenYak 不是只用来问一句话的聊天框，而是为真实办公动线设
 
 - **直接处理真实文件。** 上传 DOCX、XLSX、PPTX、PDF、CSV 和本地项目上下文，生成 brief、表格、follow-up、计划和可复用 artifact。
 - **同一个线程走完整流程。** 先分析文件，再继续生成 RACI、follow-up 邮件、会议 agenda，不需要反复重讲背景。
-- **自由选择模型。** 使用免费模型、自带 API Key、接入 ChatGPT 订阅，或通过 [Ollama](https://ollama.com) 完全本地运行。
+- **自由选择模型。** 使用免费模型、自带 API Key，或通过 [Ollama](https://ollama.com) 完全本地运行。
 - **默认本地优先。** 文件、对话、记忆和生成结果都存储在本机。使用云端模型时，只会直接请求你选择的模型提供商。
 - **可以从手机访问桌面 AI。** 开启远程访问后扫码连接，通过安全 tunnel 把任务发给桌面端执行。
 
@@ -108,7 +108,7 @@ OpenYak 可以在同一个线程里综合多份文件，并在右侧 artifact pa
 ## 快速开始
 
 1. **安装 OpenYak。** 下载适合你系统的安装包。
-2. **连接模型。** 使用免费云端模型、自带 API Key、接入 ChatGPT 订阅，或连接本地 Ollama。
+2. **连接模型。** 使用免费云端模型、自带 API Key，或连接本地 Ollama。
 3. **新建会话并上传真实文件。**
 4. **直接说你要的交付物。** 比如 brief、行动计划、RACI、邮件、表格或 artifact。
 5. **检查结果并继续追问。** 在同一个线程里继续从分析推进到执行。
@@ -139,7 +139,6 @@ OpenYak 可以在同一个线程里综合多份文件，并在右侧 artifact pa
 | Kimi | BYOK | Moonshot 模型 |
 | MiniMax | BYOK | 直连提供商密钥 |
 | 智谱 | BYOK | 直连提供商密钥 |
-| ChatGPT | 订阅 | 在可用时使用现有 ChatGPT Plus、Pro、Team 或 Enterprise 方案 |
 
 ### 本地模型
 

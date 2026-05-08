@@ -246,11 +246,7 @@ class AgentAdapter:
         if not all_models:
             return None
 
-        # Subscription > Anthropic > paid > free
-        sub = [m for m in all_models if m.provider_id == "openai-subscription"]
-        if sub:
-            return sub[0].id
-
+        # Anthropic > paid > free
         anth = [m for m in all_models if m.provider_id == "anthropic"]
         if anth:
             return anth[0].id

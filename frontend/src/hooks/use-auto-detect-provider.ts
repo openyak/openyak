@@ -8,12 +8,6 @@ import { api } from "@/lib/api";
 import { API, queryKeys } from "@/lib/constants";
 import type { ApiKeyStatus, ProviderInfo, LocalProviderStatus } from "@/types/usage";
 
-interface OpenAISubscriptionStatus {
-  is_connected: boolean;
-  email: string;
-  needs_reauth?: boolean;
-}
-
 interface OllamaRuntimeStatus {
   binary_installed: boolean;
   running: boolean;
@@ -45,11 +39,6 @@ export function useAutoDetectProvider(): { hasProvider: boolean } {
     queryFn: () => api.get<LocalProviderStatus>(API.CONFIG.LOCAL_PROVIDER),
   });
 
-  const { data: openaiSubStatus } = useQuery({
-    queryKey: queryKeys.openaiSubscription,
-    queryFn: () => api.get<OpenAISubscriptionStatus>(API.CONFIG.OPENAI_SUBSCRIPTION),
-  });
-
   const { data: ollamaRuntimeStatus } = useQuery({
     queryKey: ["ollamaRuntime"],
     queryFn: () => api.get<OllamaRuntimeStatus>(API.OLLAMA.STATUS),
@@ -62,14 +51,12 @@ export function useAutoDetectProvider(): { hasProvider: boolean } {
   useEffect(() => {
     if (!settingsHydrated || !authHydrated) return;
     if (activeProvider !== null) return;
-    if (openaiSubStatus?.is_connected) setActiveProvider("chatgpt");
-    else if (isConnected) setActiveProvider("openyak");
+    if (isConnected) setActiveProvider("openyak");
     else if (localStatus?.is_connected) setActiveProvider("local");
     else if (keyStatus?.is_configured || hasAnyDirectProvider) setActiveProvider("byok");
     else if (ollamaConnected) setActiveProvider("ollama");
   }, [
     activeProvider,
-    openaiSubStatus?.is_connected,
     isConnected,
     keyStatus?.is_configured,
     hasAnyDirectProvider,

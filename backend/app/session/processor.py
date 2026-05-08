@@ -483,11 +483,6 @@ class SessionProcessor:
                 if not _sq_credits and _sq_count >= get_settings().daily_search_limit:
                     _exclude_tools = {"web_search"}
 
-                # Use native web search for OpenAI subscription provider
-                if sp.provider.id == "openai-subscription":
-                    _exclude_tools = _exclude_tools or set()
-                    _exclude_tools.add("web_search")
-
                 # Notify frontend that the model may need loading (Ollama cold start)
                 if sp.provider.id == "ollama":
                     job.publish(SSEEvent(MODEL_LOADING, {"model": sp.model_id, "status": "loading"}))
@@ -1209,8 +1204,6 @@ class SessionProcessor:
                 self.step_cost = _calculate_step_cost(
                     self.usage_data, sp.model_info
                 )
-            elif sp.model_info.provider_id == "openai-subscription":
-                self.step_cost = 0.0
             else:
                 logger.warning(
                     "Pricing unavailable for model %s, cost will be $0.00 "

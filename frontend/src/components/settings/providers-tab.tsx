@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Eye, EyeOff, X, Check, Loader2, AlertCircle, LogOut, CreditCard, Mail, RotateCw, Cpu, Server, Plug } from "lucide-react";
 import { OpenYakLogo } from "@/components/ui/openyak-logo";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -25,12 +25,6 @@ function extractApiDetail(err: unknown, fallback: string): string {
   return errorToMessage(err, fallback);
 }
 
-interface OpenAISubscriptionStatus {
-  is_connected: boolean;
-  email: string;
-  needs_reauth?: boolean;
-}
-
 interface ProvidersTabProps {
   onNavigateTab?: (tab: string) => void;
 }
@@ -40,7 +34,7 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
   const { activeProvider, setActiveProvider } = useSettingsStore();
   const authStore = useAuthStore();
 
-  type ProviderMode = "openyak" | "byok" | "chatgpt" | "ollama" | "local" | "custom";
+  type ProviderMode = "openyak" | "byok" | "ollama" | "local" | "custom";
   const [viewingProvider, setViewingProvider] = useState<ProviderMode>(
     () => (activeProvider as ProviderMode) ?? "openyak"
   );
@@ -148,8 +142,6 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
   const fallbackToOtherProviders = () => {
     if (authStore.isConnected) {
       setActiveProvider("openyak");
-    } else if (openaiSubStatus?.is_connected) {
-      setActiveProvider("chatgpt");
     } else if (keyStatus?.is_configured || (providers ?? []).some((p) => p.is_configured)) {
       setActiveProvider("byok");
     } else {
@@ -160,13 +152,10 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
   const pickModelForMode = (mode: ProviderMode, models: ModelInfo[] | undefined) => {
     if (!models || models.length === 0) return null;
     if (mode === "byok") {
-      return models.find((m) => !["openyak-proxy", "openai-subscription", "ollama"].includes(m.provider_id)) ?? null;
+      return models.find((m) => !["openyak-proxy", "ollama"].includes(m.provider_id)) ?? null;
     }
     if (mode === "openyak") {
       return models.find((m) => m.provider_id === "openyak-proxy") ?? null;
-    }
-    if (mode === "chatgpt") {
-      return models.find((m) => m.provider_id === "openai-subscription") ?? null;
     }
     if (mode === "ollama") {
       return models.find((m) => m.provider_id === "ollama") ?? null;
@@ -188,11 +177,6 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
     }
   };
 
-  const { data: openaiSubStatus, refetch: refetchOpenaiSub } = useQuery({
-    queryKey: queryKeys.openaiSubscription,
-    queryFn: () => api.get<OpenAISubscriptionStatus>(API.CONFIG.OPENAI_SUBSCRIPTION),
-  });
-
   const disconnectMutation = useMutation({
     mutationFn: () => api.delete(API.CONFIG.OPENYAK_ACCOUNT),
     onSuccess: () => {
@@ -200,8 +184,7 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
       qc.invalidateQueries({ queryKey: queryKeys.models });
       qc.invalidateQueries({ queryKey: queryKeys.openyakAccount });
       if (activeProvider === "openyak") {
-        if (openaiSubStatus?.is_connected) setActiveProvider("chatgpt");
-        else if (keyStatus?.is_configured) setActiveProvider("byok");
+        if (keyStatus?.is_configured) setActiveProvider("byok");
         else setActiveProvider(null);
       }
     },
@@ -340,79 +323,6 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
     },
   });
 
-  const openaiDisconnectMutation = useMutation({
-    mutationFn: () => api.delete(API.CONFIG.OPENAI_SUBSCRIPTION),
-    onSuccess: () => {
-      refetchOpenaiSub();
-      qc.invalidateQueries({ queryKey: queryKeys.models });
-      if (activeProvider === "chatgpt") {
-        if (authStore.isConnected) setActiveProvider("openyak");
-        else if (keyStatus?.is_configured) setActiveProvider("byok");
-        else setActiveProvider(null);
-      }
-    },
-  });
-
-  const [openaiPolling, setOpenaiPolling] = useState(false);
-  const [callbackUrlInput, setCallbackUrlInput] = useState("");
-  const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const pollingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const stopOpenaiPolling = useCallback(() => {
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current);
-      pollingIntervalRef.current = null;
-    }
-    if (pollingTimeoutRef.current) {
-      clearTimeout(pollingTimeoutRef.current);
-      pollingTimeoutRef.current = null;
-    }
-    setOpenaiPolling(false);
-  }, []);
-
-  const startOpenaiPolling = useCallback(() => {
-    stopOpenaiPolling();
-    setOpenaiPolling(true);
-    let consecutiveFailures = 0;
-    const interval = setInterval(async () => {
-      try {
-        const status = await api.get<OpenAISubscriptionStatus>(API.CONFIG.OPENAI_SUBSCRIPTION);
-        consecutiveFailures = 0;
-        if (status.is_connected) {
-          stopOpenaiPolling();
-          refetchOpenaiSub();
-          setActiveProvider("chatgpt");
-          qc.invalidateQueries({ queryKey: queryKeys.models });
-        }
-      } catch (err) {
-        consecutiveFailures += 1;
-        console.warn("OpenAI subscription auth polling failed", err);
-        if (consecutiveFailures >= 3) {
-          stopOpenaiPolling();
-        }
-      }
-    }, 2000);
-    pollingIntervalRef.current = interval;
-    pollingTimeoutRef.current = setTimeout(stopOpenaiPolling, 300_000);
-  }, [qc, refetchOpenaiSub, setActiveProvider, stopOpenaiPolling]);
-
-  useEffect(() => stopOpenaiPolling, [stopOpenaiPolling]);
-
-  const openaiLoginMutation = useMutation({
-    mutationFn: async () => {
-      const resp = await api.post<{ auth_url: string }>(API.CONFIG.OPENAI_SUBSCRIPTION_LOGIN, {});
-      if (IS_DESKTOP) await desktopAPI.openExternal(resp.auth_url);
-      else window.open(resp.auth_url, "_blank", "noopener,noreferrer");
-    },
-    onSuccess: startOpenaiPolling,
-    onError: stopOpenaiPolling,
-  });
-
-  const manualCallbackMutation = useMutation({
-    mutationFn: () => api.post<{ success: boolean; email: string }>(API.CONFIG.OPENAI_SUBSCRIPTION_MANUAL_CALLBACK, { callback_url: callbackUrlInput }),
-    onSuccess: () => { setCallbackUrlInput(""); stopOpenaiPolling(); setActiveProvider("chatgpt"); qc.invalidateQueries({ queryKey: queryKeys.models }); },
-  });
-
   interface OllamaRuntimeStatus { binary_installed: boolean; running: boolean; }
   const { data: ollamaRuntimeStatus } = useQuery({ queryKey: ["ollamaRuntime"], queryFn: () => api.get<OllamaRuntimeStatus>(API.OLLAMA.STATUS) });
   const ollamaConnected = !!ollamaRuntimeStatus?.running;
@@ -426,7 +336,6 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
         {([
           { mode: "openyak" as ProviderMode, label: t('openyakAccount'), icon: Eye, connected: authStore.isConnected },
           { mode: "byok" as ProviderMode, label: t('ownApiKey'), icon: Eye, connected: !!keyStatus?.is_configured || (providers ?? []).some((p) => p.is_configured && !p.id.startsWith("custom_")) },
-          { mode: "chatgpt" as ProviderMode, label: t('chatgptSubscription'), icon: CreditCard, connected: !!openaiSubStatus?.is_connected },
           { mode: "ollama" as ProviderMode, label: "Ollama", icon: Cpu, connected: ollamaConnected },
           { mode: "local" as ProviderMode, label: t('localProvider'), icon: Server, connected: !!localStatus?.is_connected },
           { mode: "custom" as ProviderMode, label: t('customEndpoint'), icon: Plug, connected: (providers ?? []).some(p => p.id.startsWith("custom_") && p.is_configured) },
@@ -590,42 +499,6 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
               )}
             </div>
           ))}
-        </div>
-      )}
-
-      {/* ChatGPT Subscription config */}
-      {viewingProvider === "chatgpt" && (
-        <div>
-          <p className="text-xs text-[var(--text-secondary)] mb-3">{t('chatgptSubscriptionDesc')}</p>
-          {openaiSubStatus?.is_connected ? (
-            <div className="space-y-3">
-              <div className={`rounded-lg border p-3 ${openaiSubStatus.needs_reauth ? "border-[var(--color-warning)]" : "border-[var(--border-default)]"}`}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">{openaiSubStatus.needs_reauth ? <AlertCircle className="h-3.5 w-3.5 text-[var(--color-warning)]" /> : <Check className="h-3.5 w-3.5 text-[var(--color-success)]" />}<span className="text-xs text-[var(--text-secondary)]">{openaiSubStatus.email || t('chatgptConnected')}</span></div>
-                  <span className={`text-xs font-medium ${openaiSubStatus.needs_reauth ? "text-[var(--color-warning)]" : "text-[var(--color-success)]"}`}>{openaiSubStatus.needs_reauth ? t('chatgptNeedsReauth') : t('chatgptActive')}</span>
-                </div>
-              </div>
-              <div className="flex gap-2">
-                {openaiSubStatus.needs_reauth && <Button variant="outline" size="sm" onClick={() => openaiLoginMutation.mutate()} disabled={openaiLoginMutation.isPending || openaiPolling}>{(openaiLoginMutation.isPending || openaiPolling) ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <RotateCw className="h-3.5 w-3.5 mr-1.5" />}{t('chatgptSignIn')}</Button>}
-                <Button variant="ghost" size="sm" onClick={() => openaiDisconnectMutation.mutate()} disabled={openaiDisconnectMutation.isPending}>{openaiDisconnectMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <LogOut className="h-3.5 w-3.5 mr-1.5" />}{t('disconnect')}</Button>
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              <Button variant="outline" size="sm" onClick={() => openaiLoginMutation.mutate()} disabled={openaiLoginMutation.isPending || openaiPolling}>{(openaiLoginMutation.isPending || openaiPolling) ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}{openaiPolling ? t('chatgptWaiting') : t('chatgptSignIn')}</Button>
-              {openaiLoginMutation.isError && <div className="flex items-center gap-1.5 text-xs text-[var(--color-destructive)]"><AlertCircle className="h-3.5 w-3.5 shrink-0" /><span>{t('chatgptLoginFailed')}</span></div>}
-              {openaiPolling && (
-                <div className="space-y-2 pt-2">
-                  <p className="text-xs text-[var(--text-secondary)]">{t('chatgptPasteInstruction')}</p>
-                  <div className="flex items-center gap-2">
-                    <Input type="text" value={callbackUrlInput} onChange={(e) => setCallbackUrlInput(e.target.value)} placeholder={t('chatgptPastePlaceholder')} className="font-mono text-xs" />
-                    <Button variant="outline" size="sm" onClick={() => manualCallbackMutation.mutate()} disabled={!callbackUrlInput.trim() || manualCallbackMutation.isPending}>{manualCallbackMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : t('chatgptSubmitCallback')}</Button>
-                  </div>
-                  {manualCallbackMutation.isError && <div className="flex items-center gap-1.5 text-xs text-[var(--color-destructive)]"><AlertCircle className="h-3.5 w-3.5 shrink-0" /><span>{t('chatgptManualCallbackFailed')}</span></div>}
-                </div>
-              )}
-            </div>
-          )}
         </div>
       )}
 

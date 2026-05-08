@@ -54,7 +54,7 @@ app/
 │   ├── retry.py         #   Exponential backoff retry
 │   └── title.py         #   Auto-generate session titles
 │
-├── provider/            # LLM providers (21 BYOK + Ollama + ChatGPT subscription)
+├── provider/            # LLM providers (21 BYOK + Ollama)
 │   ├── base.py          #   BaseProvider ABC
 │   ├── openai_compat.py #   OpenAI-compatible base class
 │   ├── openrouter.py    #   OpenRouter (primary provider, reasoning model support)
@@ -64,8 +64,6 @@ app/
 │   ├── generic_openai.py #   Generic OpenAI-compatible provider (BYOK)
 │   ├── catalog.py       #   Provider catalog (21 BYOK provider definitions)
 │   ├── factory.py       #   Provider factory (creates providers from catalog)
-│   ├── openai_oauth.py  #   ChatGPT subscription OAuth
-│   ├── openai_subscription.py # ChatGPT subscription provider
 │   ├── proxy_auth.py    #   OpenYak Cloud proxy auth
 │   ├── registry.py      #   ProviderRegistry
 │   └── tool_calling/    #   Tool calling adapters (native FC detection + prompt-based fallback)
@@ -247,13 +245,12 @@ Each tool can be set to `allow`, `deny`, or `ask` (prompts user in UI).
 
 ## LLM Providers
 
-21 BYOK providers + Ollama local + ChatGPT subscription:
+21 BYOK providers + Ollama local:
 
 | Provider | Type | Notes |
 |----------|------|-------|
 | OpenRouter | Aggregator | Primary provider, 100+ models, reasoning token support |
 | Ollama | Local | Managed binary lifecycle, auto-download, pre-warming |
-| ChatGPT Subscription | OAuth | Connect existing ChatGPT Plus/Team subscription |
 | OpenAI | BYOK | Direct API key |
 | Anthropic | BYOK (native SDK) | Claude models via Anthropic SDK |
 | Google Gemini | BYOK (native SDK) | Gemini models via Google GenAI SDK |
