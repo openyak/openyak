@@ -63,6 +63,24 @@ def _ollama_url(request: Request) -> str:
     return mgr.base_url
 
 
+def _is_cloud_model_tag(name: str) -> bool:
+    """True for Ollama cloud-routed models (e.g. ``glm-5.1:cloud``).
+
+    Cloud tags execute on Ollama's hosted infra rather than pulling local
+    weights, so OpenYak's pull/discovery flow doesn't fit them today. Detect
+    them up-front and surface a useful message instead of letting the request
+    fail with an opaque manifest error.
+    """
+    return name.split("/")[-1].endswith(":cloud")
+
+
+_CLOUD_BLOCK_MESSAGE = (
+    "{name} is a cloud-hosted Ollama model — not yet supported in OpenYak. "
+    "Try a local tag (e.g. qwen3:8b, llama3.2:3b) or use ChatGPT / "
+    "OpenRouter in Settings → Providers."
+)
+
+
 # ── Runtime endpoints ─────────────────────────────────────────────────────
 
 
@@ -200,6 +218,15 @@ async def get_library(
 @router.post("/ollama/models/pull")
 async def pull_model(request: Request, registry: ProviderRegistryDep, body: ModelPullRequest):
     """Pull (download) a model. Returns SSE stream with progress."""
+    if _is_cloud_model_tag(body.name):
+        message = _CLOUD_BLOCK_MESSAGE.format(name=body.name)
+        logger.info("Ollama: blocked pull for cloud-tagged model %s", body.name)
+
+        async def cloud_block_stream():
+            yield f"data: {json.dumps({'status': 'error', 'reason': 'cloud_model_unsupported', 'message': message})}\n\n"
+
+        return StreamingResponse(cloud_block_stream(), media_type="text/event-stream")
+
     base_url = _ollama_url(request)
 
     async def stream():
