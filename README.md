@@ -28,7 +28,7 @@ OpenYak is built for real work, not just one-off chat prompts.
 
 - **Work from your actual files.** Upload DOCX, XLSX, PPTX, PDFs, CSVs, and local project context, then ask for briefs, tables, follow-ups, plans, and reusable artifacts.
 - **Keep the workflow in one thread.** Start with analysis, continue into a RACI, ask for a follow-up email, and preserve context across long conversations.
-- **Choose your model path.** Use free models, bring your own API key, connect a ChatGPT subscription, or run local models through [Ollama](https://ollama.com).
+- **Choose your model path.** Use free models, bring your own API key, or run local models through [Ollama](https://ollama.com).
 - **Stay local by default.** Files, conversations, memory, and generated artifacts are stored on your device. Cloud model calls go directly to the model provider you choose.
 - **Use it from another device.** Remote access lets you scan a QR code and send tasks to your desktop through a secure tunnel.
 
@@ -108,7 +108,7 @@ Professional workflows include failure states. Upload errors and missing inputs 
 ## Get Started
 
 1. **Install OpenYak** for your platform.
-2. **Connect a model** using free cloud models, your own API key, ChatGPT subscription, or local Ollama.
+2. **Connect a model** using free cloud models, your own API key, or local Ollama.
 3. **Start a new conversation** and attach a real file.
 4. **Ask for a deliverable**, not just a summary: brief, action plan, RACI, email, table, or artifact.
 5. **Review the result** in the chat and artifact panel, then continue in the same thread.
@@ -139,7 +139,6 @@ Finally, write a follow-up email I can send to the team directly.
 | Kimi | BYOK | Moonshot models |
 | MiniMax | BYOK | Direct provider key |
 | Zhipu | BYOK | Direct provider key |
-| ChatGPT | Subscription | Use an existing ChatGPT Plus, Pro, Team, or Enterprise plan when available |
 
 ### Local
 

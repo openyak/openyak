@@ -19,7 +19,6 @@ from app.api import mcp as mcp_api
 from app.api import messages as messages_api
 from app.api import models as models_api
 from app.api import fts as fts_api
-from app.api import openai_auth as openai_auth_api
 from app.api import plugins as plugins_api
 from app.api import remote as remote_api
 from app.api import sessions as sessions_api
@@ -40,7 +39,6 @@ api_router.include_router(files_api.router, tags=["files"])
 api_router.include_router(artifacts_api.router, tags=["artifacts"])
 api_router.include_router(usage_api.router, tags=["usage"])
 api_router.include_router(config_api.router, tags=["config"])
-api_router.include_router(openai_auth_api.router, tags=["openai-auth"])
 api_router.include_router(fts_api.router, tags=["fts"])
 api_router.include_router(mcp_api.router, tags=["mcp"])
 api_router.include_router(connectors_api.router, tags=["connectors"])

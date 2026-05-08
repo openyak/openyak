@@ -42,7 +42,7 @@ function ModelSelect({ value, onChange }: { value: string; onChange: (v: string)
         <option value="">{t("modelAuto")}</option>
         {(models || []).filter((m, i, arr) => arr.findIndex((x) => x.id === m.id) === i).map((m) => (
           <option key={m.id} value={m.id}>
-            {m.name}{m.provider_id === "openai-subscription" ? " (Subscription)" : ""}
+            {m.name}
           </option>
         ))}
       </select>

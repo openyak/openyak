@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, Camera, CheckCircle2, XCircle, Loader2,
-  Wifi, WifiOff, KeyRound, Link2, Trash2, Monitor, Eye, Cpu,
+  Wifi, WifiOff, KeyRound, Link2, Trash2, Eye, Cpu,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -65,20 +65,15 @@ export default function MobileSettingsPage() {
         if (!Array.isArray(models)) return;
         setAllModels(models);
         const providers: typeof availableProviders = [];
-        const chatgptModels = models.filter((m) => m.provider_id === "openai-subscription");
         const openrouterModels = models.filter((m) => m.provider_id === "openrouter");
-        if (chatgptModels.length > 0) {
-          providers.push({ id: "chatgpt", label: "ChatGPT Subscription", icon: Monitor, count: chatgptModels.length });
-        }
         if (openrouterModels.length > 0) {
           providers.push({ id: "openrouter", label: "OpenRouter", icon: Eye, count: openrouterModels.length });
         }
         setAvailableProviders(providers);
         // Auto-select if no preference saved
         if (!activeProvider && providers.length > 0) {
-          const defaultP = providers.find((p) => p.id === "chatgpt") ?? providers[0];
-          setActiveProvider(defaultP.id);
-          saveRemoteProvider(defaultP.id);
+          setActiveProvider(providers[0].id);
+          saveRemoteProvider(providers[0].id);
         }
       })
       .catch(() => {});
@@ -89,10 +84,9 @@ export default function MobileSettingsPage() {
     saveRemoteProvider(id);
     // Sync to Zustand so ChatView's ModelSelector filters correctly
     const store = useSettingsStore.getState();
-    store.setActiveProvider(id === "chatgpt" ? "chatgpt" : "byok");
+    store.setActiveProvider("byok");
     // Also set selectedModel to first model of this provider
-    const providerId = id === "chatgpt" ? "openai-subscription" : "openrouter";
-    const firstModel = allModels.find((m) => m.provider_id === providerId);
+    const firstModel = allModels.find((m) => m.provider_id === "openrouter");
     if (firstModel) {
       store.setSelectedModel(firstModel.id, firstModel.provider_id);
     }

@@ -96,23 +96,18 @@ def _resolve_agent(model: str) -> str:
 def _resolve_default_model(registry: ProviderRegistryDep) -> str | None:
     """Pick the best model for external API calls.
 
-    Priority: subscription > Anthropic > paid OpenRouter > free.
+    Priority: Anthropic > paid OpenRouter > free.
     """
     all_models = registry.all_models()
     if not all_models:
         return None
 
-    # 1. Subscription models (ChatGPT subscription)
-    sub = [m for m in all_models if m.provider_id == "openai-subscription"]
-    if sub:
-        return sub[0].id
-
-    # 2. Anthropic
+    # 1. Anthropic
     anth = [m for m in all_models if m.provider_id == "anthropic"]
     if anth:
         return anth[0].id
 
-    # 3. Paid models
+    # 2. Paid models
     paid = [m for m in all_models if m.pricing and (m.pricing.prompt > 0 or m.pricing.completion > 0)]
     if paid:
         return paid[0].id

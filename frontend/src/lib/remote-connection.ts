@@ -53,7 +53,7 @@ export function getRemoteUrl(): string | null {
 
 // --- Provider preference (persisted separately from connection config) ---
 
-export type RemoteProvider = "chatgpt" | "openrouter";
+export type RemoteProvider = "openrouter";
 
 const PROVIDER_KEY = "openyak_remote_provider";
 

@@ -54,7 +54,7 @@ app/
 │   ├── retry.py         #   指数退避重试
 │   └── title.py         #   自动生成会话标题
 │
-├── provider/            # LLM 提供者（21 个 BYOK + Ollama + ChatGPT 订阅）
+├── provider/            # LLM 提供者（21 个 BYOK + Ollama）
 │   ├── base.py          #   BaseProvider ABC
 │   ├── openai_compat.py #   OpenAI 兼容基类
 │   ├── openrouter.py    #   OpenRouter（主要提供者，支持 reasoning）
@@ -64,8 +64,6 @@ app/
 │   ├── generic_openai.py #   通用 OpenAI 兼容提供者（BYOK）
 │   ├── catalog.py       #   提供者目录（21 个 BYOK 提供者定义）
 │   ├── factory.py       #   提供者工厂（从目录创建提供者）
-│   ├── openai_oauth.py  #   ChatGPT 订阅 OAuth
-│   ├── openai_subscription.py # ChatGPT 订阅提供者
 │   ├── proxy_auth.py    #   OpenYak Cloud 代理认证
 │   ├── registry.py      #   ProviderRegistry
 │   └── tool_calling/    #   工具调用适配（原生 FC 检测 + prompt-based 回退）
@@ -243,13 +241,12 @@ app/
 
 ## LLM 提供者
 
-21 个 BYOK 提供者 + Ollama 本地 + ChatGPT 订阅：
+21 个 BYOK 提供者 + Ollama 本地：
 
 | 提供者 | 类型 | 说明 |
 |--------|------|------|
 | OpenRouter | 聚合器 | 主要提供者，100+ 模型，支持 reasoning token |
 | Ollama | 本地 | 托管二进制生命周期，自动下载，启动预热 |
-| ChatGPT 订阅 | OAuth | 接入现有 ChatGPT Plus/Team 订阅 |
 | OpenAI | BYOK | 直接 API 密钥 |
 | Anthropic | BYOK（原生 SDK） | 通过 Anthropic SDK 接入 Claude 模型 |
 | Google Gemini | BYOK（原生 SDK） | 通过 Google GenAI SDK 接入 Gemini 模型 |

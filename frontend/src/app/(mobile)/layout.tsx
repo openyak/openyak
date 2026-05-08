@@ -16,13 +16,11 @@ import type { ModelInfo } from "@/types/model";
 
 /** Map remote provider key → Zustand ActiveProvider value */
 const ZUSTAND_PROVIDER_MAP: Record<string, string> = {
-  chatgpt: "chatgpt",
   openrouter: "byok",
 };
 
 /** Map remote provider key → backend provider_id for model filtering */
 const BACKEND_PROVIDER_MAP: Record<string, string> = {
-  chatgpt: "openai-subscription",
   openrouter: "openrouter",
 };
 

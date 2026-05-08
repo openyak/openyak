@@ -142,31 +142,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     except Exception as e2:
                         logger.warning("Still failed after token refresh: %s", e2)
 
-    # Register OpenAI subscription provider if configured
-    if settings.openai_oauth_access_token and settings.openai_oauth_account_id:
-        from app.provider.openai_subscription import OpenAISubscriptionProvider
-
-        sub_provider = OpenAISubscriptionProvider(
-            access_token=settings.openai_oauth_access_token,
-            account_id=settings.openai_oauth_account_id,
-            refresh_token=settings.openai_oauth_refresh_token,
-            expires_at_ms=settings.openai_oauth_expires_at,
-            settings=settings,
-        )
-        registry.register(sub_provider)
-        logger.info("OpenAI subscription provider registered from saved tokens")
-
-        # Proactively refresh token on startup if it's expired/expiring
-        try:
-            await sub_provider._ensure_valid_token()
-        except Exception as e:
-            logger.warning("Startup token refresh failed: %s — user may need to re-authorize", e)
-
-        try:
-            await registry.refresh_models()
-        except Exception as e:
-            logger.warning("Failed to refresh models after subscription provider registration: %s", e)
-
     # Ollama runtime manager (always created — manages binary + process)
     from app.ollama.manager import OllamaManager
 

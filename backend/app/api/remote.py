@@ -77,7 +77,7 @@ class RemoteStatusResponse(BaseModel):
     active_tasks: int = 0
     tunnel_mode: str = "cloudflare"
     permission_mode: str = "auto"
-    active_providers: list[str] = []  # e.g. ["openai-subscription", "openrouter"]
+    active_providers: list[str] = []  # e.g. ["openrouter", "anthropic"]
 
 
 class RemoteConfigUpdate(BaseModel):
@@ -266,16 +266,12 @@ async def provider_info(request: Request) -> dict:
     registry = getattr(request.app.state, "provider_registry", None)
     providers = list(registry._providers.keys()) if registry else []
 
-    # Determine the "primary" provider: prefer subscription over API-key
-    primary = None
-    if "openai-subscription" in providers:
-        primary = "chatgpt"
-    elif "openrouter" in providers:
-        primary = "openrouter"
+    # Determine the "primary" provider for the mobile client to default to.
+    primary = "openrouter" if "openrouter" in providers else None
 
     return {
-        "providers": providers,  # e.g. ["openrouter", "openai-subscription"]
-        "primary": primary,  # "chatgpt" | "openrouter" | null
+        "providers": providers,  # e.g. ["openrouter", "anthropic"]
+        "primary": primary,  # "openrouter" | null
     }
 
 
