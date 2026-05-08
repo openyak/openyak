@@ -24,6 +24,7 @@ from app.provider.local import (
     create_local_provider,
 )
 from app.provider.openrouter import OpenRouterProvider
+from app.rapid_mlx import detect_rapid_mlx
 from app.schemas.provider import (
     ApiKeyStatus,
     ApiKeyUpdate,
@@ -119,6 +120,15 @@ class LocalProviderStatus(BaseModel):
     is_configured: bool = False
     is_connected: bool = False
     status: str = "unconfigured"  # "connected" | "error" | "unconfigured"
+
+
+class RapidMlxStatusResponse(BaseModel):
+    """Detection result for the user-installed Rapid-MLX CLI."""
+
+    installed: bool = False
+    binary_path: str = ""
+    version: str = ""
+    default_base_url: str = "http://localhost:8000/v1"
 
 
 class LocalProviderUpdate(BaseModel):
@@ -853,6 +863,23 @@ async def update_custom_endpoint(
         masked_key=_mask_key(api_key) if api_key else None,
         model_count=len(models), status="connected" if enabled else "disabled", base_url=base_url
     )
+
+@router.get("/config/rapid-mlx/status", response_model=RapidMlxStatusResponse)
+async def get_rapid_mlx_status() -> RapidMlxStatusResponse:
+    """Probe PATH for the user-installed Rapid-MLX CLI.
+
+    Rapid-MLX is the recommended local model server on macOS. We do not bundle
+    it; this endpoint just tells the UI whether to show the install hint or the
+    "you're set" affordance.
+    """
+    status = await detect_rapid_mlx()
+    return RapidMlxStatusResponse(
+        installed=status.installed,
+        binary_path=status.binary_path,
+        version=status.version,
+        default_base_url=status.default_base_url,
+    )
+
 
 @router.get("/config/local", response_model=LocalProviderStatus)
 async def get_local_provider(settings: SettingsDep, registry: ProviderRegistryDep) -> LocalProviderStatus:

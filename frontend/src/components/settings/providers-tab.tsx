@@ -15,7 +15,7 @@ import { errorToMessage } from "@/lib/errors";
 import { API, IS_DESKTOP, queryKeys } from "@/lib/constants";
 import { desktopAPI } from "@/lib/tauri-api";
 import { useModels } from "@/hooks/use-models";
-import type { ApiKeyStatus, ProviderInfo, LocalProviderStatus } from "@/types/usage";
+import type { ApiKeyStatus, ProviderInfo, LocalProviderStatus, RapidMlxStatus } from "@/types/usage";
 import type { ModelInfo } from "@/types/model";
 import { OllamaPanel } from "@/components/settings/ollama-panel";
 
@@ -135,6 +135,13 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
   const { data: localStatus } = useQuery({
     queryKey: queryKeys.localProvider,
     queryFn: () => api.get<LocalProviderStatus>(API.CONFIG.LOCAL_PROVIDER),
+  });
+
+  // Detect a user-installed Rapid-MLX CLI to drive the install hint UI.
+  const { data: rapidMlxStatus } = useQuery({
+    queryKey: queryKeys.rapidMlxStatus,
+    queryFn: () => api.get<RapidMlxStatus>(API.CONFIG.RAPID_MLX_STATUS),
+    staleTime: 60_000,
   });
 
   useEffect(() => {
@@ -635,6 +642,19 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
       {viewingProvider === "local" && (
         <div className="space-y-4">
           <p className="text-xs text-[var(--text-secondary)]">{t('localProviderDesc')}</p>
+          {rapidMlxStatus && (
+            rapidMlxStatus.installed ? (
+              <div className="flex items-center gap-1.5 text-xs text-[var(--color-success)]">
+                <Check className="h-3.5 w-3.5 shrink-0" />
+                <span>{t('rapidMlxInstalled', { version: rapidMlxStatus.version || '?' })}</span>
+              </div>
+            ) : (
+              <div className="flex items-start gap-1.5 text-xs text-[var(--text-secondary)] rounded-md border border-[var(--border)] p-2.5">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                <span className="font-mono leading-snug">{t('rapidMlxNotInstalled')}</span>
+              </div>
+            )
+          )}
           {localStatus?.is_configured && (
             <div className="flex items-center gap-2 text-xs">
               <Check className="h-3.5 w-3.5 text-[var(--color-success)]" />

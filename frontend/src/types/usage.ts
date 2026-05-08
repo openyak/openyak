@@ -76,3 +76,10 @@ export interface LocalProviderStatus {
   is_connected: boolean;
   status: "connected" | "error" | "unconfigured";
 }
+
+export interface RapidMlxStatus {
+  installed: boolean;
+  binary_path: string;
+  version: string;
+  default_base_url: string;
+}
