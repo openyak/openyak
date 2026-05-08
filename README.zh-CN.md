@@ -6,7 +6,7 @@
   <a href="https://github.com/openyak/openyak/stargazers"><img src="https://img.shields.io/github/stars/openyak/openyak?style=flat-square" alt="GitHub Stars" /></a>
   <a href="https://github.com/openyak/openyak/blob/main/LICENSE"><img src="https://img.shields.io/github/license/openyak/openyak?style=flat-square" alt="License" /></a>
   <a href="https://github.com/openyak/openyak/releases/latest"><img src="https://img.shields.io/github/v/release/openyak/openyak?style=flat-square" alt="Latest Release" /></a>
-  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-blue?style=flat-square" alt="Platform: macOS | Windows | Linux" />
+  <img src="https://img.shields.io/badge/platform-macOS-blue?style=flat-square" alt="Platform: macOS" />
   <a href="https://github.com/openyak/openyak/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome" /></a>
 </p>
 
@@ -98,12 +98,8 @@ OpenYak 可以在同一个线程里综合多份文件，并在右侧 artifact pa
 | 平台 | 架构 | 格式 |
 |------|------|------|
 | macOS | Apple Silicon / Intel | `.dmg`, `.app` |
-| Windows | x64 | `.exe` 安装包 |
-| Linux | x64 | `.deb`, `.rpm` |
 
 > [下载最新版本](https://github.com/openyak/openyak/releases/latest) 或访问 [open-yak.com/download](https://open-yak.com/download/)。
->
-> Linux 用户可以查看 [LINUX.md](LINUX.md) 了解依赖、安装和排障说明。
 
 ## 快速开始
 

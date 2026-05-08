@@ -41,10 +41,6 @@ const MAX_CRASH_RESTARTS: u32 = 3;
 /// Reset crash count after this many ms of stability.
 const CRASH_WINDOW_MS: u64 = 60_000;
 
-/// Windows CREATE_NEW_PROCESS_GROUP flag.
-#[cfg(target_os = "windows")]
-const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
-
 fn epoch_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -219,10 +215,6 @@ impl BackendState {
                 .stderr(Stdio::piped())
                 .stdin(Stdio::null());
 
-            // Windows: isolate process group so CTRL_BREAK_EVENT doesn't leak to Tauri
-            #[cfg(target_os = "windows")]
-            cmd.creation_flags(CREATE_NEW_PROCESS_GROUP);
-
             cmd.spawn()
                 .map_err(|e| format!("Failed to spawn backend: {e}"))?
         } else {
@@ -231,12 +223,7 @@ impl BackendState {
                 .path()
                 .resource_dir()
                 .map_err(|e| format!("Failed to get resource dir: {e}"))?;
-            let backend_binary = if cfg!(target_os = "windows") {
-                "openyak-backend.exe"
-            } else {
-                "openyak-backend"
-            };
-            let backend_path = resource_dir.join("backend").join(backend_binary);
+            let backend_path = resource_dir.join("backend").join("openyak-backend");
             let backend_dir = resource_dir.join("backend");
 
             info!("Starting backend (prod) at {}", backend_path.display());
@@ -265,10 +252,6 @@ impl BackendState {
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .stdin(Stdio::null());
-
-            // Windows: isolate process group so CTRL_BREAK_EVENT doesn't leak to Tauri
-            #[cfg(target_os = "windows")]
-            cmd.creation_flags(CREATE_NEW_PROCESS_GROUP);
 
             cmd.spawn()
                 .map_err(|e| format!("Failed to spawn backend: {e}"))?
@@ -704,26 +687,9 @@ fn validate_backend_resources(
         return Err(msg);
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        let python_dll = backend_dir.join("_internal").join("python312.dll");
-        if !python_dll.exists() {
-            let msg = format!(
-                "Packaged Python runtime is missing: {}",
-                python_dll.display()
-            );
-            write_desktop_log(desktop_log_path, &msg);
-            return Err(msg);
-        }
-    }
-
     // Node.js runtime (optional — used by OpenClaw channels)
     let nodejs_dir = backend_dir.parent().unwrap_or(backend_dir).join("nodejs");
-    let node_binary = if cfg!(target_os = "windows") {
-        nodejs_dir.join("node.exe")
-    } else {
-        nodejs_dir.join("bin").join("node")
-    };
+    let node_binary = nodejs_dir.join("bin").join("node");
     if nodejs_dir.exists() && !node_binary.exists() {
         write_desktop_log(
             desktop_log_path,
@@ -834,30 +800,9 @@ fn read_recent_log_lines(path: &Path, max_lines: usize) -> String {
     }
 }
 
-/// Kill a process and its entire tree (important on Windows).
+/// Kill a process. macOS: SIGKILL via tokio::process::Child::kill is sufficient
+/// because we don't spawn process groups on this platform.
 async fn kill_process_tree(child: &mut Child) -> Result<(), String> {
-    if cfg!(target_os = "windows") {
-        if let Some(pid) = child.id() {
-            let output = tokio::process::Command::new("taskkill")
-                .args(["/PID", &pid.to_string(), "/T", "/F"])
-                .output()
-                .await;
-            match output {
-                Ok(o) if o.status.success() => {
-                    info!("taskkill succeeded for pid {pid}");
-                }
-                Ok(o) => {
-                    let stderr = String::from_utf8_lossy(&o.stderr);
-                    warn!("taskkill for pid {pid}: {stderr}");
-                }
-                Err(e) => {
-                    warn!("taskkill failed: {e}");
-                }
-            }
-        }
-    }
-
-    // Fallback: direct kill
     let _ = child.kill().await;
     Ok(())
 }

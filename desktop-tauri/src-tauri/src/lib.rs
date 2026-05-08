@@ -12,7 +12,6 @@ use backend::BackendState;
 use log::{error, info};
 use tokio::sync::Mutex;
 use tauri::{Emitter, Manager};
-#[cfg(target_os = "macos")]
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_deep_link::DeepLinkExt;
 use url::Url;
@@ -91,16 +90,6 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
 
-            // Windows/Linux use custom in-app title bar via CSS; strip native decorations.
-            // macOS window already has titleBarStyle=Overlay + hiddenTitle from config.
-            #[cfg(not(target_os = "macos"))]
-            {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.set_decorations(false);
-                }
-            }
-
-            #[cfg(target_os = "macos")]
             {
                 // NSVisualEffectView vibrancy — the main window is configured
                 // `transparent: true`, so any semi-transparent CSS surface
@@ -174,18 +163,9 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("main") {
                 let win = window.clone();
                 window.on_window_event(move |event| {
-                    match event {
-                        tauri::WindowEvent::CloseRequested { api, .. } => {
-                            api.prevent_close();
-                            let _ = win.hide();
-                        }
-                        #[cfg(not(target_os = "macos"))]
-                        tauri::WindowEvent::Resized(_) => {
-                            if let Ok(maximized) = win.is_maximized() {
-                                let _ = win.emit("maximize-change", maximized);
-                            }
-                        }
-                        _ => {}
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = win.hide();
                     }
                 });
             }
@@ -273,9 +253,8 @@ pub fn run() {
                         }
                     });
                 }
-                #[cfg(target_os = "macos")]
                 tauri::RunEvent::Reopen { .. } => {
-                    // macOS: clicking Dock icon re-shows the hidden window
+                    // Clicking the Dock icon re-shows the hidden window
                     if let Some(window) = app_handle.get_webview_window("main") {
                         let _ = window.show();
                         let _ = window.set_focus();
@@ -286,7 +265,6 @@ pub fn run() {
         });
 }
 
-#[cfg(target_os = "macos")]
 fn is_running_from_dmg_volume(app: &tauri::App) -> bool {
     app.path()
         .resource_dir()

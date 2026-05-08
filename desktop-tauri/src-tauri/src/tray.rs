@@ -23,22 +23,15 @@ pub struct TrayRecent {
 }
 
 pub fn create_tray(app: &AppHandle) -> tauri::Result<()> {
-    #[cfg(target_os = "macos")]
     let tray_icon = Image::from_bytes(include_bytes!("../icons/tray-template@2x.png"))?;
-    #[cfg(not(target_os = "macos"))]
-    let tray_icon = Image::from_bytes(include_bytes!("../icons/512x512.png"))?;
 
     let menu = build_menu(app, &[])?;
 
-    let builder = TrayIconBuilder::with_id(TRAY_ID)
+    TrayIconBuilder::with_id(TRAY_ID)
         .icon(tray_icon)
         .tooltip("OpenYak")
-        .menu(&menu);
-
-    #[cfg(target_os = "macos")]
-    let builder = builder.icon_as_template(true);
-
-    builder
+        .menu(&menu)
+        .icon_as_template(true)
         .on_menu_event(|app, event| handle_menu_event(app, event.id().as_ref()))
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click {
