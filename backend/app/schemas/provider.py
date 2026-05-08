@@ -87,27 +87,6 @@ class StreamChunk(BaseModel):
     data: dict[str, Any] = {}
 
 
-class ApiKeyUpdate(BaseModel):
-    """Request to update the OpenRouter API key."""
-
-    api_key: str
-
-
-class ApiKeyStatus(BaseModel):
-    """API key configuration status."""
-
-    is_configured: bool = False
-    masked_key: str | None = None
-    is_valid: bool | None = None
-
-
-class ProviderKeyUpdate(BaseModel):
-    """Request to set/update an API key for any provider."""
-
-    api_key: str
-    base_url: str | None = None
-
-
 class CustomEndpointCreate(BaseModel):
     """Payload to create or update a custom openai-compatible endpoint."""
 

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, Camera, CheckCircle2, XCircle, Loader2,
-  Wifi, WifiOff, KeyRound, Link2, Trash2, Monitor, Eye, Cpu,
+  Wifi, WifiOff, KeyRound, Link2, Trash2, Monitor, Cpu,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -66,12 +66,12 @@ export default function MobileSettingsPage() {
         setAllModels(models);
         const providers: typeof availableProviders = [];
         const chatgptModels = models.filter((m) => m.provider_id === "openai-subscription");
-        const openrouterModels = models.filter((m) => m.provider_id === "openrouter");
+        const openyakModels = models.filter((m) => m.provider_id === "openyak-proxy");
         if (chatgptModels.length > 0) {
           providers.push({ id: "chatgpt", label: "ChatGPT Subscription", icon: Monitor, count: chatgptModels.length });
         }
-        if (openrouterModels.length > 0) {
-          providers.push({ id: "openrouter", label: "OpenRouter", icon: Eye, count: openrouterModels.length });
+        if (openyakModels.length > 0) {
+          providers.push({ id: "openyak", label: "OpenYak Cloud", icon: Monitor, count: openyakModels.length });
         }
         setAvailableProviders(providers);
         // Auto-select if no preference saved
@@ -89,9 +89,9 @@ export default function MobileSettingsPage() {
     saveRemoteProvider(id);
     // Sync to Zustand so ChatView's ModelSelector filters correctly
     const store = useSettingsStore.getState();
-    store.setActiveProvider(id === "chatgpt" ? "chatgpt" : "byok");
+    store.setActiveProvider(id);
     // Also set selectedModel to first model of this provider
-    const providerId = id === "chatgpt" ? "openai-subscription" : "openrouter";
+    const providerId = id === "chatgpt" ? "openai-subscription" : "openyak-proxy";
     const firstModel = allModels.find((m) => m.provider_id === providerId);
     if (firstModel) {
       store.setSelectedModel(firstModel.id, firstModel.provider_id);

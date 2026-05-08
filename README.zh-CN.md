@@ -127,19 +127,9 @@ OpenYak 可以在同一个线程里综合多份文件，并在右侧 artifact pa
 
 | 提供商 | 接入方式 | 说明 |
 |--------|----------|------|
-| OpenRouter | 内置 | 免费模型和高级模型 |
-| OpenAI | BYOK | 使用自己的 API Key |
-| Anthropic | BYOK | 使用自己的 API Key |
-| Google | BYOK | Gemini 模型 |
-| DeepSeek | BYOK | 直连提供商密钥 |
-| Groq | BYOK | 高速托管推理 |
-| Mistral | BYOK | 直连提供商密钥 |
-| xAI | BYOK | Grok 模型 |
-| Qwen | BYOK | 直连提供商密钥 |
-| Kimi | BYOK | Moonshot 模型 |
-| MiniMax | BYOK | 直连提供商密钥 |
-| 智谱 | BYOK | 直连提供商密钥 |
-| ChatGPT | 订阅 | 在可用时使用现有 ChatGPT Plus、Pro、Team 或 Enterprise 方案 |
+| OpenYak Cloud | 内置 | 包含免费 token，可购买积分使用高级模型 |
+| ChatGPT | 订阅 | 使用现有 ChatGPT Plus、Pro、Team 或 Enterprise 方案 |
+| 自定义端点 | 自部署 | 指向任意 OpenAI 兼容的 base URL（自建网关、vLLM、LiteLLM 等） |
 
 ### 本地模型
 

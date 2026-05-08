@@ -53,12 +53,6 @@ export interface UsageStats {
   response_time: ResponseTimeStats;
 }
 
-export interface ApiKeyStatus {
-  is_configured: boolean;
-  masked_key: string | null;
-  is_valid: boolean | null;
-}
-
 export interface ProviderInfo {
   id: string;
   name: string;

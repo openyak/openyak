@@ -17,13 +17,13 @@ import type { ModelInfo } from "@/types/model";
 /** Map remote provider key → Zustand ActiveProvider value */
 const ZUSTAND_PROVIDER_MAP: Record<string, string> = {
   chatgpt: "chatgpt",
-  openrouter: "byok",
+  openyak: "openyak",
 };
 
 /** Map remote provider key → backend provider_id for model filtering */
 const BACKEND_PROVIDER_MAP: Record<string, string> = {
   chatgpt: "openai-subscription",
-  openrouter: "openrouter",
+  openyak: "openyak-proxy",
 };
 
 function MobileLoadingScreen() {
@@ -70,7 +70,7 @@ async function syncProviderAndModel(): Promise<void> {
   if (!provider) return;
 
   // 3. Set activeProvider in Zustand
-  const zustandValue = ZUSTAND_PROVIDER_MAP[provider] ?? "byok";
+  const zustandValue = ZUSTAND_PROVIDER_MAP[provider] ?? "openyak";
   const store = useSettingsStore.getState();
   if (store.activeProvider !== zustandValue) {
     store.setActiveProvider(zustandValue as ActiveProvider);

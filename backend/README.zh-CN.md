@@ -12,7 +12,7 @@ pip install -e ".[dev]"
 
 # 2. 配置环境变量
 cp .env.example .env
-# 编辑 .env，填入 OPENYAK_OPENROUTER_API_KEY
+# 编辑 .env：只有需要跑集成测试时才需要 OPENYAK_OPENROUTER_API_KEY，生产路径不再读取它
 
 # 3. 启动服务
 uvicorn app.main:app --reload
@@ -54,16 +54,13 @@ app/
 │   ├── retry.py         #   指数退避重试
 │   └── title.py         #   自动生成会话标题
 │
-├── provider/            # LLM 提供者（21 个 BYOK + Ollama + ChatGPT 订阅）
+├── provider/            # LLM 提供者（OpenYak Cloud + ChatGPT 订阅 + 自定义端点）
 │   ├── base.py          #   BaseProvider ABC
 │   ├── openai_compat.py #   OpenAI 兼容基类
-│   ├── openrouter.py    #   OpenRouter（主要提供者，支持 reasoning）
+│   ├── openrouter.py    #   OpenRouter wrapper（被 OpenYak Cloud proxy 使用）
 │   ├── ollama.py        #   Ollama 本地大模型（继承 OpenAI 兼容基类）
-│   ├── anthropic_provider.py # 原生 Anthropic SDK 提供者
-│   ├── gemini_provider.py #  原生 Google Gemini SDK 提供者
-│   ├── generic_openai.py #   通用 OpenAI 兼容提供者（BYOK）
-│   ├── catalog.py       #   提供者目录（21 个 BYOK 提供者定义）
-│   ├── factory.py       #   提供者工厂（从目录创建提供者）
+│   ├── generic_openai.py #   通用 OpenAI 兼容提供者（自定义端点）
+│   ├── factory.py       #   自定义端点工厂
 │   ├── openai_oauth.py  #   ChatGPT 订阅 OAuth
 │   ├── openai_subscription.py # ChatGPT 订阅提供者
 │   ├── proxy_auth.py    #   OpenYak Cloud 代理认证
@@ -243,35 +240,15 @@ app/
 
 ## LLM 提供者
 
-21 个 BYOK 提供者 + Ollama 本地 + ChatGPT 订阅：
+OpenYak Cloud + ChatGPT 订阅 + 自定义端点 + 本地选项：
 
 | 提供者 | 类型 | 说明 |
 |--------|------|------|
-| OpenRouter | 聚合器 | 主要提供者，100+ 模型，支持 reasoning token |
+| OpenYak Cloud | 内置代理 | OpenRouter 后端；每周免费 token + 付费积分 |
+| ChatGPT 订阅 | OAuth | 接入现有 ChatGPT Plus/Pro/Team 订阅 |
+| 自定义端点 | 自部署 | OpenAI 兼容 base URL — 自建网关、vLLM、LiteLLM 等 |
 | Ollama | 本地 | 托管二进制生命周期，自动下载，启动预热 |
-| ChatGPT 订阅 | OAuth | 接入现有 ChatGPT Plus/Team 订阅 |
-| OpenAI | BYOK | 直接 API 密钥 |
-| Anthropic | BYOK（原生 SDK） | 通过 Anthropic SDK 接入 Claude 模型 |
-| Google Gemini | BYOK（原生 SDK） | 通过 Google GenAI SDK 接入 Gemini 模型 |
-| Groq | BYOK | 快速推理 |
-| DeepSeek | BYOK | DeepSeek V3/R1 |
-| Mistral | BYOK | Mistral/Mixtral 模型 |
-| xAI | BYOK | Grok 模型 |
-| Together AI | BYOK | 开源模型托管 |
-| DeepInfra | BYOK | |
-| Cerebras | BYOK | 超快推理 |
-| Cohere | BYOK | Command R+ |
-| Perplexity | BYOK | 搜索增强模型 |
-| Fireworks AI | BYOK | |
-| Azure OpenAI | BYOK | 企业级 Azure 部署 |
-| 通义千问（Qwen） | BYOK | 阿里巴巴 DashScope |
-| Kimi（月之暗面） | BYOK | Moonshot |
-| MiniMax | BYOK | |
-| 智谱（ZhipuAI） | BYOK | GLM 模型 |
-| 硅基流动（SiliconFlow） | BYOK | |
-| Xiaomi MiMo | BYOK | |
-
-所有 BYOK 提供者密钥遵循 `OPENYAK_{PROVIDER}_API_KEY` 格式。
+| Local Provider | 本地 | 通过 `OPENYAK_LOCAL_BASE_URL` 预配置的 OpenAI 兼容本地服务 |
 
 ## 使用示例
 
@@ -301,9 +278,7 @@ curl http://localhost:8000/api/agents
 
 - **Python 3.12+** / FastAPI / Pydantic v2
 - **SQLAlchemy** (async) + SQLite WAL
-- **OpenAI SDK** → OpenRouter（支持 reasoning tokens）
-- **Anthropic SDK** → 原生 Anthropic 提供者
-- **Google GenAI SDK** → 原生 Gemini 提供者
+- **OpenAI SDK** → OpenRouter（驱动 OpenYak Cloud + 自定义端点）
 - **MCP SDK** → Model Context Protocol 客户端（可选）
 - **SSE** 可恢复流式传输
 - **ULID** 主键
