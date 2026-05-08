@@ -6,7 +6,7 @@ import { useSettingsHasHydrated, useSettingsStore } from "@/stores/settings-stor
 import { useAuthHasHydrated, useAuthStore } from "@/stores/auth-store";
 import { api } from "@/lib/api";
 import { API, queryKeys } from "@/lib/constants";
-import type { ApiKeyStatus, ProviderInfo, LocalProviderStatus } from "@/types/usage";
+import type { ProviderInfo, LocalProviderStatus } from "@/types/usage";
 
 interface OpenAISubscriptionStatus {
   is_connected: boolean;
@@ -30,14 +30,9 @@ export function useAutoDetectProvider(): { hasProvider: boolean } {
   const settingsHydrated = useSettingsHasHydrated();
   const authHydrated = useAuthHasHydrated();
 
-  const { data: keyStatus } = useQuery({
-    queryKey: queryKeys.apiKeyStatus,
-    queryFn: () => api.get<ApiKeyStatus>(API.CONFIG.API_KEY),
-  });
-
-  const { data: providers } = useQuery({
-    queryKey: queryKeys.providers,
-    queryFn: () => api.get<ProviderInfo[]>(API.CONFIG.PROVIDERS),
+  const { data: customEndpoints } = useQuery({
+    queryKey: queryKeys.customEndpoints,
+    queryFn: () => api.get<ProviderInfo[]>(API.CONFIG.CUSTOM_ENDPOINTS),
   });
 
   const { data: localStatus } = useQuery({
@@ -57,7 +52,7 @@ export function useAutoDetectProvider(): { hasProvider: boolean } {
   });
 
   const ollamaConnected = !!ollamaRuntimeStatus?.running;
-  const hasAnyDirectProvider = (providers ?? []).some((p) => p.is_configured);
+  const hasCustomEndpoint = (customEndpoints ?? []).some((p) => p.is_configured);
 
   useEffect(() => {
     if (!settingsHydrated || !authHydrated) return;
@@ -65,14 +60,13 @@ export function useAutoDetectProvider(): { hasProvider: boolean } {
     if (openaiSubStatus?.is_connected) setActiveProvider("chatgpt");
     else if (isConnected) setActiveProvider("openyak");
     else if (localStatus?.is_connected) setActiveProvider("local");
-    else if (keyStatus?.is_configured || hasAnyDirectProvider) setActiveProvider("byok");
+    else if (hasCustomEndpoint) setActiveProvider("custom");
     else if (ollamaConnected) setActiveProvider("ollama");
   }, [
     activeProvider,
     openaiSubStatus?.is_connected,
     isConnected,
-    keyStatus?.is_configured,
-    hasAnyDirectProvider,
+    hasCustomEndpoint,
     localStatus?.is_connected,
     ollamaConnected,
     setActiveProvider,

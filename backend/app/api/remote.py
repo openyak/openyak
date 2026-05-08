@@ -266,16 +266,16 @@ async def provider_info(request: Request) -> dict:
     registry = getattr(request.app.state, "provider_registry", None)
     providers = list(registry._providers.keys()) if registry else []
 
-    # Determine the "primary" provider: prefer subscription over API-key
+    # Determine the "primary" provider: prefer subscription, then OpenYak Cloud proxy
     primary = None
     if "openai-subscription" in providers:
         primary = "chatgpt"
-    elif "openrouter" in providers:
-        primary = "openrouter"
+    elif "openyak-proxy" in providers:
+        primary = "openyak"
 
     return {
-        "providers": providers,  # e.g. ["openrouter", "openai-subscription"]
-        "primary": primary,  # "chatgpt" | "openrouter" | null
+        "providers": providers,  # e.g. ["openyak-proxy", "openai-subscription"]
+        "primary": primary,  # "chatgpt" | "openyak" | null
     }
 
 

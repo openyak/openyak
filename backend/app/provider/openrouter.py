@@ -174,8 +174,9 @@ class OpenRouterProvider(OpenAICompatProvider):
             )
 
         # Inject platform free virtual models only on the OpenYak proxy instance.
-        # User BYOK OpenRouter instances must not surface "openyak/best-free" —
-        # it's a platform-sponsored virtual model, not a real OpenRouter model.
+        # Direct OpenRouter instances (e.g. test fixtures hitting api.openrouter.ai)
+        # must not surface "openyak/best-free" — it's a platform-sponsored virtual
+        # model, not a real OpenRouter model.
         if self._provider_id == "openyak-proxy":
             models_by_id = {m.id: m for m in models}
             for virtual_id, (real_id, display_name) in PLATFORM_FREE_MODELS.items():

@@ -233,40 +233,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     asyncio.create_task(_models_dev_refresh_loop())
 
-    # Auto-register BYOK providers (OpenAI, Anthropic, Gemini, Groq, etc.)
-    from app.provider.catalog import PROVIDER_CATALOG
+    # Auto-register Custom Endpoints (user-defined OpenAI-compatible servers)
+    from app.config import get_custom_endpoints
     from app.provider.factory import create_provider as create_desktop_provider
 
     disabled = {s.strip() for s in settings.disabled_providers.split(",") if s.strip()}
 
-    byok_registered = 0
     should_refresh_models = False
-    for pid, pdef in PROVIDER_CATALOG.items():
-        if pid in disabled:
-            continue
-        api_key = getattr(settings, pdef.settings_key, "")
-        if not api_key:
-            continue
-        try:
-            # Azure needs a user-provided base_url
-            extra_kwargs: dict[str, str] = {}
-            if pdef.kind == "openai_compat_azure":
-                azure_url = getattr(settings, "azure_openai_base_url", "")
-                if not azure_url:
-                    logger.warning("Azure API key set but OPENYAK_AZURE_OPENAI_BASE_URL is missing — skipping")
-                    continue
-                extra_kwargs["base_url"] = azure_url
-
-            provider = create_desktop_provider(pid, api_key, **extra_kwargs)
-            registry.register(provider)
-            byok_registered += 1
-            should_refresh_models = True
-            logger.info("Registered BYOK provider: %s", pid)
-        except Exception as e:
-            logger.warning("Failed to register provider %s: %s", pid, e)
-
-    # Auto-register custom endpoints
-    from app.config import get_custom_endpoints
     for ce in get_custom_endpoints(settings):
         if not ce.get("enabled", True):
             continue
@@ -276,7 +249,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 continue
             provider = create_desktop_provider(pid, ce.get("api_key", ""), base_url=ce.get("base_url"))
             registry.register(provider)
-            byok_registered += 1
             should_refresh_models = True
             logger.info("Registered custom provider: %s (%s)", pid, ce.get("name"))
         except Exception as e:

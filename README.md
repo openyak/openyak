@@ -127,19 +127,9 @@ Finally, write a follow-up email I can send to the team directly.
 
 | Provider | Access | Notes |
 |----------|--------|-------|
-| OpenRouter | Built-in | Free models and premium models |
-| OpenAI | BYOK | Bring your own API key |
-| Anthropic | BYOK | Bring your own API key |
-| Google | BYOK | Gemini models |
-| DeepSeek | BYOK | Direct provider key |
-| Groq | BYOK | Fast hosted inference |
-| Mistral | BYOK | Direct provider key |
-| xAI | BYOK | Grok models |
-| Qwen | BYOK | Direct provider key |
-| Kimi | BYOK | Moonshot models |
-| MiniMax | BYOK | Direct provider key |
-| Zhipu | BYOK | Direct provider key |
-| ChatGPT | Subscription | Use an existing ChatGPT Plus, Pro, Team, or Enterprise plan when available |
+| OpenYak Cloud | Built-in | Free tokens included; buy credits for premium models |
+| ChatGPT | Subscription | Use an existing ChatGPT Plus, Pro, Team, or Enterprise plan |
+| Custom Endpoint | Self-host | Point at any OpenAI-compatible base URL (your gateway, vLLM, LiteLLM, etc.) |
 
 ### Local
 

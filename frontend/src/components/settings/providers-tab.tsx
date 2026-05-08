@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Eye, EyeOff, X, Check, Loader2, AlertCircle, LogOut, CreditCard, Mail, RotateCw, Cpu, Server, Plug } from "lucide-react";
+import { Eye, EyeOff, Check, Loader2, AlertCircle, LogOut, CreditCard, Mail, RotateCw, Cpu, Server, Plug } from "lucide-react";
 import { OpenYakLogo } from "@/components/ui/openyak-logo";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -15,7 +15,7 @@ import { errorToMessage } from "@/lib/errors";
 import { API, IS_DESKTOP, queryKeys } from "@/lib/constants";
 import { desktopAPI } from "@/lib/tauri-api";
 import { useModels } from "@/hooks/use-models";
-import type { ApiKeyStatus, ProviderInfo, LocalProviderStatus } from "@/types/usage";
+import type { ProviderInfo, LocalProviderStatus } from "@/types/usage";
 import type { ModelInfo } from "@/types/model";
 import { OllamaPanel } from "@/components/settings/ollama-panel";
 
@@ -40,7 +40,7 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
   const { activeProvider, setActiveProvider } = useSettingsStore();
   const authStore = useAuthStore();
 
-  type ProviderMode = "openyak" | "byok" | "chatgpt" | "ollama" | "local" | "custom";
+  type ProviderMode = "openyak" | "chatgpt" | "ollama" | "local" | "custom";
   const [viewingProvider, setViewingProvider] = useState<ProviderMode>(
     () => (activeProvider as ProviderMode) ?? "openyak"
   );
@@ -88,7 +88,7 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
     await syncOpenYakAccountToBackend(proxyUrl, tokens.access_token, tokens.refresh_token);
     authStore.setAuth({ proxyUrl, accessToken: tokens.access_token, refreshToken: tokens.refresh_token, user });
     setActiveProvider("openyak");
-    qc.invalidateQueries({ queryKey: queryKeys.apiKeyStatus });
+    qc.invalidateQueries({ queryKey: queryKeys.customEndpoints });
     qc.invalidateQueries({ queryKey: queryKeys.models });
     setEmailInput(""); setPasswordInput(""); setCodeInput(""); setVerificationStep(false);
   };
@@ -124,12 +124,11 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
     onSuccess: () => setCodeInput(""),
   });
 
-  const { data: keyStatus } = useQuery({ queryKey: queryKeys.apiKeyStatus, queryFn: () => api.get<ApiKeyStatus>(API.CONFIG.API_KEY) });
-
-  // Multi-provider BYOK status
-  const { data: providers } = useQuery({
-    queryKey: queryKeys.providers,
-    queryFn: () => api.get<ProviderInfo[]>(API.CONFIG.PROVIDERS),
+  // Custom Endpoint list (the only remaining configurable provider catalog
+  // after v2.0.0 — BYOK was removed).
+  const { data: customEndpoints } = useQuery({
+    queryKey: queryKeys.customEndpoints,
+    queryFn: () => api.get<ProviderInfo[]>(API.CONFIG.CUSTOM_ENDPOINTS),
   });
 
   const { data: localStatus } = useQuery({
@@ -150,8 +149,6 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
       setActiveProvider("openyak");
     } else if (openaiSubStatus?.is_connected) {
       setActiveProvider("chatgpt");
-    } else if (keyStatus?.is_configured || (providers ?? []).some((p) => p.is_configured)) {
-      setActiveProvider("byok");
     } else {
       setActiveProvider(null);
     }
@@ -159,9 +156,6 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
 
   const pickModelForMode = (mode: ProviderMode, models: ModelInfo[] | undefined) => {
     if (!models || models.length === 0) return null;
-    if (mode === "byok") {
-      return models.find((m) => !["openyak-proxy", "openai-subscription", "ollama"].includes(m.provider_id)) ?? null;
-    }
     if (mode === "openyak") {
       return models.find((m) => m.provider_id === "openyak-proxy") ?? null;
     }
@@ -201,60 +195,18 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
       qc.invalidateQueries({ queryKey: queryKeys.openyakAccount });
       if (activeProvider === "openyak") {
         if (openaiSubStatus?.is_connected) setActiveProvider("chatgpt");
-        else if (keyStatus?.is_configured) setActiveProvider("byok");
         else setActiveProvider(null);
       }
     },
   });
 
-  // Per-provider key input state and mutations
+  // Custom Endpoint state + mutations (only remaining BYOK-style flow).
   const [providerKeyInputs, setProviderKeyInputs] = useState<Record<string, string>>({});
   const [providerBaseUrlInputs, setProviderBaseUrlInputs] = useState<Record<string, string>>({});
   const [showProviderKey, setShowProviderKey] = useState<Record<string, boolean>>({});
   const [providerMutatingId, setProviderMutatingId] = useState<string | null>(null);
   const [providerError, setProviderError] = useState<Record<string, string>>({});
   const [customEndpointName, setCustomEndpointName] = useState<string>("");
-
-  const updateProviderKey = useMutation({
-    mutationFn: async ({ id, apiKey, baseUrl }: { id: string; apiKey: string; baseUrl?: string }) => {
-      setProviderMutatingId(id);
-      return api.post<ProviderInfo>(API.CONFIG.PROVIDER_KEY(id), { api_key: apiKey, base_url: baseUrl });
-    },
-    onSuccess: (_data, { id }) => {
-      setProviderKeyInputs((prev) => ({ ...prev, [id]: "" }));
-      setProviderError((prev) => { const next = { ...prev }; delete next[id]; return next; });
-      setProviderMutatingId(null);
-      activateProviderMode("byok");
-      qc.invalidateQueries({ queryKey: queryKeys.providers });
-      qc.invalidateQueries({ queryKey: queryKeys.models });
-    },
-    onError: (err, { id }) => {
-      setProviderMutatingId(null);
-      const detail = errorToMessage(err, t('failedSaveKey'));
-      setProviderError((prev) => ({ ...prev, [id]: detail }));
-    },
-  });
-
-  const deleteProviderKey = useMutation({
-    mutationFn: async (id: string) => {
-      setProviderMutatingId(id);
-      return api.delete<ProviderInfo>(API.CONFIG.PROVIDER_KEY(id));
-    },
-    onSuccess: () => {
-      setProviderMutatingId(null);
-      qc.invalidateQueries({ queryKey: queryKeys.providers });
-      qc.invalidateQueries({ queryKey: queryKeys.models });
-    },
-    onError: () => { setProviderMutatingId(null); },
-  });
-
-  const toggleProvider = useMutation({
-    mutationFn: (id: string) => api.post<ProviderInfo>(API.CONFIG.PROVIDER_TOGGLE(id)),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.providers });
-      qc.invalidateQueries({ queryKey: queryKeys.models });
-    },
-  });
 
   const createCustomEndpoint = useMutation({
     mutationFn: async ({ name, apiKey, baseUrl }: { name: string; apiKey?: string; baseUrl: string }) => {
@@ -267,7 +219,7 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
       setCustomEndpointName("");
       setProviderError((prev) => { const next = { ...prev }; delete next["custom_new"]; return next; });
       setProviderMutatingId(null);
-      qc.invalidateQueries({ queryKey: queryKeys.providers });
+      qc.invalidateQueries({ queryKey: queryKeys.customEndpoints });
       qc.invalidateQueries({ queryKey: queryKeys.models });
     },
     onError: (err) => {
@@ -283,7 +235,7 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
     },
     onSuccess: () => {
       setProviderMutatingId(null);
-      qc.invalidateQueries({ queryKey: queryKeys.providers });
+      qc.invalidateQueries({ queryKey: queryKeys.customEndpoints });
       qc.invalidateQueries({ queryKey: queryKeys.models });
     },
     onError: () => { setProviderMutatingId(null); },
@@ -301,7 +253,7 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
     },
     onSuccess: () => {
       setProviderMutatingId(null);
-      qc.invalidateQueries({ queryKey: queryKeys.providers });
+      qc.invalidateQueries({ queryKey: queryKeys.customEndpoints });
       qc.invalidateQueries({ queryKey: queryKeys.models });
     },
     onError: (err, { id }) => {
@@ -347,7 +299,6 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
       qc.invalidateQueries({ queryKey: queryKeys.models });
       if (activeProvider === "chatgpt") {
         if (authStore.isConnected) setActiveProvider("openyak");
-        else if (keyStatus?.is_configured) setActiveProvider("byok");
         else setActiveProvider(null);
       }
     },
@@ -425,11 +376,10 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
       <div className="grid grid-cols-3 gap-2">
         {([
           { mode: "openyak" as ProviderMode, label: t('openyakAccount'), icon: Eye, connected: authStore.isConnected },
-          { mode: "byok" as ProviderMode, label: t('ownApiKey'), icon: Eye, connected: !!keyStatus?.is_configured || (providers ?? []).some((p) => p.is_configured && !p.id.startsWith("custom_")) },
           { mode: "chatgpt" as ProviderMode, label: t('chatgptSubscription'), icon: CreditCard, connected: !!openaiSubStatus?.is_connected },
           { mode: "ollama" as ProviderMode, label: "Ollama", icon: Cpu, connected: ollamaConnected },
           { mode: "local" as ProviderMode, label: t('localProvider'), icon: Server, connected: !!localStatus?.is_connected },
-          { mode: "custom" as ProviderMode, label: t('customEndpoint'), icon: Plug, connected: (providers ?? []).some(p => p.id.startsWith("custom_") && p.is_configured) },
+          { mode: "custom" as ProviderMode, label: t('customEndpoint'), icon: Plug, connected: (customEndpoints ?? []).some(p => p.is_configured) },
         ]).map(({ mode, label, icon: Icon, connected }) => (
           <button
             key={mode}
@@ -502,94 +452,6 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
               {loginMutation.isError && <div className="flex items-center gap-1.5 text-xs text-[var(--color-destructive)]"><AlertCircle className="h-3.5 w-3.5 shrink-0" /><span>{errorToMessage(loginMutation.error, loginMutation.error instanceof ProxyApiError ? t('authFailed') : t('connectionFailed'))}</span></div>}
             </div>
           )}
-        </div>
-      )}
-
-      {/* Own API Key config */}
-      {viewingProvider === "byok" && (
-        <div className="space-y-4">
-          <p className="text-xs text-[var(--text-secondary)]">{t('byokDesc')}</p>
-
-          {/* All BYOK providers (OpenRouter, OpenAI, Anthropic, Gemini, etc.) */}
-          {(providers ?? []).filter(p => !p.id.startsWith("custom_")).map((p) => (
-            <div key={p.id} className={`rounded-lg border p-3 space-y-2 transition-opacity ${
-              p.is_configured && !p.enabled ? "border-[var(--border-default)] opacity-50" : "border-[var(--border-default)]"
-            }`}>
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-[var(--text-primary)]">{p.name}</span>
-                <div className="flex items-center gap-2">
-                  {p.is_configured && p.enabled && (
-                    <span className="text-ui-3xs text-[var(--text-tertiary)]">{p.model_count} {t('providerModels')}</span>
-                  )}
-                  {p.is_configured && (
-                    <button
-                      type="button"
-                      onClick={() => toggleProvider.mutate(p.id)}
-                      disabled={toggleProvider.isPending}
-                      className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${
-                        p.enabled ? "bg-[var(--color-success)]" : "bg-[var(--surface-tertiary)]"
-                      }`}
-                      title={p.enabled ? t('disableProvider') : t('enableProvider')}
-                    >
-                      <span className={`pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white shadow-sm transition-transform ${
-                        p.enabled ? "translate-x-3" : "translate-x-0"
-                      }`} />
-                    </button>
-                  )}
-                </div>
-              </div>
-              {p.is_configured && (
-                <div className="flex items-center gap-2 text-xs">
-                  <Check className="h-3.5 w-3.5 text-[var(--color-success)]" />
-                  <span className="text-[var(--text-secondary)] font-mono">{p.masked_key}</span>
-                  <button
-                    onClick={() => deleteProviderKey.mutate(p.id)}
-                    disabled={providerMutatingId === p.id}
-                    className="ml-1 text-[var(--text-tertiary)] hover:text-[var(--color-destructive)] transition-colors"
-                    title={t('removeApiKey')}
-                  >
-                    {providerMutatingId === p.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
-                  </button>
-                </div>
-              )}
-              <div className="flex items-start gap-2">
-                <div className="flex-1 space-y-2">
-                  <div className="relative">
-                    <Input
-                      type={showProviderKey[p.id] ? "text" : "password"}
-                      value={providerKeyInputs[p.id] ?? ""}
-                      onChange={(e) => setProviderKeyInputs((prev) => ({ ...prev, [p.id]: e.target.value }))}
-                      placeholder={t(`providerKeyPlaceholder_${p.id}`, { defaultValue: `${p.name} API key` })}
-                      className="pr-8 font-mono text-xs"
-                      autoComplete="one-time-code"
-                      data-form-type="other"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowProviderKey((prev) => ({ ...prev, [p.id]: !prev[p.id] }))}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
-                    >
-                      {showProviderKey[p.id] ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-                    </button>
-                  </div>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => updateProviderKey.mutate({ id: p.id, apiKey: providerKeyInputs[p.id] ?? "" })}
-                  disabled={!(providerKeyInputs[p.id] ?? "").trim() || providerMutatingId === p.id}
-                >
-                  {providerMutatingId === p.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : t('save')}
-                </Button>
-              </div>
-              {providerError[p.id] && (
-                <div className="flex items-center gap-1.5 text-xs text-[var(--color-destructive)]">
-                  <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                  <span>{providerError[p.id]}</span>
-                </div>
-              )}
-            </div>
-          ))}
         </div>
       )}
 
@@ -692,7 +554,7 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
 
       {/* Custom OpenAI-compatible endpoints */}
       {viewingProvider === "custom" && (() => {
-        const customProviders = providers?.filter(p => p.id.startsWith("custom_")) || [];
+        const customProviders = customEndpoints ?? [];
         return (
           <div className="space-y-6">
             <p className="text-xs text-[var(--text-secondary)]">{t('customEndpointDesc')}</p>

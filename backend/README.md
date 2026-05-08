@@ -12,7 +12,8 @@ pip install -e ".[dev]"
 
 # 2. Configure environment
 cp .env.example .env
-# Edit .env — set OPENYAK_OPENROUTER_API_KEY
+# Edit .env — set OPENYAK_OPENROUTER_API_KEY only if you plan to run the
+# integration test suite (production paths no longer read it).
 
 # 3. Start the server
 uvicorn app.main:app --reload
@@ -54,16 +55,13 @@ app/
 │   ├── retry.py         #   Exponential backoff retry
 │   └── title.py         #   Auto-generate session titles
 │
-├── provider/            # LLM providers (21 BYOK + Ollama + ChatGPT subscription)
+├── provider/            # LLM providers (OpenYak Cloud + ChatGPT subscription + Custom Endpoint)
 │   ├── base.py          #   BaseProvider ABC
 │   ├── openai_compat.py #   OpenAI-compatible base class
-│   ├── openrouter.py    #   OpenRouter (primary provider, reasoning model support)
+│   ├── openrouter.py    #   OpenRouter wrapper (used by OpenYak Cloud proxy)
 │   ├── ollama.py        #   Ollama local LLM (extends OpenAI-compat)
-│   ├── anthropic_provider.py # Native Anthropic SDK provider
-│   ├── gemini_provider.py #  Native Google Gemini SDK provider
-│   ├── generic_openai.py #   Generic OpenAI-compatible provider (BYOK)
-│   ├── catalog.py       #   Provider catalog (21 BYOK provider definitions)
-│   ├── factory.py       #   Provider factory (creates providers from catalog)
+│   ├── generic_openai.py #   Generic OpenAI-compatible provider (Custom Endpoint)
+│   ├── factory.py       #   Custom Endpoint factory
 │   ├── openai_oauth.py  #   ChatGPT subscription OAuth
 │   ├── openai_subscription.py # ChatGPT subscription provider
 │   ├── proxy_auth.py    #   OpenYak Cloud proxy auth
@@ -247,35 +245,15 @@ Each tool can be set to `allow`, `deny`, or `ask` (prompts user in UI).
 
 ## LLM Providers
 
-21 BYOK providers + Ollama local + ChatGPT subscription:
+OpenYak Cloud + ChatGPT subscription + Custom Endpoint + local options:
 
 | Provider | Type | Notes |
 |----------|------|-------|
-| OpenRouter | Aggregator | Primary provider, 100+ models, reasoning token support |
+| OpenYak Cloud | Built-in proxy | OpenRouter-backed; weekly free tokens + paid credits |
+| ChatGPT Subscription | OAuth | Connect existing ChatGPT Plus/Pro/Team subscription |
+| Custom Endpoint | Self-host | OpenAI-compatible base URL — bring your own gateway, vLLM, LiteLLM, etc. |
 | Ollama | Local | Managed binary lifecycle, auto-download, pre-warming |
-| ChatGPT Subscription | OAuth | Connect existing ChatGPT Plus/Team subscription |
-| OpenAI | BYOK | Direct API key |
-| Anthropic | BYOK (native SDK) | Claude models via Anthropic SDK |
-| Google Gemini | BYOK (native SDK) | Gemini models via Google GenAI SDK |
-| Groq | BYOK | Fast inference |
-| DeepSeek | BYOK | DeepSeek V3/R1 |
-| Mistral | BYOK | Mistral/Mixtral models |
-| xAI | BYOK | Grok models |
-| Together AI | BYOK | Open-source model hosting |
-| DeepInfra | BYOK | |
-| Cerebras | BYOK | Ultra-fast inference |
-| Cohere | BYOK | Command R+ |
-| Perplexity | BYOK | Search-augmented models |
-| Fireworks AI | BYOK | |
-| Azure OpenAI | BYOK | Enterprise Azure deployment |
-| Qwen (通义千问) | BYOK | Alibaba DashScope |
-| Kimi (月之暗面) | BYOK | Moonshot |
-| MiniMax | BYOK | |
-| ZhipuAI (智谱) | BYOK | GLM models |
-| SiliconFlow (硅基流动) | BYOK | |
-| Xiaomi MiMo | BYOK | |
-
-All BYOK provider keys follow the pattern `OPENYAK_{PROVIDER}_API_KEY`.
+| Local Provider | Local | Pre-configured `OPENYAK_LOCAL_BASE_URL` for an OpenAI-compatible local server |
 
 ## Usage Examples
 
@@ -305,9 +283,7 @@ curl http://localhost:8000/api/agents
 
 - **Python 3.12+** / FastAPI / Pydantic v2
 - **SQLAlchemy** (async) + SQLite WAL
-- **OpenAI SDK** → OpenRouter (reasoning token support)
-- **Anthropic SDK** → native Anthropic provider
-- **Google GenAI SDK** → native Gemini provider
+- **OpenAI SDK** → OpenRouter (powers OpenYak Cloud + Custom Endpoint)
 - **MCP SDK** → Model Context Protocol client (optional)
 - **SSE** resumable streaming
 - **ULID** primary keys
