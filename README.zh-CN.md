@@ -6,7 +6,7 @@
   <a href="https://github.com/openyak/openyak/stargazers"><img src="https://img.shields.io/github/stars/openyak/openyak?style=flat-square" alt="GitHub Stars" /></a>
   <a href="https://github.com/openyak/openyak/blob/main/LICENSE"><img src="https://img.shields.io/github/license/openyak/openyak?style=flat-square" alt="License" /></a>
   <a href="https://github.com/openyak/openyak/releases/latest"><img src="https://img.shields.io/github/v/release/openyak/openyak?style=flat-square" alt="Latest Release" /></a>
-  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-blue?style=flat-square" alt="Platform: macOS | Windows | Linux" />
+  <img src="https://img.shields.io/badge/platform-macOS-blue?style=flat-square" alt="Platform: macOS" />
   <a href="https://github.com/openyak/openyak/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome" /></a>
 </p>
 
@@ -28,8 +28,8 @@ OpenYak 不是只用来问一句话的聊天框，而是为真实办公动线设
 
 - **直接处理真实文件。** 上传 DOCX、XLSX、PPTX、PDF、CSV 和本地项目上下文，生成 brief、表格、follow-up、计划和可复用 artifact。
 - **同一个线程走完整流程。** 先分析文件，再继续生成 RACI、follow-up 邮件、会议 agenda，不需要反复重讲背景。
-- **自由选择模型。** 使用免费模型、自带 API Key、接入 ChatGPT 订阅，或通过 [Ollama](https://ollama.com) 完全本地运行。
-- **默认本地优先。** 文件、对话、记忆和生成结果都存储在本机。使用云端模型时，只会直接请求你选择的模型提供商。
+- **在 macOS 本地运行模型。** OpenYak v2 围绕 Apple Silicon 上的 [Rapid-MLX](https://github.com/raullenchai/Rapid-MLX) 构建——通过 Homebrew 或 pip 安装一次，然后让 OpenYak 指向 `http://localhost:8000/v1`。需要其他推理服务，使用 Custom Endpoint 模式。
+- **默认本地优先。** 文件、对话、记忆和生成结果都存储在本机。v2 没有托管账户、没有云端代理——模型调用直接发给你配置的端点。
 - **可以从手机访问桌面 AI。** 开启远程访问后扫码连接，通过安全 tunnel 把任务发给桌面端执行。
 
 ## 它解决什么问题
@@ -97,21 +97,20 @@ OpenYak 可以在同一个线程里综合多份文件，并在右侧 artifact pa
 
 | 平台 | 架构 | 格式 |
 |------|------|------|
-| macOS | Apple Silicon / Intel | `.dmg`, `.app` |
-| Windows | x64 | `.exe` 安装包 |
-| Linux | x64 | `.deb`, `.rpm` |
+| macOS | Apple Silicon | `.dmg`, `.app` |
 
 > [下载最新版本](https://github.com/openyak/openyak/releases/latest) 或访问 [open-yak.com/download](https://open-yak.com/download/)。
 >
-> Linux 用户可以查看 [LINUX.md](LINUX.md) 了解依赖、安装和排障说明。
+> v2.0.0 **仅支持 macOS（Apple Silicon）**。Windows 和 Linux 构建已被取消——背景见 [ADR-0011](docs/adr/0011-v2-macos-only-rapid-mlx-pivot.md)。这两个平台的 v1.x 安装包仍保留在 [releases 页](https://github.com/openyak/openyak/releases) 但不再更新。
 
 ## 快速开始
 
-1. **安装 OpenYak。** 下载适合你系统的安装包。
-2. **连接模型。** 使用免费云端模型、自带 API Key、接入 ChatGPT 订阅，或连接本地 Ollama。
-3. **新建会话并上传真实文件。**
-4. **直接说你要的交付物。** 比如 brief、行动计划、RACI、邮件、表格或 artifact。
-5. **检查结果并继续追问。** 在同一个线程里继续从分析推进到执行。
+1. **安装 OpenYak。** 下载最新的 macOS 版本。
+2. **安装 [Rapid-MLX](https://github.com/raullenchai/Rapid-MLX)。** `brew install raullenchai/rapid-mlx/rapid-mlx` 或 `pip install rapid-mlx`，然后在终端运行 `rapid-mlx serve <模型>`。或者跳过这一步，使用 Custom Endpoint 模式指向其他 OpenAI 兼容服务。
+3. **打开 设置 → Providers** 并确认 OpenYak 检测到本地端点 `http://localhost:8000/v1`。
+4. **新建会话并上传真实文件。**
+5. **直接说你要的交付物。** 比如 brief、行动计划、RACI、邮件、表格或 artifact。
+6. **检查结果并继续追问。** 在同一个线程里继续从分析推进到执行。
 
 示例 prompt：
 
@@ -123,27 +122,12 @@ OpenYak 可以在同一个线程里综合多份文件，并在右侧 artifact pa
 
 ## 支持的模型提供商
 
-### 云端与订阅
+OpenYak v2 提供两种模型接入方式。没有托管账户、没有云端代理、不内置任何云服务商目录——背景见 [ADR-0011](docs/adr/0011-v2-macos-only-rapid-mlx-pivot.md)。
 
-| 提供商 | 接入方式 | 说明 |
-|--------|----------|------|
-| OpenRouter | 内置 | 免费模型和高级模型 |
-| OpenAI | BYOK | 使用自己的 API Key |
-| Anthropic | BYOK | 使用自己的 API Key |
-| Google | BYOK | Gemini 模型 |
-| DeepSeek | BYOK | 直连提供商密钥 |
-| Groq | BYOK | 高速托管推理 |
-| Mistral | BYOK | 直连提供商密钥 |
-| xAI | BYOK | Grok 模型 |
-| Qwen | BYOK | 直连提供商密钥 |
-| Kimi | BYOK | Moonshot 模型 |
-| MiniMax | BYOK | 直连提供商密钥 |
-| 智谱 | BYOK | 直连提供商密钥 |
-| ChatGPT | 订阅 | 在可用时使用现有 ChatGPT Plus、Pro、Team 或 Enterprise 方案 |
-
-### 本地模型
-
-通过 [Ollama](https://ollama.com) 运行任意本地模型。OpenYak 会自动检测本地模型，也可以在无网络环境下工作。
+| 模式 | 说明 |
+|------|------|
+| Rapid-MLX（本地） | Apple Silicon 上的推荐运行时。通过 Homebrew 或 pip 安装；OpenYak 自动检测 CLI 并连接 `http://localhost:8000/v1`。 |
+| Custom Endpoint | 任何 OpenAI 兼容的 base URL——vLLM、llama.cpp server、自管理的 Ollama 实例、自建网关，或局域网内同事的 MLX 主机。 |
 
 ## 核心能力
 
@@ -153,7 +137,7 @@ OpenYak 可以在同一个线程里综合多份文件，并在右侧 artifact pa
 - **长上下文任务：** 从分析到计划再到 follow-up，不需要重新开始。
 - **远程访问：** 通过二维码和 Cloudflare Tunnel 从手机连接桌面端。
 - **自动化任务：** 定时清理、报告、文件整理和重复工作流。
-- **隐私控制：** 本地存储、BYOK、自带订阅和本地模型支持。
+- **隐私控制：** 本地存储、无托管账户，通过 Rapid-MLX 实现本地优先的模型服务。
 
 ## 开发者
 
@@ -180,25 +164,37 @@ npm run dev:all
 <details>
 <summary>我的数据会离开本机吗？</summary>
 
-文件、对话、记忆和生成的 artifact 都存储在本机。使用云端模型时，prompt 和相关上下文会直接发送给你选择的模型提供商。你也可以使用 Ollama 本地模型进行离线工作。
+文件、对话、记忆和生成的 artifact 都存储在本机。v2 没有托管账户和云端代理——模型调用直接发到你配置的端点（默认是本机的 Rapid-MLX，或你设置的任意 Custom Endpoint URL）。如果你指向一个远程端点，prompt 和上下文当然会发送过去。
 </details>
 
 <details>
 <summary>需要 OpenYak 账号吗？</summary>
 
-不需要。OpenYak 不强制要求注册账号。你可以使用免费模型、自带 provider key、连接订阅，或使用本地模型。
+不需要。v2 完全移除了托管账户。你只需要一个 OpenAI 兼容的模型端点供 OpenYak 接入——默认就是本地安装的 Rapid-MLX。
+</details>
+
+<details>
+<summary>之前的 OpenYak 免费额度 / 云端代理怎么处理？</summary>
+
+`api.open-yak.com` 上的托管代理将在 v2.0.0 发布后 30 天关闭。现有 v1 用户会收到应用内通知和包含迁移说明的邮件。v2 仅本地优先——背景见 [ADR-0011](docs/adr/0011-v2-macos-only-rapid-mlx-pivot.md)。
+</details>
+
+<details>
+<summary>Windows 和 Linux 怎么办？</summary>
+
+v2 仅支持 macOS（Apple Silicon）。Windows 和 Linux 的 v1.x 安装包仍保留在 [releases 页](https://github.com/openyak/openyak/releases) 但不再更新。背景见 [ADR-0011](docs/adr/0011-v2-macos-only-rapid-mlx-pivot.md)。
 </details>
 
 <details>
 <summary>和 ChatGPT 或 Claude.ai 有什么区别？</summary>
 
-OpenYak 运行在你的桌面上，围绕本地文件、artifact、工具和连续工作流设计。网页版聊天助手很适合问答，OpenYak 更像一个可以处理文件和重复办公任务的本地工作台。
+OpenYak 运行在你的 Mac 上，围绕本地文件、artifact、工具和连续工作流设计。网页版聊天助手很适合问答，OpenYak 更像一个可以处理文件和重复办公任务的本地工作台。
 </details>
 
 <details>
 <summary>可以离线使用吗？</summary>
 
-可以。安装 Ollama 并下载模型后，OpenYak 可以在不调用云端模型的情况下本地运行。
+可以。安装 Rapid-MLX，用 `rapid-mlx serve <模型>` 拉起一个模型，OpenYak 即可完全离线运行。
 </details>
 
 <details>
