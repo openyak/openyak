@@ -9,8 +9,8 @@
     "dev:backend": "cd backend && ./venv/bin/python -m uvicorn app.main:create_app --factory --reload --reload-dir app --host 0.0.0.0 --port 8000",
     "dev:all": "node scripts/dev-all.mjs",
     "dev:desktop": "node scripts/dev-desktop.mjs",
-    "build:frontend": "cd frontend && cross-env DESKTOP_BUILD=true NEXT_PUBLIC_DESKTOP_BUILD=true npm run build",
-    "build:backend": "cd backend && node -e \"const p=process.platform==='win32'?'venv/Scripts/pyinstaller':'venv/bin/pyinstaller';require('child_process').execSync(p+' openyak.spec --noconfirm',{stdio:'inherit'})\"",
+    "build:frontend": "cd frontend && DESKTOP_BUILD=true NEXT_PUBLIC_DESKTOP_BUILD=true npm run build",
+    "build:backend": "cd backend && ./venv/bin/pyinstaller openyak.spec --noconfirm",
     "sync:desktop-meta": "node scripts/sync-desktop-meta.mjs",
     "build:desktop": "npm run sync:desktop-meta && cd desktop-tauri && cargo tauri build",
     "preflight": "npm run preflight:ui",
@@ -18,7 +18,6 @@
   },
   "devDependencies": {
     "concurrently": "^9.1.0",
-    "cross-env": "^7.0.3",
     "esbuild": "^0.27.3",
     "typescript": "^5.7.0",
     "wait-on": "^8.0.0"
