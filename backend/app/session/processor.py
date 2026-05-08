@@ -42,7 +42,6 @@ from app.session.manager import (
 )
 from app.session.retry import (
     MAX_RETRIES,
-    is_auth_error,
     is_context_overflow,
     is_retryable,
     max_retries_for_error,
@@ -834,20 +833,6 @@ class SessionProcessor:
                 break
 
             except Exception as e:
-                if is_auth_error(e) and attempt == 0:
-                    _settings = get_settings()
-                    if _settings.proxy_refresh_token:
-                        from app.provider.proxy_auth import refresh_proxy_token
-
-                        refreshed = await refresh_proxy_token(_settings, sp.provider_registry)
-                        if refreshed:
-                            logger.info("Proxy token refreshed after 401, retrying stream")
-                            accumulated_text = ""
-                            accumulated_reasoning = ""
-                            tool_calls_in_step = []
-                            has_tool_calls = False
-                            continue
-
                 stream_error = e
                 retry_reason = is_retryable(e)
 

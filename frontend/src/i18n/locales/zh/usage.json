@@ -1,12 +1,7 @@
 {
   "title": "用量",
-  "freeDailyQuota": "每周免费额度",
-  "sameAsBillingQuota": "与账单页使用同一额度来源（每周五 12:00 UTC 重置）。",
   "overview": "概览",
   "keyInsights": "关键洞察",
-  "quotaRemaining": "本周剩余 {{remaining}} tokens",
-  "quotaHighUsage": "本周使用偏高：{{used}} / {{limit}}",
-  "resetsAtUtc": "每周五 12:00 UTC 重置",
   "dailyTrend": "每日趋势",
   "trendMetricCredits": "积分",
   "trendMetricTokens": "Tokens",

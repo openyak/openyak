@@ -1,12 +1,7 @@
 {
   "title": "Usage",
-  "freeDailyQuota": "Free Weekly Quota",
-  "sameAsBillingQuota": "Same quota source as Billing (resets every Friday at 12:00 UTC).",
   "overview": "Overview",
   "keyInsights": "Key Insights",
-  "quotaRemaining": "{{remaining}} tokens remaining this week",
-  "quotaHighUsage": "High usage: {{used}} / {{limit}} this week",
-  "resetsAtUtc": "Resets every Friday at 12:00 UTC",
   "dailyTrend": "Daily Trend",
   "trendMetricCredits": "Credits",
   "trendMetricTokens": "Tokens",

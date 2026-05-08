@@ -1,8 +1,8 @@
-"""Tests for app.tool.builtin.web_search — result parsing and formatting."""
+"""Tests for app.tool.builtin.web_search — DuckDuckGo result parsing."""
 
 from __future__ import annotations
 
-from app.tool.builtin.web_search import WebSearchTool, _parse_ddg_results
+from app.tool.builtin.web_search import _parse_ddg_results
 
 
 class TestParseDdgResults:
@@ -47,50 +47,3 @@ class TestParseDdgResults:
         '''
         results = _parse_ddg_results(html, 10)
         assert results[0]["title"] == "Bold Title"
-
-
-class TestFormatSerperResults:
-    def test_organic_results(self):
-        data = {"organic": [
-            {"title": "Result 1", "link": "https://a.com", "snippet": "Snip 1"},
-            {"title": "Result 2", "link": "https://b.com", "snippet": "Snip 2"},
-        ]}
-        billing = {"charged": True, "credits_deducted": 1, "daily_searches_used": 5, "daily_search_limit": 100}
-        result = WebSearchTool._format_serper_results("test", 10, data, billing)
-        assert result.success
-        assert "Result 1" in result.output
-        assert "Result 2" in result.output
-        assert result.metadata["count"] == 2
-
-    def test_knowledge_graph(self):
-        data = {
-            "knowledgeGraph": {"title": "Python", "type": "Language", "description": "A programming language"},
-            "organic": [{"title": "R1", "link": "https://a.com", "snippet": "S1"}],
-        }
-        billing = {}
-        result = WebSearchTool._format_serper_results("test", 10, data, billing)
-        assert "[Knowledge Graph] Python" in result.output
-
-    def test_no_results(self):
-        data = {"organic": []}
-        billing = {"charged": False, "credits_deducted": 0, "daily_searches_used": 0, "daily_search_limit": 100}
-        result = WebSearchTool._format_serper_results("test", 10, data, billing)
-        assert result.output == "No results found."
-        assert "charged" in result.metadata
-
-    def test_billing_meta(self):
-        data = {"organic": [{"title": "R1", "link": "https://a.com", "snippet": "S1"}]}
-        billing = {"charged": True, "credits_deducted": 2, "daily_searches_used": 10, "daily_search_limit": 50}
-        result = WebSearchTool._format_serper_results("test", 10, data, billing)
-        assert result.metadata["charged"] is True
-        assert result.metadata["credits_deducted"] == 2
-        assert result.metadata["daily_searches_used"] == 10
-
-    def test_respects_max_results_cap(self):
-        data = {"organic": [
-            {"title": f"R{i}", "link": f"https://{i}.com", "snippet": f"S{i}"}
-            for i in range(20)
-        ]}
-        billing = {}
-        result = WebSearchTool._format_serper_results("test", 3, data, billing)
-        assert result.metadata["count"] == 3

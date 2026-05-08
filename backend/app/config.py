@@ -49,11 +49,6 @@ class Settings(BaseSettings):
     # Disabled providers are not registered even if their API key is set.
     disabled_providers: str = ""  # OPENYAK_DISABLED_PROVIDERS
 
-    # --- OpenYak Cloud Proxy (billing mode) ---
-    proxy_url: str = ""  # e.g. "https://api.openyak.app" — when set, LLM calls go through proxy
-    proxy_token: str = ""  # JWT from OpenYak account login
-    proxy_refresh_token: str = ""  # Refresh token for auto-renewal
-
     # --- Database ---
     database_url: str = "sqlite+aiosqlite:///./data/openyak.db"
 

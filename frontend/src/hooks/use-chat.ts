@@ -4,12 +4,11 @@ import { useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { api, ApiError } from "@/lib/api";
+import { api } from "@/lib/api";
 import { API, queryKeys } from "@/lib/constants";
 import { getChatRoute } from "@/lib/routes";
 import { useChatStore } from "@/stores/chat-store";
 import { useSettingsStore } from "@/stores/settings-store";
-import { useBillingStore } from "@/stores/billing-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useActivityStore } from "@/stores/activity-store";
 import { useSSE } from "./use-sse";
@@ -149,19 +148,6 @@ export function useChat(currentSessionId?: string) {
       } catch (err) {
         console.error("Failed to start generation:", err);
         useChatStore.getState().reset();
-
-        // Show upgrade prompt for billing errors (proxied from OpenYak proxy)
-        if (err instanceof ApiError) {
-          if (err.status === 429) {
-            useBillingStore.getState().showUpgrade("quota_exceeded");
-            return false;
-          }
-          if (err.status === 402) {
-            useBillingStore.getState().showUpgrade("credits_required");
-            return false;
-          }
-        }
-
         toast.error("Failed to send message", { duration: 8000 });
         return false;
       }
@@ -322,18 +308,6 @@ export function useChat(currentSessionId?: string) {
       } catch (err) {
         console.error("Failed to edit and resend:", err);
         useChatStore.getState().reset();
-
-        if (err instanceof ApiError) {
-          if (err.status === 429) {
-            useBillingStore.getState().showUpgrade("quota_exceeded");
-            return false;
-          }
-          if (err.status === 402) {
-            useBillingStore.getState().showUpgrade("credits_required");
-            return false;
-          }
-        }
-
         toast.error("Failed to edit message");
         return false;
       }
