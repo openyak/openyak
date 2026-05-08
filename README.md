@@ -6,7 +6,7 @@
   <a href="https://github.com/openyak/openyak/stargazers"><img src="https://img.shields.io/github/stars/openyak/openyak?style=flat-square" alt="GitHub Stars" /></a>
   <a href="https://github.com/openyak/openyak/blob/main/LICENSE"><img src="https://img.shields.io/github/license/openyak/openyak?style=flat-square" alt="License" /></a>
   <a href="https://github.com/openyak/openyak/releases/latest"><img src="https://img.shields.io/github/v/release/openyak/openyak?style=flat-square" alt="Latest Release" /></a>
-  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-blue?style=flat-square" alt="Platform: macOS | Windows | Linux" />
+  <img src="https://img.shields.io/badge/platform-macOS-blue?style=flat-square" alt="Platform: macOS" />
   <a href="https://github.com/openyak/openyak/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome" /></a>
 </p>
 
@@ -98,12 +98,8 @@ Professional workflows include failure states. Upload errors and missing inputs 
 | Platform | Architecture | Formats |
 |----------|--------------|---------|
 | macOS | Apple Silicon / Intel | `.dmg`, `.app` |
-| Windows | x64 | `.exe` installer |
-| Linux | x64 | `.deb`, `.rpm` |
 
 > [Download the latest release](https://github.com/openyak/openyak/releases/latest) or visit [open-yak.com/download](https://open-yak.com/download/).
->
-> Linux users can also read [LINUX.md](LINUX.md) for requirements and troubleshooting.
 
 ## Get Started
 

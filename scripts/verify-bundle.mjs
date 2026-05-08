@@ -20,7 +20,7 @@
 import { existsSync, statSync, readdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { argv, env, exit, platform } from "node:process";
+import { argv, env, exit } from "node:process";
 import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -32,7 +32,7 @@ if (!existsSync(dist)) {
 }
 
 const internal = join(dist, "_internal");
-const exeName = platform === "win32" ? "openyak-backend.exe" : "openyak-backend";
+const exeName = "openyak-backend";
 
 /**
  * Each entry describes one required asset. `kind` is "file" | "dir"

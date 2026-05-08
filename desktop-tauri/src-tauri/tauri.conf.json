@@ -38,7 +38,8 @@
   "bundle": {
     "active": true,
     "targets": [
-      "nsis"
+      "dmg",
+      "app"
     ],
     "createUpdaterArtifacts": true,
     "icon": [
@@ -46,21 +47,11 @@
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
-      "icons/icon.ico",
       "icons/icon.png"
     ],
     "resources": {
       "../../backend/dist/openyak-backend": "backend",
       "../../backend/resources/nodejs": "nodejs"
-    },
-    "windows": {
-      "webviewInstallMode": {
-        "type": "embedBootstrapper"
-      },
-      "nsis": {
-        "installerIcon": "icons/icon.ico",
-        "installerHooks": "installer-hooks.nsh"
-      }
     },
     "macOS": {
       "minimumSystemVersion": "10.15",
