@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Eye, EyeOff, X, Check, Loader2, AlertCircle, LogOut, CreditCard, Mail, RotateCw, Cpu, Server, Plug } from "lucide-react";
+import { Eye, EyeOff, X, Check, Loader2, AlertCircle, LogOut, CreditCard, Mail, RotateCw, Server, Plug } from "lucide-react";
 import { OpenYakLogo } from "@/components/ui/openyak-logo";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -17,7 +17,6 @@ import { desktopAPI } from "@/lib/tauri-api";
 import { useModels } from "@/hooks/use-models";
 import type { ApiKeyStatus, ProviderInfo, LocalProviderStatus } from "@/types/usage";
 import type { ModelInfo } from "@/types/model";
-import { OllamaPanel } from "@/components/settings/ollama-panel";
 
 /** Backwards-compatible alias for callers that still expect ApiError-only narrowing. */
 function extractApiDetail(err: unknown, fallback: string): string {
@@ -40,7 +39,7 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
   const { activeProvider, setActiveProvider } = useSettingsStore();
   const authStore = useAuthStore();
 
-  type ProviderMode = "openyak" | "byok" | "chatgpt" | "ollama" | "local" | "custom";
+  type ProviderMode = "openyak" | "byok" | "chatgpt" | "local" | "custom";
   const [viewingProvider, setViewingProvider] = useState<ProviderMode>(
     () => (activeProvider as ProviderMode) ?? "openyak"
   );
@@ -160,16 +159,13 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
   const pickModelForMode = (mode: ProviderMode, models: ModelInfo[] | undefined) => {
     if (!models || models.length === 0) return null;
     if (mode === "byok") {
-      return models.find((m) => !["openyak-proxy", "openai-subscription", "ollama"].includes(m.provider_id)) ?? null;
+      return models.find((m) => !["openyak-proxy", "openai-subscription"].includes(m.provider_id)) ?? null;
     }
     if (mode === "openyak") {
       return models.find((m) => m.provider_id === "openyak-proxy") ?? null;
     }
     if (mode === "chatgpt") {
       return models.find((m) => m.provider_id === "openai-subscription") ?? null;
-    }
-    if (mode === "ollama") {
-      return models.find((m) => m.provider_id === "ollama") ?? null;
     }
     if (mode === "local") {
       return models.find((m) => m.provider_id === "local") ?? null;
@@ -413,10 +409,6 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
     onSuccess: () => { setCallbackUrlInput(""); stopOpenaiPolling(); setActiveProvider("chatgpt"); qc.invalidateQueries({ queryKey: queryKeys.models }); },
   });
 
-  interface OllamaRuntimeStatus { binary_installed: boolean; running: boolean; }
-  const { data: ollamaRuntimeStatus } = useQuery({ queryKey: ["ollamaRuntime"], queryFn: () => api.get<OllamaRuntimeStatus>(API.OLLAMA.STATUS) });
-  const ollamaConnected = !!ollamaRuntimeStatus?.running;
-
   return (
     <div className="space-y-6">
       <p className="text-xs text-[var(--text-secondary)]">{t('providerModeDesc')}</p>
@@ -427,7 +419,6 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
           { mode: "openyak" as ProviderMode, label: t('openyakAccount'), icon: Eye, connected: authStore.isConnected },
           { mode: "byok" as ProviderMode, label: t('ownApiKey'), icon: Eye, connected: !!keyStatus?.is_configured || (providers ?? []).some((p) => p.is_configured && !p.id.startsWith("custom_")) },
           { mode: "chatgpt" as ProviderMode, label: t('chatgptSubscription'), icon: CreditCard, connected: !!openaiSubStatus?.is_connected },
-          { mode: "ollama" as ProviderMode, label: "Ollama", icon: Cpu, connected: ollamaConnected },
           { mode: "local" as ProviderMode, label: t('localProvider'), icon: Server, connected: !!localStatus?.is_connected },
           { mode: "custom" as ProviderMode, label: t('customEndpoint'), icon: Plug, connected: (providers ?? []).some(p => p.id.startsWith("custom_") && p.is_configured) },
         ]).map(({ mode, label, icon: Icon, connected }) => (
@@ -629,8 +620,6 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
         </div>
       )}
 
-      {/* Ollama (Local LLM) config */}
-      {viewingProvider === "ollama" && <OllamaPanel />}
       {/* Local OpenAI-compatible endpoint */}
       {viewingProvider === "local" && (
         <div className="space-y-4">

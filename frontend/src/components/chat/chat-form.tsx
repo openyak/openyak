@@ -569,7 +569,6 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onStop, c
   );
   const modelCostHint = useMemo(() => {
     if (!selectedModelInfo) return null;
-    if (selectedModelInfo.provider_id === "ollama") return "Local";
     if (selectedModelInfo.provider_id === "openai-subscription") return "Included";
 
     const inputPrice = selectedModelInfo.pricing.prompt || 0;

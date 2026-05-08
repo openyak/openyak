@@ -71,7 +71,6 @@ body:
         - Backend (Provider / LLM)
         - Backend (MCP / Connectors)
         - Desktop (Tauri shell)
-        - Ollama (Local LLM)
 
   - type: textarea
     id: environment
@@ -82,7 +81,7 @@ body:
         - OS: macOS 15.3 / Windows 11 / Ubuntu 24.04
         - App version: 0.0.1
         - Mode: Desktop / Web
-        - Provider: OpenRouter / Ollama / ChatGPT
+        - Provider: Local API / Custom Endpoint
       render: markdown
 
   - type: textarea

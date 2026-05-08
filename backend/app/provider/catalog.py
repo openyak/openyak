@@ -7,7 +7,6 @@ OpenAI-compatible), and which Settings field holds their API key.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 
 @dataclass
@@ -23,8 +22,8 @@ class ProviderDef:
 
 
 # All providers that can be configured via direct API key (BYOK).
-# Ollama and OpenAI Subscription are NOT here — they have their own
-# dedicated registration flows in main.py and api/config.py.
+# OpenAI Subscription is NOT here — it has its own dedicated
+# registration flow in main.py and api/config.py.
 PROVIDER_CATALOG: dict[str, ProviderDef] = {
     "openrouter": ProviderDef(
         id="openrouter",

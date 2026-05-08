@@ -54,11 +54,10 @@ app/
 │   ├── retry.py         #   Exponential backoff retry
 │   └── title.py         #   Auto-generate session titles
 │
-├── provider/            # LLM providers (21 BYOK + Ollama + ChatGPT subscription)
+├── provider/            # LLM providers (21 BYOK + ChatGPT subscription)
 │   ├── base.py          #   BaseProvider ABC
 │   ├── openai_compat.py #   OpenAI-compatible base class
 │   ├── openrouter.py    #   OpenRouter (primary provider, reasoning model support)
-│   ├── ollama.py        #   Ollama local LLM (extends OpenAI-compat)
 │   ├── anthropic_provider.py # Native Anthropic SDK provider
 │   ├── gemini_provider.py #  Native Google Gemini SDK provider
 │   ├── generic_openai.py #   Generic OpenAI-compatible provider (BYOK)
@@ -69,10 +68,6 @@ app/
 │   ├── proxy_auth.py    #   OpenYak Cloud proxy auth
 │   ├── registry.py      #   ProviderRegistry
 │   └── tool_calling/    #   Tool calling adapters (native FC detection + prompt-based fallback)
-│
-├── ollama/              # Ollama runtime management
-│   ├── manager.py       #   Binary download, process lifecycle (start/stop/health)
-│   └── library.py       #   Model library (live search from ollama.com + local fallback)
 │
 ├── streaming/           # Resumable SSE streams
 │   ├── events.py        #   SSEEvent types + encoding
@@ -171,15 +166,6 @@ app/
 | POST | `/api/files/upload` | Upload files |
 | GET/POST | `/api/config` | Get/set app configuration |
 | GET | `/api/usage` | Token usage tracking |
-| GET | `/api/ollama/status` | Ollama runtime status (binary, running, version) |
-| POST | `/api/ollama/setup` | Download Ollama binary + start server (SSE progress) |
-| POST | `/api/ollama/start` | Start Ollama server |
-| POST | `/api/ollama/stop` | Stop Ollama server |
-| GET | `/api/ollama/models` | List locally installed Ollama models |
-| GET | `/api/ollama/models/library` | Browse model library (search, sort, paginate) |
-| POST | `/api/ollama/models/pull` | Download a model (SSE progress) |
-| DELETE | `/api/ollama/models/{name}` | Delete a local model |
-| DELETE | `/api/ollama/uninstall` | Remove Ollama binary + optional models |
 | | **Channels (OpenClaw)** | |
 | GET | `/api/channels/openclaw/status` | OpenClaw runtime status |
 | POST | `/api/channels/openclaw/setup` | Install OpenClaw binary (SSE progress) |
@@ -247,12 +233,11 @@ Each tool can be set to `allow`, `deny`, or `ask` (prompts user in UI).
 
 ## LLM Providers
 
-21 BYOK providers + Ollama local + ChatGPT subscription:
+21 BYOK providers + ChatGPT subscription:
 
 | Provider | Type | Notes |
 |----------|------|-------|
 | OpenRouter | Aggregator | Primary provider, 100+ models, reasoning token support |
-| Ollama | Local | Managed binary lifecycle, auto-download, pre-warming |
 | ChatGPT Subscription | OAuth | Connect existing ChatGPT Plus/Team subscription |
 | OpenAI | BYOK | Direct API key |
 | Anthropic | BYOK (native SDK) | Claude models via Anthropic SDK |
@@ -327,9 +312,6 @@ curl http://localhost:8000/api/agents
 | `OPENYAK_COMPACTION_AUTO` | Auto context compression | `true` |
 | `OPENYAK_DAILY_SEARCH_LIMIT` | Daily web search quota | `20` |
 | `OPENYAK_FTS_ENABLED` | Full-text search indexing | `true` |
-| `OPENYAK_OLLAMA_BASE_URL` | Ollama server URL (auto-set by setup) | `` |
-| `OPENYAK_OLLAMA_AUTO_START` | Auto-start managed Ollama on launch | `true` |
-| `OPENYAK_OLLAMA_LAST_MODEL` | Last-used model for startup pre-warming | `` |
 | `OPENYAK_OPENCLAW_ENABLED` | Enable OpenClaw IM bridge | `false` |
 | `OPENYAK_OPENCLAW_URL` | OpenClaw WebSocket URL | `ws://127.0.0.1:18789` |
 | `OPENYAK_PROXY_URL` | OpenYak Cloud proxy URL (billing mode) | `` |
