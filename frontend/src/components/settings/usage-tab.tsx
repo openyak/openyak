@@ -9,11 +9,9 @@ import {
   Clock,
   Hash,
   Timer,
-  AlertTriangle,
   Sparkles,
 } from "lucide-react";
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
 import {
   AreaChart,
   Area,
@@ -25,11 +23,8 @@ import {
 } from "recharts";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { OpenYakLogo } from "@/components/ui/openyak-logo";
 import { useUsage } from "@/hooks/use-usage";
 import { getChatRoute } from "@/lib/routes";
-import { proxyApi } from "@/lib/proxy-api";
-import { useAuthStore } from "@/stores/auth-store";
 import type { UsageStats, TokenBreakdown } from "@/types/usage";
 
 // --- Helpers ---
@@ -52,16 +47,6 @@ function formatTokens(count: number): string {
   return count.toLocaleString();
 }
 
-function formatQuotaTokens(count: number): string {
-  if (count === 0) return "0";
-  if (count >= 1_000_000) {
-    const value = (count / 1_000_000).toFixed(1);
-    return `${value.endsWith(".0") ? value.slice(0, -2) : value}M`;
-  }
-  if (count >= 1_000) return `${(count / 1_000).toFixed(0)}K`;
-  return count.toLocaleString();
-}
-
 function formatTime(seconds: number): string {
   if (seconds === 0) return "0s";
   if (seconds < 60) return `${seconds.toFixed(1)}s`;
@@ -77,13 +62,6 @@ function formatModelName(modelId: string): string {
 
 function tokenTotal(t: TokenBreakdown): number {
   return t.input + t.output + t.reasoning;
-}
-
-interface BalanceData {
-  credits: number;
-  usd_equivalent: number;
-  daily_free_tokens_used: number;
-  daily_free_token_limit: number;
 }
 
 type TrendMetric = "cost" | "tokens";
@@ -119,80 +97,16 @@ function SummaryCard({
   );
 }
 
-function FreeQuotaCard({
-  balance,
-  t,
-}: {
-  balance: BalanceData;
-  t: (key: string, options?: Record<string, unknown>) => string;
-}) {
-  const used = balance.daily_free_tokens_used;
-  const limit = balance.daily_free_token_limit;
-  const remaining = Math.max(0, limit - used);
-  const percent = limit > 0 ? Math.min(100, (used / limit) * 100) : 0;
-  const isHighUsage = percent >= 85;
-
-  return (
-    <div className="rounded-xl border border-[var(--border-default)] p-4 md:col-span-2">
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
-          <OpenYakLogo size={14} className="text-[var(--text-tertiary)]" />
-          <span className="text-xs text-[var(--text-tertiary)] uppercase tracking-wider">
-            {t("freeDailyQuota")}
-          </span>
-        </div>
-        <span className="text-ui-2xs text-[var(--text-secondary)] font-mono">
-          {formatQuotaTokens(used)} / {formatQuotaTokens(limit)}
-        </span>
-      </div>
-      <div className="w-full bg-[var(--surface-tertiary)] rounded-full h-2 mb-2">
-        <div
-          className="h-2 rounded-full transition-all"
-          style={{
-            width: `${percent}%`,
-            backgroundColor:
-              percent >= 90
-                ? "var(--color-destructive)"
-                : percent >= 70
-                  ? "var(--color-warning)"
-                  : "var(--brand-primary)",
-          }}
-        />
-      </div>
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-xs text-[var(--text-secondary)]">
-          {isHighUsage
-            ? t("quotaHighUsage", {
-                used: formatQuotaTokens(used),
-                limit: formatQuotaTokens(limit),
-              })
-            : t("quotaRemaining", { remaining: formatQuotaTokens(remaining) })}
-        </p>
-        <p className="text-ui-2xs text-[var(--text-tertiary)] whitespace-nowrap">
-          {t("resetsAtUtc")}
-        </p>
-      </div>
-    </div>
-  );
-}
-
 function KeyInsights({
   data,
-  balance,
   t,
 }: {
   data: UsageStats;
-  balance: BalanceData | undefined;
   t: (key: string, options?: Record<string, unknown>) => string;
 }) {
   const topModel = data.by_model[0];
   const totalCost = data.by_model.reduce((sum, m) => sum + m.total_cost, 0);
   const topCostShare = topModel && totalCost > 0 ? (topModel.total_cost / totalCost) * 100 : 0;
-  const quotaPercent =
-    balance && balance.daily_free_token_limit > 0
-      ? (balance.daily_free_tokens_used / balance.daily_free_token_limit) * 100
-      : 0;
-  const showQuotaWarning = quotaPercent >= 85;
 
   return (
     <div className="rounded-xl border border-[var(--border-default)] p-4 space-y-2">
@@ -207,17 +121,6 @@ function KeyInsights({
             percent: `${topCostShare.toFixed(0)}%`,
           })}
         </p>
-      )}
-      {showQuotaWarning && (
-        <div className="flex items-center gap-2 text-xs text-[var(--color-warning)]">
-          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-          <span>
-            {t("quotaHighUsage", {
-              used: formatQuotaTokens(balance?.daily_free_tokens_used ?? 0),
-              limit: formatQuotaTokens(balance?.daily_free_token_limit ?? 0),
-            })}
-          </span>
-        </div>
       )}
     </div>
   );
@@ -358,14 +261,7 @@ export function UsageTab() {
   const { t } = useTranslation('usage');
   const [days, setDays] = useState(30);
   const [trendMetric, setTrendMetric] = useState<TrendMetric>("cost");
-  const { isConnected } = useAuthStore();
   const { data, isLoading, error } = useUsage(days);
-  const { data: balance } = useQuery({
-    queryKey: ["billing", "balance"],
-    queryFn: () => proxyApi.get<BalanceData>("/api/billing/balance"),
-    enabled: isConnected,
-    refetchInterval: 30_000,
-  });
 
   return (
     <div>
@@ -412,7 +308,6 @@ export function UsageTab() {
               {t("overview")}
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-              {balance && <FreeQuotaCard balance={balance} t={t} />}
               <SummaryCard
                 icon={Coins}
                 label={t("totalCost")}
@@ -463,7 +358,7 @@ export function UsageTab() {
 
           <Separator />
 
-          <KeyInsights data={data} balance={balance} t={t} />
+          <KeyInsights data={data} t={t} />
 
           <Separator />
 

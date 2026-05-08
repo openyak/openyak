@@ -1,16 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Eye, EyeOff, X, Check, Loader2, AlertCircle, LogOut, CreditCard, Mail, RotateCw, Cpu, Server, Plug } from "lucide-react";
-import { OpenYakLogo } from "@/components/ui/openyak-logo";
+import { Eye, EyeOff, X, Check, Loader2, AlertCircle, LogOut, RotateCw, Cpu, Server, Plug } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useSettingsStore } from "@/stores/settings-store";
-import { useAuthStore, type OpenYakUser } from "@/stores/auth-store";
-import { api, apiFetch, ApiError } from "@/lib/api";
-import { proxyApi, ProxyApiError } from "@/lib/proxy-api";
+import { api, ApiError } from "@/lib/api";
 import { errorToMessage } from "@/lib/errors";
 import { API, IS_DESKTOP, queryKeys } from "@/lib/constants";
 import { desktopAPI } from "@/lib/tauri-api";
@@ -31,98 +28,21 @@ interface OpenAISubscriptionStatus {
   needs_reauth?: boolean;
 }
 
-interface ProvidersTabProps {
-  onNavigateTab?: (tab: string) => void;
-}
-
-export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
+export function ProvidersTab() {
   const { t } = useTranslation('settings');
   const { activeProvider, setActiveProvider } = useSettingsStore();
-  const authStore = useAuthStore();
 
-  type ProviderMode = "openyak" | "byok" | "chatgpt" | "ollama" | "local" | "custom";
+  type ProviderMode = "byok" | "chatgpt" | "ollama" | "local" | "custom";
   const [viewingProvider, setViewingProvider] = useState<ProviderMode>(
-    () => (activeProvider as ProviderMode) ?? "openyak"
+    () => (activeProvider as ProviderMode) ?? "chatgpt"
   );
 
   const [mounted, setMounted] = useState(false);
   const qc = useQueryClient();
   const { data: allModels } = useModels();
 
-  const [proxyUrlInput] = useState(
-    process.env.NEXT_PUBLIC_DEFAULT_PROXY_URL || "https://api.open-yak.com",
-  );
-  const [emailInput, setEmailInput] = useState("");
-  const [passwordInput, setPasswordInput] = useState("");
-  const [authMode, setAuthMode] = useState<"login" | "register">("login");
-  const [verificationStep, setVerificationStep] = useState(false);
-  const [codeInput, setCodeInput] = useState("");
   const [localBaseUrlInput, setLocalBaseUrlInput] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
-
-  const syncOpenYakAccountToBackend = async (proxyUrl: string, token: string, refreshToken?: string) => {
-    const payload = { proxy_url: proxyUrl, token, ...(refreshToken && { refresh_token: refreshToken }) };
-    try {
-      await api.post(API.CONFIG.OPENYAK_ACCOUNT, payload);
-    } catch {
-      if (IS_DESKTOP) {
-        await desktopAPI.getBackendUrl();
-        const res = await apiFetch(API.CONFIG.OPENYAK_ACCOUNT, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          timeoutMs: 30_000,
-        });
-        if (res.ok) return;
-      }
-      throw new Error("Failed to connect local backend");
-    }
-  };
-
-  const completeAuth = async (proxyUrl: string, tokens: { access_token: string; refresh_token: string }) => {
-    const res = await fetch(`${proxyUrl}/api/auth/me`, {
-      headers: { Authorization: `Bearer ${tokens.access_token}` },
-    });
-    if (!res.ok) throw new Error("Failed to fetch profile");
-    const user = (await res.json()) as OpenYakUser;
-    await syncOpenYakAccountToBackend(proxyUrl, tokens.access_token, tokens.refresh_token);
-    authStore.setAuth({ proxyUrl, accessToken: tokens.access_token, refreshToken: tokens.refresh_token, user });
-    setActiveProvider("openyak");
-    qc.invalidateQueries({ queryKey: queryKeys.apiKeyStatus });
-    qc.invalidateQueries({ queryKey: queryKeys.models });
-    setEmailInput(""); setPasswordInput(""); setCodeInput(""); setVerificationStep(false);
-  };
-
-  const loginMutation = useMutation({
-    mutationFn: async () => {
-      const proxyUrl = proxyUrlInput.replace(/\/$/, "");
-      if (authMode === "login") {
-        const tokens = await proxyApi.authPost<{ access_token: string; refresh_token: string }>(proxyUrl, "/api/auth/login", { email: emailInput, password: passwordInput });
-        await completeAuth(proxyUrl, tokens);
-        return { type: "done" as const };
-      } else {
-        await proxyApi.authPost<{ message: string; email: string }>(proxyUrl, "/api/auth/register", { email: emailInput, password: passwordInput });
-        return { type: "verification" as const };
-      }
-    },
-    onSuccess: (data) => { if (data.type === "verification") setVerificationStep(true); },
-  });
-
-  const verifyMutation = useMutation({
-    mutationFn: async () => {
-      const proxyUrl = proxyUrlInput.replace(/\/$/, "");
-      const tokens = await proxyApi.authPost<{ access_token: string; refresh_token: string }>(proxyUrl, "/api/auth/verify", { email: emailInput, code: codeInput });
-      await completeAuth(proxyUrl, tokens);
-    },
-  });
-
-  const resendMutation = useMutation({
-    mutationFn: async () => {
-      const proxyUrl = proxyUrlInput.replace(/\/$/, "");
-      await proxyApi.authPost(proxyUrl, "/api/auth/resend", { email: emailInput });
-    },
-    onSuccess: () => setCodeInput(""),
-  });
 
   const { data: keyStatus } = useQuery({ queryKey: queryKeys.apiKeyStatus, queryFn: () => api.get<ApiKeyStatus>(API.CONFIG.API_KEY) });
 
@@ -146,9 +66,7 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
   }, []);
 
   const fallbackToOtherProviders = () => {
-    if (authStore.isConnected) {
-      setActiveProvider("openyak");
-    } else if (openaiSubStatus?.is_connected) {
+    if (openaiSubStatus?.is_connected) {
       setActiveProvider("chatgpt");
     } else if (keyStatus?.is_configured || (providers ?? []).some((p) => p.is_configured)) {
       setActiveProvider("byok");
@@ -160,10 +78,7 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
   const pickModelForMode = (mode: ProviderMode, models: ModelInfo[] | undefined) => {
     if (!models || models.length === 0) return null;
     if (mode === "byok") {
-      return models.find((m) => !["openyak-proxy", "openai-subscription", "ollama"].includes(m.provider_id)) ?? null;
-    }
-    if (mode === "openyak") {
-      return models.find((m) => m.provider_id === "openyak-proxy") ?? null;
+      return models.find((m) => !["openai-subscription", "ollama"].includes(m.provider_id)) ?? null;
     }
     if (mode === "chatgpt") {
       return models.find((m) => m.provider_id === "openai-subscription") ?? null;
@@ -191,20 +106,6 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
   const { data: openaiSubStatus, refetch: refetchOpenaiSub } = useQuery({
     queryKey: queryKeys.openaiSubscription,
     queryFn: () => api.get<OpenAISubscriptionStatus>(API.CONFIG.OPENAI_SUBSCRIPTION),
-  });
-
-  const disconnectMutation = useMutation({
-    mutationFn: () => api.delete(API.CONFIG.OPENYAK_ACCOUNT),
-    onSuccess: () => {
-      authStore.logout();
-      qc.invalidateQueries({ queryKey: queryKeys.models });
-      qc.invalidateQueries({ queryKey: queryKeys.openyakAccount });
-      if (activeProvider === "openyak") {
-        if (openaiSubStatus?.is_connected) setActiveProvider("chatgpt");
-        else if (keyStatus?.is_configured) setActiveProvider("byok");
-        else setActiveProvider(null);
-      }
-    },
   });
 
   // Per-provider key input state and mutations
@@ -346,8 +247,7 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
       refetchOpenaiSub();
       qc.invalidateQueries({ queryKey: queryKeys.models });
       if (activeProvider === "chatgpt") {
-        if (authStore.isConnected) setActiveProvider("openyak");
-        else if (keyStatus?.is_configured) setActiveProvider("byok");
+        if (keyStatus?.is_configured) setActiveProvider("byok");
         else setActiveProvider(null);
       }
     },
@@ -424,9 +324,8 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
       {/* Provider cards */}
       <div className="grid grid-cols-3 gap-2">
         {([
-          { mode: "openyak" as ProviderMode, label: t('openyakAccount'), icon: Eye, connected: authStore.isConnected },
           { mode: "byok" as ProviderMode, label: t('ownApiKey'), icon: Eye, connected: !!keyStatus?.is_configured || (providers ?? []).some((p) => p.is_configured && !p.id.startsWith("custom_")) },
-          { mode: "chatgpt" as ProviderMode, label: t('chatgptSubscription'), icon: CreditCard, connected: !!openaiSubStatus?.is_connected },
+          { mode: "chatgpt" as ProviderMode, label: t('chatgptSubscription'), icon: Eye, connected: !!openaiSubStatus?.is_connected },
           { mode: "ollama" as ProviderMode, label: "Ollama", icon: Cpu, connected: ollamaConnected },
           { mode: "local" as ProviderMode, label: t('localProvider'), icon: Server, connected: !!localStatus?.is_connected },
           { mode: "custom" as ProviderMode, label: t('customEndpoint'), icon: Plug, connected: (providers ?? []).some(p => p.id.startsWith("custom_") && p.is_configured) },
@@ -440,7 +339,7 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
                 : "border-[var(--border-default)] hover:bg-[var(--surface-secondary)]"
             }`}
           >
-            {mode === "openyak" ? <OpenYakLogo size={20} /> : <Icon className="h-5 w-5" />}
+            <Icon className="h-5 w-5" />
             <span className="text-xs font-medium text-center leading-tight">{label}</span>
             {mounted && connected && <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-[var(--color-success)]" />}
             {activeProvider === mode && mounted && connected && (
@@ -449,61 +348,6 @@ export function ProvidersTab({ onNavigateTab }: ProvidersTabProps) {
           </button>
         ))}
       </div>
-
-      {/* OpenYak Account config */}
-      {viewingProvider === "openyak" && (
-        <div>
-          <p className="text-xs text-[var(--text-secondary)] mb-3">{t('openyakAccountDesc')}</p>
-          {authStore.isConnected && authStore.user ? (
-            <div className="space-y-3">
-              <div className="rounded-lg border border-[var(--border-default)] p-3 space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Check className="h-3.5 w-3.5 text-[var(--color-success)]" />
-                    <span className="text-xs text-[var(--text-secondary)]">{authStore.user.email}</span>
-                  </div>
-                  <span className="text-xs font-medium text-[var(--text-primary)]">
-                    {authStore.user.billing_mode === "credits"
-                      ? `$${(authStore.user.credit_balance / 100).toFixed(2)}`
-                      : `Free: ${Math.round(authStore.user.daily_free_tokens_used / 1000)}K / ${Math.round(authStore.user.daily_free_token_limit / 1000)}K tokens`}
-                  </span>
-                </div>
-                {authStore.user.billing_mode === "free" && (
-                  <div className="w-full bg-[var(--surface-tertiary)] rounded-full h-1.5">
-                    <div className="bg-[var(--brand-primary)] h-1.5 rounded-full transition-all" style={{ width: `${Math.min(100, (authStore.user.daily_free_tokens_used / authStore.user.daily_free_token_limit) * 100)}%` }} />
-                  </div>
-                )}
-              </div>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => onNavigateTab?.("billing")}><CreditCard className="h-3.5 w-3.5 mr-1.5" />{t('buyCredits')}</Button>
-                <Button variant="ghost" size="sm" onClick={() => disconnectMutation.mutate()} disabled={disconnectMutation.isPending}><LogOut className="h-3.5 w-3.5 mr-1.5" />{t('disconnect')}</Button>
-              </div>
-            </div>
-          ) : verificationStep ? (
-            <div className="space-y-3">
-              <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)]"><Mail className="h-3.5 w-3.5" /><span>{t('verificationSent')} <strong>{emailInput}</strong></span></div>
-              <Input type="text" value={codeInput} onChange={(e) => setCodeInput(e.target.value.replace(/\D/g, "").slice(0, 6))} placeholder={t('sixDigitCode')} className="font-mono text-center text-lg tracking-[0.3em]" maxLength={6} autoFocus />
-              <div className="flex items-center gap-2">
-                <Button variant="default" size="sm" onClick={() => verifyMutation.mutate()} disabled={codeInput.length !== 6 || verifyMutation.isPending}>{verifyMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : t('verify')}</Button>
-                <Button variant="ghost" size="sm" onClick={() => resendMutation.mutate()} disabled={resendMutation.isPending}>{resendMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><RotateCw className="h-3.5 w-3.5 mr-1" />{t('resend')}</>}</Button>
-                <button onClick={() => { setVerificationStep(false); setCodeInput(""); }} className="text-xs text-[var(--text-tertiary)] hover:underline ml-auto">{t('back')}</button>
-              </div>
-              {verifyMutation.isError && <div className="flex items-center gap-1.5 text-xs text-[var(--color-destructive)]"><AlertCircle className="h-3.5 w-3.5 shrink-0" /><span>{errorToMessage(verifyMutation.error, t('verificationFailed'))}</span></div>}
-              {resendMutation.isSuccess && <div className="flex items-center gap-1.5 text-xs text-[var(--color-success)]"><Check className="h-3.5 w-3.5 shrink-0" /><span>{t('newCodeSent')}</span></div>}
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <Input type="email" value={emailInput} onChange={(e) => setEmailInput(e.target.value)} placeholder="Email" className="text-xs" autoComplete="one-time-code" data-form-type="other" />
-              <Input type="password" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} placeholder="Password (min 8 characters)" className="text-xs" autoComplete="one-time-code" data-form-type="other" />
-              <div className="flex items-center gap-2">
-                <Button variant="default" size="sm" onClick={() => loginMutation.mutate()} disabled={!emailInput || !passwordInput || loginMutation.isPending}>{loginMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : authMode === "login" ? t('signIn') : t('createAccount')}</Button>
-                <button onClick={() => setAuthMode(authMode === "login" ? "register" : "login")} className="text-xs text-[var(--brand-primary)] hover:underline">{authMode === "login" ? t('createAccountLink') : t('alreadyHaveAccount')}</button>
-              </div>
-              {loginMutation.isError && <div className="flex items-center gap-1.5 text-xs text-[var(--color-destructive)]"><AlertCircle className="h-3.5 w-3.5 shrink-0" /><span>{errorToMessage(loginMutation.error, loginMutation.error instanceof ProxyApiError ? t('authFailed') : t('connectionFailed'))}</span></div>}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Own API Key config */}
       {viewingProvider === "byok" && (

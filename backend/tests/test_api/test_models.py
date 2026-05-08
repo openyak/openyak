@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 from app.schemas.provider import ModelCapabilities, ModelInfo
 
@@ -37,17 +37,7 @@ class TestRefreshModels:
         assert resp.status_code == 200
         assert "refreshed" in resp.json()
 
-    async def test_401_retries_proxy(self, app_client):
-        pr = app_client.app.state.provider_registry
-        s = app_client.app.state.settings
-        s.proxy_url = "http://proxy"
-        s.proxy_refresh_token = "rt"
-        pr.refresh_models = AsyncMock(side_effect=[RuntimeError("401 Unauthorized"), {"or": []}])
-        with patch("app.provider.proxy_auth.refresh_proxy_token", new_callable=AsyncMock, return_value=True):
-            resp = await app_client.post("/api/models/refresh")
-            assert resp.status_code == 200
-
-    async def test_non_auth_error(self, app_client):
+    async def test_refresh_failure_returns_empty(self, app_client):
         pr = app_client.app.state.provider_registry
         pr.refresh_models = AsyncMock(side_effect=RuntimeError("Connection refused"))
         resp = await app_client.post("/api/models/refresh")

@@ -38,7 +38,6 @@ from app.dependencies import (
 )
 from app.models.base import Base
 from app.agent.agent import AgentRegistry
-from app.provider.openrouter import OpenRouterProvider
 from app.provider.local import create_local_provider
 from app.provider.registry import ProviderRegistry
 from app.skill.registry import SkillRegistry
@@ -120,27 +119,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Provider registry
     registry = ProviderRegistry()
-
-    # If OpenYak proxy is configured, register it as "openyak-proxy" (billing mode).
-    # This is separate from the user's own OpenRouter key.
-    if settings.proxy_url and settings.proxy_token:
-        proxy_provider = OpenRouterProvider(
-            settings.proxy_token,
-            base_url=settings.proxy_url + "/v1",
-            provider_id="openyak-proxy",
-        )
-        registry.register(proxy_provider)
-        try:
-            await registry.refresh_models()
-        except Exception as e:
-            logger.warning("Failed to load models from proxy on startup: %s", e)
-            if settings.proxy_refresh_token:
-                from app.provider.proxy_auth import refresh_proxy_token
-                if await refresh_proxy_token(settings, registry):
-                    try:
-                        await registry.refresh_models()
-                    except Exception as e2:
-                        logger.warning("Still failed after token refresh: %s", e2)
 
     # Register OpenAI subscription provider if configured
     if settings.openai_oauth_access_token and settings.openai_oauth_account_id:

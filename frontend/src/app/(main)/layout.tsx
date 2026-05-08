@@ -2,7 +2,6 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { useQueryClient } from "@tanstack/react-query";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { SquarePen } from "lucide-react";
@@ -20,28 +19,23 @@ import { SplashScreen } from "@/components/layout/splash-screen";
 import { TitleBar } from "@/components/desktop/title-bar";
 import { WindowTopIcons } from "@/components/layout/window-top-icons";
 import { UpdateBanner } from "@/components/desktop/update-banner";
-import { UpgradePrompt } from "@/components/billing/upgrade-prompt";
 import { OnboardingScreen } from "@/components/onboarding/onboarding-screen";
 import { Button } from "@/components/ui/button";
 import { OpenYakLogo } from "@/components/ui/openyak-logo";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useSidebarStore } from "@/stores/sidebar-store";
 import { useSettingsStore, useSettingsHasHydrated } from "@/stores/settings-store";
-import { useAuthStore, useAuthHasHydrated } from "@/stores/auth-store";
 import { useAutoDetectProvider } from "@/hooks/use-auto-detect-provider";
 import { useIsMacOS } from "@/hooks/use-platform";
 import { useTraySync } from "@/hooks/use-tray-sync";
 import { useActivityStore } from "@/stores/activity-store";
 import { useArtifactStore } from "@/stores/artifact-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
-import { api } from "@/lib/api";
 import {
-  API,
   ACTIVITY_PANEL_WIDTH,
   WORKSPACE_PANEL_WIDTH,
   IS_DESKTOP,
   TITLE_BAR_HEIGHT,
-  queryKeys,
 } from "@/lib/constants";
 import { desktopAPI } from "@/lib/tauri-api";
 import { useTranslation } from "react-i18next";
@@ -74,66 +68,23 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   const planReviewWidth = usePlanReviewStore((s) => s.panelWidth);
   const isDesktop = useIsDesktop();
   const isMac = useIsMacOS();
-  const qc = useQueryClient();
   useAutoDetectProvider();
   useTraySync();
 
-  const authHydrated = useAuthHasHydrated();
   const settingsHydrated = useSettingsHasHydrated();
 
-  // Onboarding gate — show onboarding if first run and not already connected
+  // Onboarding gate — show onboarding once on first run
   const hasCompletedOnboarding = useSettingsStore((s) => s.hasCompletedOnboarding);
-  const isConnected = useAuthStore((s) => s.isConnected);
-  const proxyUrl = useAuthStore((s) => s.proxyUrl);
-  const accessToken = useAuthStore((s) => s.accessToken);
-  const refreshToken = useAuthStore((s) => s.refreshToken);
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
 
   // Client-side only check for desktop mode (prevents hydration mismatch)
   const [showSplash, setShowSplash] = useState(false);
   useEffect(() => {
     setShowSplash(IS_DESKTOP);
-    if (authHydrated && settingsHydrated) {
-      setNeedsOnboarding(!hasCompletedOnboarding && !isConnected);
+    if (settingsHydrated) {
+      setNeedsOnboarding(!hasCompletedOnboarding);
     }
-  }, [hasCompletedOnboarding, isConnected, authHydrated, settingsHydrated]);
-
-  useEffect(() => {
-    if (!IS_DESKTOP || !isConnected || !proxyUrl || !accessToken) return;
-
-    let cancelled = false;
-
-    const syncOpenYakAccount = async () => {
-      try {
-        const status = await api.get<{ is_connected: boolean; proxy_url: string }>(API.CONFIG.OPENYAK_ACCOUNT);
-        if (!cancelled && status.is_connected && status.proxy_url === proxyUrl) {
-          return;
-        }
-      } catch {
-        // Fall through to re-sync the desktop backend.
-      }
-
-      try {
-        await api.post(API.CONFIG.OPENYAK_ACCOUNT, {
-          proxy_url: proxyUrl,
-          token: accessToken,
-          ...(refreshToken ? { refresh_token: refreshToken } : {}),
-        });
-        if (!cancelled) {
-          qc.invalidateQueries({ queryKey: queryKeys.models });
-          qc.invalidateQueries({ queryKey: queryKeys.openyakAccount });
-        }
-      } catch {
-        // Expected when proxy is unreachable or token is expired — non-critical.
-      }
-    };
-
-    void syncOpenYakAccount();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isConnected, proxyUrl, accessToken, refreshToken, qc]);
+  }, [hasCompletedOnboarding, settingsHydrated]);
 
   useEffect(() => {
     if (!IS_DESKTOP) return;
@@ -348,9 +299,6 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
           {planReviewIsOpen && <PlanReviewPanel key="plan-review" />}
         </AnimatePresence>
       </ErrorBoundary>
-
-      {/* Upgrade prompt dialog */}
-      <UpgradePrompt />
     </div>
   );
 }

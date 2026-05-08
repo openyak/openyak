@@ -56,9 +56,9 @@ export function extractErrorMessage(body: unknown, fallback: string): string {
 }
 
 /**
- * Extract a user-readable message from any error. Walks ApiError-shaped and
- * ProxyApiError-shaped objects (anything with `.body: unknown`), then falls
- * back to `Error.message`, then to the supplied `fallback`.
+ * Extract a user-readable message from any error. Walks ApiError-shaped
+ * objects (anything with `.body: unknown`), then falls back to
+ * `Error.message`, then to the supplied `fallback`.
  */
 export function errorToMessage(err: unknown, fallback: string): string {
   if (err && typeof err === "object" && "body" in err) {
