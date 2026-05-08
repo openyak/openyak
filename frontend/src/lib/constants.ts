@@ -269,6 +269,7 @@ export const API = {
     OPENAI_SUBSCRIPTION_MANUAL_CALLBACK: "/api/config/openai-subscription/manual-callback",
     OLLAMA: "/api/config/ollama",
     LOCAL_PROVIDER: "/api/config/local",
+    RAPID_MLX_STATUS: "/api/config/rapid-mlx/status",
   },
   FTS: {
     INDEX: (workspace: string, sessionId?: string) =>
@@ -387,6 +388,7 @@ export const queryKeys = {
   openyakAccount: ["openyakAccount"] as const,
   openaiSubscription: ["openaiSubscription"] as const,
   localProvider: ["localProvider"] as const,
+  rapidMlxStatus: ["rapidMlxStatus"] as const,
   ollamaStatus: ["ollamaStatus"] as const,
   connectors: ["connectors"] as const,
   channels: ["channels"] as const,
