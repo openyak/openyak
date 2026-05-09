@@ -11,6 +11,8 @@ import { useProviderModels } from "@/hooks/use-provider-models";
 import { useSettingsStore } from "@/stores/settings-store";
 import { MobileDirectoryBrowser } from "@/components/mobile/directory-browser";
 
+const VISION_MODEL_REQUIRED_MESSAGE = "The selected model does not support images. Choose a vision model and try again.";
+
 /**
  * Mobile new task page.
  *
@@ -66,6 +68,11 @@ export default function MobileNewTaskPage() {
 
   const handleSubmit = useCallback(async () => {
     if (!text.trim() || sending) return;
+    const selectedModelInfo = models.find((model) => model.id === selectedModel);
+    if (files.some((file) => file.type.startsWith("image/")) && selectedModelInfo?.capabilities.vision !== true) {
+      toast.error(VISION_MODEL_REQUIRED_MESSAGE);
+      return;
+    }
     setSending(true);
 
     try {
@@ -112,7 +119,7 @@ export default function MobileNewTaskPage() {
       toast.error("Failed to send task. Check your connection.");
       setSending(false);
     }
-  }, [text, sending, files, selectedModel, workspaceDirectory, router]);
+  }, [text, sending, files, models, selectedModel, workspaceDirectory, router]);
 
   // Current model name for display
   return (

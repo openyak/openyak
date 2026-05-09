@@ -18,6 +18,45 @@ import type { InfiniteData } from "@tanstack/react-query";
 import type { FileAttachment, PromptResponse, RespondRequest } from "@/types/chat";
 import type { PaginatedMessages } from "@/types/message";
 import type { SessionResponse } from "@/types/session";
+import type { ModelInfo } from "@/types/model";
+
+const MODEL_DOES_NOT_SUPPORT_IMAGES = "MODEL_DOES_NOT_SUPPORT_IMAGES";
+const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"]);
+const VISION_MODEL_REQUIRED_MESSAGE = "The selected model does not support images. Choose a vision model and try again.";
+
+function isImageAttachment(attachment: FileAttachment): boolean {
+  if (attachment.mime_type?.startsWith("image/")) return true;
+  const source = attachment.name || attachment.path || "";
+  const dot = source.lastIndexOf(".");
+  if (dot < 0) return false;
+  return IMAGE_EXTENSIONS.has(source.slice(dot).toLowerCase());
+}
+
+function hasImageAttachments(attachments?: FileAttachment[]): boolean {
+  return !!attachments?.some(isImageAttachment);
+}
+
+function selectedModelSupportsVision(
+  models: ModelInfo[] | undefined,
+  modelId: string | null,
+  providerId: string | null,
+): boolean {
+  if (!modelId || !models) return false;
+  const selected =
+    models.find((model) => model.id === modelId && (!providerId || model.provider_id === providerId)) ??
+    models.find((model) => model.id === modelId);
+  return selected?.capabilities.vision === true;
+}
+
+function isUnsupportedImagesError(err: unknown): boolean {
+  if (!(err instanceof ApiError)) return false;
+  const detail = (err.body as { detail?: unknown } | undefined)?.detail;
+  return (
+    typeof detail === "object" &&
+    detail !== null &&
+    (detail as { code?: unknown }).code === MODEL_DOES_NOT_SUPPORT_IMAGES
+  );
+}
 
 /**
  * Core chat hook — orchestrates the full prompt → stream → assemble cycle.
@@ -55,6 +94,17 @@ export function useChat(currentSessionId?: string) {
       const settingsState = useSettingsStore.getState();
 
       if (chatState.isGenerating || chatState.isCompacting || (!text.trim() && (!attachments || attachments.length === 0))) return false;
+      if (
+        hasImageAttachments(attachments) &&
+        !selectedModelSupportsVision(
+          queryClient.getQueryData<ModelInfo[]>(queryKeys.models),
+          settingsState.selectedModel,
+          settingsState.selectedProviderId,
+        )
+      ) {
+        toast.error(VISION_MODEL_REQUIRED_MESSAGE);
+        return false;
+      }
 
       // New chat must start from a clean per-session state to avoid
       // leaking any transient stream/session context from previous chats.
@@ -152,6 +202,10 @@ export function useChat(currentSessionId?: string) {
 
         // Show upgrade prompt for billing errors (proxied from OpenYak proxy)
         if (err instanceof ApiError) {
+          if (isUnsupportedImagesError(err)) {
+            toast.error(VISION_MODEL_REQUIRED_MESSAGE);
+            return false;
+          }
           if (err.status === 429) {
             useBillingStore.getState().showUpgrade("quota_exceeded");
             return false;
@@ -230,6 +284,17 @@ export function useChat(currentSessionId?: string) {
       const settingsState = useSettingsStore.getState();
 
       if (chatState.isGenerating || chatState.isCompacting || (!newText.trim() && (!attachments || attachments.length === 0)) || !currentSessionId) return false;
+      if (
+        hasImageAttachments(attachments) &&
+        !selectedModelSupportsVision(
+          queryClient.getQueryData<ModelInfo[]>(queryKeys.models),
+          settingsState.selectedModel,
+          settingsState.selectedProviderId,
+        )
+      ) {
+        toast.error(VISION_MODEL_REQUIRED_MESSAGE);
+        return false;
+      }
 
       // Close any panels bound to the previous assistant response so resend
       // doesn't keep showing stale "done" activity while the new run is live.
@@ -324,6 +389,10 @@ export function useChat(currentSessionId?: string) {
         useChatStore.getState().reset();
 
         if (err instanceof ApiError) {
+          if (isUnsupportedImagesError(err)) {
+            toast.error(VISION_MODEL_REQUIRED_MESSAGE);
+            return false;
+          }
           if (err.status === 429) {
             useBillingStore.getState().showUpgrade("quota_exceeded");
             return false;

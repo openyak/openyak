@@ -71,8 +71,8 @@ from app.session.utils import (
     calculate_step_cost as _calculate_step_cost,
     compute_safe_max_tokens as _compute_safe_max_tokens,
     get_effective_context_window as _get_effective_context_window,
+    llm_messages_have_image_content as _llm_messages_have_image_content,
     repair_tool_call_payload as _repair_tool_call_payload,
-    strip_image_content as _strip_image_content,
 )
 from app.utils.id import generate_ulid
 
@@ -492,11 +492,51 @@ class SessionProcessor:
                 if sp.provider.id == "ollama":
                     job.publish(SSEEvent(MODEL_LOADING, {"model": sp.model_id, "status": "loading"}))
 
-                # Strip image_url from messages if model doesn't support vision.
-                # User-attached images may have image_url content.
                 _llm_msgs = self._llm_messages
-                if sp.model_info and not sp.model_info.capabilities.vision:
-                    _llm_msgs = _strip_image_content(_llm_msgs)
+                if (
+                    sp.model_info
+                    and not sp.model_info.capabilities.vision
+                    and _llm_messages_have_image_content(_llm_msgs)
+                ):
+                    message = (
+                        "The selected model does not support images. "
+                        "Choose a vision model and try again."
+                    )
+                    logger.info(
+                        "Blocked image content for non-vision model=%s session=%s",
+                        sp.model_id,
+                        job.session_id,
+                    )
+                    job.publish(
+                        SSEEvent(
+                            AGENT_ERROR,
+                            {
+                                "error_type": "MODEL_DOES_NOT_SUPPORT_IMAGES",
+                                "error_message": message,
+                            },
+                        )
+                    )
+                    async with session_factory() as db:
+                        async with db.begin():
+                            await create_part(
+                                db,
+                                message_id=self._assistant_msg_id,
+                                session_id=job.session_id,
+                                data={"type": "text", "text": message},
+                            )
+                            await create_part(
+                                db,
+                                message_id=self._assistant_msg_id,
+                                session_id=job.session_id,
+                                data={
+                                    "type": "step-finish",
+                                    "reason": "error",
+                                    "tokens": {},
+                                    "cost": 0.0,
+                                },
+                            )
+                    self.finish_reason = "error"
+                    return "stop"
 
                 async for chunk in stream_llm(
                     sp.provider,

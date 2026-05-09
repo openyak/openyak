@@ -6,10 +6,22 @@ These tests require a valid OPENYAK_OPENROUTER_API_KEY in .env.
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.provider.openrouter import OpenRouterProvider
+from app.provider.openrouter import OpenRouterProvider, _architecture_supports_vision
 from app.provider.registry import ProviderRegistry
 from app.provider.tool_calling.detector import supports_function_calling
 from app.provider.tool_calling.prompt_based import build_tool_prompt, parse_tool_calls
+
+
+class TestOpenRouterModelMetadata:
+    def test_architecture_vision_detection_uses_input_modalities(self):
+        assert _architecture_supports_vision({
+            "input_modalities": ["text", "image"],
+            "output_modalities": ["text"],
+        })
+
+    def test_architecture_vision_detection_keeps_modality_fallback(self):
+        assert _architecture_supports_vision({"modality": "text+image->text"})
+        assert not _architecture_supports_vision({"modality": "text->text"})
 
 
 class TestOpenRouterConnection:

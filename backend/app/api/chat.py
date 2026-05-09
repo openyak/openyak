@@ -33,6 +33,7 @@ from app.session.processor import run_generation
 from app.session.utils import (
     compute_usable_context_window,
     get_effective_context_window,
+    has_image_attachments,
 )
 from app.streaming.events import AGENT_ERROR, COMPACTION_ERROR, DONE, PERMISSION_RESOLVED, QUESTION_RESOLVED, SSEEvent
 from app.streaming.manager import GenerationJob, StreamManager
@@ -43,9 +44,43 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _MANUAL_COMPACTION_MIN_USAGE_RATIO = 0.5
+MODEL_DOES_NOT_SUPPORT_IMAGES = "MODEL_DOES_NOT_SUPPORT_IMAGES"
 
 # Heartbeat interval (seconds) — prevents proxy/CDN timeout
 _HEARTBEAT_INTERVAL = 15.0
+
+
+def _unsupported_images_error() -> HTTPException:
+    return HTTPException(
+        status_code=400,
+        detail={
+            "code": MODEL_DOES_NOT_SUPPORT_IMAGES,
+            "message": "The selected model does not support images. Choose a vision model and try again.",
+        },
+    )
+
+
+def _ensure_image_attachments_supported(
+    *,
+    attachments: list[dict[str, Any]] | None,
+    provider_registry,
+    model_id: str | None,
+    provider_id: str | None,
+) -> None:
+    """Reject image inputs unless the requested model is explicitly vision-capable."""
+    if not has_image_attachments(attachments):
+        return
+
+    if not model_id:
+        raise _unsupported_images_error()
+
+    resolved = provider_registry.resolve_model(model_id, provider_id)
+    if resolved is None:
+        raise _unsupported_images_error()
+
+    _provider, model_info = resolved
+    if not model_info.capabilities.vision:
+        raise _unsupported_images_error()
 
 
 def _on_task_done(task: asyncio.Task[None], *, job: GenerationJob) -> None:
@@ -136,6 +171,13 @@ async def start_prompt(
     index_manager: IndexManagerDep,
 ) -> PromptResponse:
     """Start a new generation. Returns stream_id for SSE subscription."""
+    _ensure_image_attachments_supported(
+        attachments=body.attachments,
+        provider_registry=provider_registry,
+        model_id=body.model,
+        provider_id=body.provider_id,
+    )
+
     session_id = body.session_id or generate_ulid()
     stream_id = generate_ulid()
 
@@ -262,6 +304,13 @@ async def edit_and_resend(
     index_manager: IndexManagerDep,
 ) -> PromptResponse:
     """Edit a user message, delete all subsequent messages, and re-generate."""
+    _ensure_image_attachments_supported(
+        attachments=body.attachments,
+        provider_registry=provider_registry,
+        model_id=body.model,
+        provider_id=body.provider_id,
+    )
+
     stream_id = generate_ulid()
 
     # Atomic DB operation: update message text + delete subsequent messages
@@ -283,6 +332,7 @@ async def edit_and_resend(
         session_id=body.session_id,
         text=body.text,
         model=body.model,
+        provider_id=body.provider_id,
         agent=body.agent,
         attachments=body.attachments,
         permission_presets=body.permission_presets,

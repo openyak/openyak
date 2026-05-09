@@ -40,6 +40,17 @@ def _is_free(pricing: dict) -> bool:
     return float(pricing.get("prompt", "1")) == 0 and float(pricing.get("completion", "1")) == 0
 
 
+def _architecture_supports_vision(architecture: dict) -> bool:
+    input_modalities = architecture.get("input_modalities")
+    if isinstance(input_modalities, list) and "image" in input_modalities:
+        return True
+    if isinstance(input_modalities, str) and "image" in input_modalities:
+        return True
+
+    modality = architecture.get("modality", "")
+    return isinstance(modality, str) and "image" in modality
+
+
 class OpenRouterProvider(OpenAICompatProvider):
     """OpenRouter LLM provider with reasoning support."""
 
@@ -132,7 +143,7 @@ class OpenRouterProvider(OpenAICompatProvider):
 
             # Detect capabilities from model metadata
             architecture = m.get("architecture", {})
-            modality = architecture.get("modality", "")
+            has_vision = _architecture_supports_vision(architecture)
 
             # Detect caching support based on model family
             supports_caching = False
@@ -152,7 +163,7 @@ class OpenRouterProvider(OpenAICompatProvider):
                     provider_id=self._provider_id,
                     capabilities=ModelCapabilities(
                         function_calling="tool" in str(m.get("supported_parameters", [])),
-                        vision="image" in modality,
+                        vision=has_vision,
                         reasoning="reasoning" in model_id.lower()
                         or "think" in model_id.lower()
                         or "r1" in model_id.lower(),

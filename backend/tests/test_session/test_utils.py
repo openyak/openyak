@@ -6,6 +6,8 @@ from app.session.utils import (
     compute_usable_context_window,
     compute_effective_context_window,
     get_effective_context_window,
+    has_image_attachments,
+    llm_messages_have_image_content,
     sanitize_llm_messages_for_request,
 )
 
@@ -91,3 +93,23 @@ def test_usable_context_window_subtracts_output_and_reserved_budget():
         model_max_output=8_192,
         reserved=8_192,
     ) == 111_616
+
+
+def test_image_attachment_detection_covers_mime_extension_and_mobile_type():
+    assert has_image_attachments([{"name": "chart.png", "mime_type": ""}])
+    assert has_image_attachments([{"name": "upload", "mime_type": "image/jpeg"}])
+    assert has_image_attachments([{"type": "image", "path": "/tmp/no-ext"}])
+    assert not has_image_attachments([{"name": "notes.txt", "mime_type": "text/plain"}])
+
+
+def test_llm_messages_have_image_content_detects_multimodal_blocks():
+    assert llm_messages_have_image_content([
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "describe"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+            ],
+        }
+    ])
+    assert not llm_messages_have_image_content([{"role": "user", "content": "plain"}])

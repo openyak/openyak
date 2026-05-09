@@ -310,6 +310,40 @@ def strip_image_content(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return result
 
 
+def is_image_attachment(attachment: dict[str, Any]) -> bool:
+    """Return whether an attachment should be treated as image input."""
+    mime = str(attachment.get("mime_type") or attachment.get("mime") or "")
+    if mime.startswith("image/"):
+        return True
+    if attachment.get("type") == "image":
+        return True
+
+    name = str(attachment.get("name") or "")
+    path = str(attachment.get("path") or "")
+    suffix = ""
+    for value in (name, path):
+        if "." in value:
+            suffix = "." + value.rsplit(".", 1)[-1].lower()
+            break
+    return suffix in _IMAGE_EXTENSIONS
+
+
+def has_image_attachments(attachments: list[dict[str, Any]] | None) -> bool:
+    return any(is_image_attachment(att) for att in attachments or [])
+
+
+def llm_messages_have_image_content(messages: list[dict[str, Any]]) -> bool:
+    """Return whether prepared LLM messages contain multimodal image blocks."""
+    for msg in messages:
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "image_url":
+                return True
+    return False
+
+
 def estimate_llm_message_tokens(messages: list[dict[str, Any]]) -> int:
     total_chars = 0
     for m in messages:
