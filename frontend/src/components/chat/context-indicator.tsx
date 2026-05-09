@@ -19,6 +19,9 @@ interface ContextIndicatorProps {
   sessionId: string;
 }
 
+const DEFAULT_OUTPUT_BUDGET = 8192;
+const DEFAULT_RESERVED_BUDGET = 20_000;
+
 function formatTokenCompact(count: number): string {
   if (count >= 1_000_000) {
     const value = count / 1_000_000;
@@ -75,11 +78,18 @@ export function ContextIndicator({ sessionId }: ContextIndicatorProps) {
   const startCompactionStream = useChatStore((s) => s.startCompactionStream);
   const selectedModelInfo = models?.find((m) => m.id === selectedModel);
   const effectiveContext = selectedModelInfo?.metadata?.effective_context_window;
-  const maxContext =
+  const rawContext = selectedModelInfo?.capabilities.max_context;
+  const budgetContext =
     typeof effectiveContext === "number" && effectiveContext > 0
-      ? Math.min(effectiveContext, selectedModelInfo?.capabilities.max_context ?? effectiveContext)
-      : selectedModelInfo?.capabilities.max_context;
-  const { data: stats } = useMessageStats(sessionId, maxContext);
+      ? Math.min(effectiveContext, rawContext ?? effectiveContext)
+      : rawContext;
+  const outputBudget = selectedModelInfo?.capabilities.max_output ?? DEFAULT_OUTPUT_BUDGET;
+  const reservedBudget = Math.min(DEFAULT_RESERVED_BUDGET, outputBudget);
+  const usableContext =
+    typeof budgetContext === "number" && budgetContext > 0
+      ? Math.max(1, budgetContext - outputBudget - reservedBudget)
+      : undefined;
+  const { data: stats } = useMessageStats(sessionId, usableContext);
   const [isStartingCompact, setIsStartingCompact] = useState(false);
   const meetsManualCompactionThreshold = !!stats && stats.percentage >= 50;
 
@@ -114,7 +124,7 @@ export function ContextIndicator({ sessionId }: ContextIndicatorProps) {
   };
 
   const usedCompact = formatTokenCompact(stats.totalTokens);
-  const limitCompact = formatTokenCompact(maxContext ?? 0);
+  const limitCompact = formatTokenCompact(rawContext ?? budgetContext ?? 0);
   const statusColor = getStatusColor();
   const isDisabled = isGenerating || isChatCompacting || isStartingCompact || !meetsManualCompactionThreshold;
   const compactHint = isGenerating

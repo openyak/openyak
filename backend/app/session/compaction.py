@@ -35,8 +35,9 @@ from app.streaming.events import (
 from app.streaming.manager import GenerationJob
 from app.utils.token import estimate_tokens
 
-# Re-use cost calculation from session utils
+# Re-use cost/budget helpers from session utils
 from app.session.utils import calculate_step_cost as _calculate_step_cost
+from app.session.utils import compute_usable_context_window
 
 logger = logging.getLogger(__name__)
 
@@ -339,9 +340,10 @@ def should_compact(
 ) -> bool:
     """Check if context usage warrants compaction.
 
-    Mirrors OpenCode ``SessionCompaction.isOverflow()``:
+    Mirrors OpenCode ``SessionCompaction.isOverflow()`` budget shape:
       - reserved defaults to ``min(20_000, model_max_output)``
       - usable = model_max_context - output_budget - reserved
+      - auto compact starts at 90% of usable context
     """
     total_tokens = usage.get("total", 0)
     if not total_tokens:
@@ -351,9 +353,10 @@ def should_compact(
             + usage.get("reasoning", 0)
             + usage.get("cache_read", 0)
         )
-    effective_output = model_max_output or 8192
-    if reserved is None:
-        reserved = min(20_000, effective_output)
-    # Usable = total context window - output budget - safety reserve
-    usable = model_max_context - effective_output - reserved
-    return total_tokens >= usable and usable > 0
+    usable = compute_usable_context_window(
+        model_max_context,
+        model_max_output=model_max_output,
+        reserved=reserved,
+    )
+    threshold = int(usable * 0.9)
+    return total_tokens >= threshold and threshold > 0

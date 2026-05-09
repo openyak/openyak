@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 from app.session.utils import (
+    compute_usable_context_window,
     compute_effective_context_window,
     get_effective_context_window,
     sanitize_llm_messages_for_request,
@@ -79,5 +80,14 @@ def test_effective_context_window_is_clamped_to_max_context():
     assert get_effective_context_window(model_info) == 128_000
 
 
-def test_effective_context_window_defaults_to_thirty_three_percent():
-    assert compute_effective_context_window(200_000) == 66_000
+def test_effective_context_window_defaults_to_full_context():
+    assert compute_effective_context_window(200_000) == 200_000
+    assert compute_effective_context_window(256_000) == 256_000
+
+
+def test_usable_context_window_subtracts_output_and_reserved_budget():
+    assert compute_usable_context_window(
+        128_000,
+        model_max_output=8_192,
+        reserved=8_192,
+    ) == 111_616

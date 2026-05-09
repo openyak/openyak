@@ -25,22 +25,42 @@ CHARS_PER_TOKEN = 4  # Average characters per token for rough estimation
 MIN_RESERVED_TOKENS = 2048  # Minimum tokens reserved for system overhead
 RESERVED_CONTEXT_RATIO = 0.08  # Fraction of model context reserved for overhead
 MIN_PARTIAL_MESSAGE_CHARS = 2_048  # Smallest useful tail/head slice to preserve
-EFFECTIVE_CONTEXT_RATIO = 0.33  # Safe operating window before proactive compaction
+DEFAULT_OUTPUT_BUDGET = 8192
+
+_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
 
 
 def compute_effective_context_window(
     max_context: int | None,
     explicit_effective: int | None = None,
 ) -> int | None:
-    """Compute the effective context window used for UX/compaction decisions."""
+    """Compute the context window used for budgeting decisions.
+
+    Provider-specific overrides are still honored, but models without an
+    explicit override should use their advertised context window. Safety
+    margins are applied later via output/reserved budgets.
+    """
     if isinstance(explicit_effective, int) and explicit_effective > 0:
         if isinstance(max_context, int) and max_context > 0:
             return min(explicit_effective, max_context)
         return explicit_effective
 
     if isinstance(max_context, int) and max_context > 0:
-        return max(1, int(max_context * EFFECTIVE_CONTEXT_RATIO))
+        return max_context
     return None
+
+
+def compute_usable_context_window(
+    model_max_context: int,
+    *,
+    model_max_output: int | None = None,
+    reserved: int | None = None,
+) -> int:
+    """Return context available for prompt/history after output and reserve."""
+    effective_output = model_max_output or DEFAULT_OUTPUT_BUDGET
+    if reserved is None:
+        reserved = min(_cfg().compaction_reserved, effective_output)
+    return max(0, model_max_context - effective_output - reserved)
 
 
 def get_effective_context_window(model_info: Any | None) -> int | None:

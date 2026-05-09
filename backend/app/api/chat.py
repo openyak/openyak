@@ -30,6 +30,10 @@ from app.session.compaction import run_compaction
 from app.session.manager import get_session
 from app.session.manager import delete_messages_after, update_message_file_parts, update_message_text
 from app.session.processor import run_generation
+from app.session.utils import (
+    compute_usable_context_window,
+    get_effective_context_window,
+)
 from app.streaming.events import AGENT_ERROR, COMPACTION_ERROR, DONE, PERMISSION_RESOLVED, QUESTION_RESOLVED, SSEEvent
 from app.streaming.manager import GenerationJob, StreamManager
 from app.utils.id import generate_ulid
@@ -89,13 +93,12 @@ async def _get_session_context_usage_ratio(
         return None
 
     _provider, model_info = resolved
-    effective_context = model_info.metadata.get("effective_context_window") if model_info.metadata else None
-    max_context = (
-        min(effective_context, model_info.capabilities.max_context)
-        if isinstance(effective_context, (int, float)) and effective_context > 0
-        else model_info.capabilities.max_context
+    max_context = get_effective_context_window(model_info) or model_info.capabilities.max_context
+    context_limit = compute_usable_context_window(
+        max_context,
+        model_max_output=model_info.capabilities.max_output,
     )
-    if not max_context or max_context <= 0:
+    if not context_limit or context_limit <= 0:
         return None
 
     async with session_factory() as db:
@@ -118,7 +121,7 @@ async def _get_session_context_usage_ratio(
         cache_read = int(tokens.get("cache_read", 0) or 0)
         total_tokens = input_tokens + cache_read
         if total_tokens > 0:
-            return total_tokens / max_context
+            return total_tokens / context_limit
     return 0.0
 
 
