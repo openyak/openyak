@@ -42,12 +42,6 @@ _SUBSCRIPTION_MODELS: list[dict[str, Any]] = [
             "max_context": 1_050_000,
             "max_output": 128_000,
         },
-        "metadata": {
-            # Same effective-window reasoning as 5.4: the advertised window is
-            # generous but Codex-style interactive sessions compact earlier.
-            # Tighten as soon as we have a measured value for 5.5 specifically.
-            "effective_context_window": 258_000,
-        },
     },
     {
         "id": "gpt-5.4",
@@ -59,12 +53,6 @@ _SUBSCRIPTION_MODELS: list[dict[str, Any]] = [
             "json_output": True,
             "max_context": 1_050_000,
             "max_output": 128_000,
-        },
-        "metadata": {
-            # The advertised GPT-5.4 window is large, but the interactive Codex
-            # experience compacts much earlier. Use the smaller effective window
-            # for UI/compaction decisions while preserving the raw capability.
-            "effective_context_window": 258_000,
         },
     },
 ]

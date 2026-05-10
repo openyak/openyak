@@ -6,6 +6,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/), and this project
 
 ## [Unreleased]
 
+### Fixed
+
+- **backend (context window):** Removed the artificial ChatGPT subscription effective context cap so models use their advertised context window by default, with proactive compaction now starting at 85% while still preserving output and safety reserves.
+
 ## [1.1.9] - 2026-04-29
 
 ### Added
