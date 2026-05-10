@@ -12,15 +12,38 @@ class TestShouldCompact:
         usage = {"input": 120_000, "output": 5_000}
         assert should_compact(usage, model_max_context=128_000, reserved=20_000)
 
-    def test_just_below_ninety_percent_threshold(self):
-        usage = {"input": 89_826, "output": 0}
+    def test_below_output_safe_threshold(self):
+        usage = {"input": 99_807, "output": 0}
         # usable = 128000 - 8192(effective_output) - 20000(reserved) = 99808
-        # threshold = int(99808 * 0.9) = 89827
         assert not should_compact(usage, model_max_context=128_000, reserved=20_000)
 
-    def test_at_ninety_percent_threshold(self):
-        usage = {"input": 89_827, "output": 0}
+    def test_over_output_safe_threshold(self):
+        usage = {"input": 99_809, "output": 0}
         assert should_compact(usage, model_max_context=128_000, reserved=20_000)
+
+    def test_proactive_threshold_uses_eighty_five_percent_context(self):
+        usage = {"input": 108_800, "output": 0}
+        assert should_compact(
+            usage,
+            model_max_context=128_000,
+            model_max_output=512,
+        )
+
+    def test_below_proactive_threshold_when_output_reserve_allows_more(self):
+        usage = {"input": 108_799, "output": 0}
+        assert not should_compact(
+            usage,
+            model_max_context=128_000,
+            model_max_output=512,
+        )
+
+    def test_large_context_model_compacts_at_eighty_five_percent(self):
+        usage = {"input": 892_500, "output": 0}
+        assert should_compact(
+            usage,
+            model_max_context=1_050_000,
+            model_max_output=128_000,
+        )
 
     def test_empty_usage(self):
         assert not should_compact({}, model_max_context=128_000)

@@ -45,6 +45,7 @@ logger = logging.getLogger(__name__)
 PROTECTED_TOKEN_BUDGET = 40_000  # Protect this many tokens of tool output
 SKIP_RECENT_TURNS = 2  # Don't compact the last N assistant messages
 PROTECTED_TOOLS = frozenset({"skill"})  # Never prune these tool outputs
+AUTO_COMPACT_CONTEXT_RATIO = 0.85  # Proactively compact before the hard context edge
 
 
 @dataclass
@@ -337,13 +338,16 @@ def should_compact(
     *,
     model_max_output: int | None = None,
     reserved: int | None = None,
+    threshold_ratio: float = AUTO_COMPACT_CONTEXT_RATIO,
 ) -> bool:
     """Check if context usage warrants compaction.
 
     Mirrors OpenCode ``SessionCompaction.isOverflow()`` budget shape:
       - reserved defaults to ``min(20_000, model_max_output)``
       - usable = model_max_context - output_budget - reserved
-      - auto compact starts at 90% of usable context
+
+    Also applies a proactive threshold so compaction starts around 85% of the
+    provider-reported context window instead of waiting for the hard edge.
     """
     total_tokens = usage.get("total", 0)
     if not total_tokens:
@@ -358,5 +362,5 @@ def should_compact(
         model_max_output=model_max_output,
         reserved=reserved,
     )
-    threshold = int(usable * 0.9)
+    threshold = min(usable, int(model_max_context * threshold_ratio))
     return total_tokens >= threshold and threshold > 0
