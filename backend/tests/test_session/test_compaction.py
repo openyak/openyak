@@ -12,13 +12,14 @@ class TestShouldCompact:
         usage = {"input": 120_000, "output": 5_000}
         assert should_compact(usage, model_max_context=128_000, reserved=20_000)
 
-    def test_exactly_at_threshold(self):
-        usage = {"input": 99_807, "output": 0}
+    def test_just_below_ninety_percent_threshold(self):
+        usage = {"input": 89_826, "output": 0}
         # usable = 128000 - 8192(effective_output) - 20000(reserved) = 99808
+        # threshold = int(99808 * 0.9) = 89827
         assert not should_compact(usage, model_max_context=128_000, reserved=20_000)
 
-    def test_just_over_threshold(self):
-        usage = {"input": 108_001, "output": 0}
+    def test_at_ninety_percent_threshold(self):
+        usage = {"input": 89_827, "output": 0}
         assert should_compact(usage, model_max_context=128_000, reserved=20_000)
 
     def test_empty_usage(self):

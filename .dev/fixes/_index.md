@@ -8,7 +8,7 @@
 (empty)
 
 ### session
-(empty)
+- [Context window limited to about 43k on long-context models](session/context-window-limited-to-43k.md)
 
 ### tool
 (empty)
@@ -24,6 +24,7 @@
 
 ### frontend
 - [dev:all browser UI shows no models and API requests return 401](frontend/dev-all-web-ui-api-401.md)
+- [Image attachments ignored by non-vision models](frontend/image-attachments-ignored-by-non-vision-models.md)
 
 ### desktop
 (empty)
@@ -46,3 +47,5 @@
 | Click handler fires twice | `useState` guard vs `useRef` guard | Switch to `useRef` for sync guard | (add record) |
 | Startup crash — one bad plugin | Missing try-catch in init loop | Wrap per-item in try-catch | (add record) |
 | dev:all browser UI shows no models / API 401 | Web dev proxy missing session token | Run through `scripts/dev-all.mjs` dev token bridge | [record](frontend/dev-all-web-ui-api-401.md) |
+| Context window is about 43k on 128k+ models | Synthetic `effective_context_window` default | Use raw model context unless provider sets explicit override | [record](session/context-window-limited-to-43k.md) |
+| Image attachment is ignored or guessed | Non-vision model received stripped image content | Block image input unless selected model is explicitly vision-capable | [record](frontend/image-attachments-ignored-by-non-vision-models.md) |

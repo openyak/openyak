@@ -7,8 +7,6 @@ import logging
 
 from app.provider.base import BaseProvider
 from app.schemas.provider import ModelInfo, ProviderStatus
-from app.session.utils import compute_effective_context_window
-
 logger = logging.getLogger(__name__)
 
 MODEL_REFRESH_TIMEOUT_SECONDS = 45.0
@@ -81,15 +79,6 @@ class ProviderRegistry:
 
             result[pid] = models
             for m in models:
-                metadata = dict(m.metadata or {})
-                effective = compute_effective_context_window(
-                    m.capabilities.max_context,
-                    metadata.get("effective_context_window"),
-                )
-                if effective is not None:
-                    metadata["effective_context_window"] = effective
-                    m.metadata = metadata
-
                 # Full list keeps everything (including duplicates)
                 new_full.append((provider, m))
 

@@ -44,6 +44,7 @@ class EditAndResendRequest(BaseModel):
     message_id: str  # The user message to edit
     text: str  # New text content
     model: str | None = None
+    provider_id: str | None = None
     agent: str = "build"
     attachments: list[dict[str, Any]] = []
     permission_presets: dict[str, bool] | None = None

@@ -30,6 +30,11 @@ from app.session.compaction import run_compaction
 from app.session.manager import get_session
 from app.session.manager import delete_messages_after, update_message_file_parts, update_message_text
 from app.session.processor import run_generation
+from app.session.utils import (
+    compute_usable_context_window,
+    get_effective_context_window,
+    has_image_attachments,
+)
 from app.streaming.events import AGENT_ERROR, COMPACTION_ERROR, DONE, PERMISSION_RESOLVED, QUESTION_RESOLVED, SSEEvent
 from app.streaming.manager import GenerationJob, StreamManager
 from app.utils.id import generate_ulid
@@ -39,9 +44,43 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _MANUAL_COMPACTION_MIN_USAGE_RATIO = 0.5
+MODEL_DOES_NOT_SUPPORT_IMAGES = "MODEL_DOES_NOT_SUPPORT_IMAGES"
 
 # Heartbeat interval (seconds) — prevents proxy/CDN timeout
 _HEARTBEAT_INTERVAL = 15.0
+
+
+def _unsupported_images_error() -> HTTPException:
+    return HTTPException(
+        status_code=400,
+        detail={
+            "code": MODEL_DOES_NOT_SUPPORT_IMAGES,
+            "message": "The selected model does not support images. Choose a vision model and try again.",
+        },
+    )
+
+
+def _ensure_image_attachments_supported(
+    *,
+    attachments: list[dict[str, Any]] | None,
+    provider_registry,
+    model_id: str | None,
+    provider_id: str | None,
+) -> None:
+    """Reject image inputs unless the requested model is explicitly vision-capable."""
+    if not has_image_attachments(attachments):
+        return
+
+    if not model_id:
+        raise _unsupported_images_error()
+
+    resolved = provider_registry.resolve_model(model_id, provider_id)
+    if resolved is None:
+        raise _unsupported_images_error()
+
+    _provider, model_info = resolved
+    if not model_info.capabilities.vision:
+        raise _unsupported_images_error()
 
 
 def _on_task_done(task: asyncio.Task[None], *, job: GenerationJob) -> None:
@@ -89,13 +128,12 @@ async def _get_session_context_usage_ratio(
         return None
 
     _provider, model_info = resolved
-    effective_context = model_info.metadata.get("effective_context_window") if model_info.metadata else None
-    max_context = (
-        min(effective_context, model_info.capabilities.max_context)
-        if isinstance(effective_context, (int, float)) and effective_context > 0
-        else model_info.capabilities.max_context
+    max_context = get_effective_context_window(model_info) or model_info.capabilities.max_context
+    context_limit = compute_usable_context_window(
+        max_context,
+        model_max_output=model_info.capabilities.max_output,
     )
-    if not max_context or max_context <= 0:
+    if not context_limit or context_limit <= 0:
         return None
 
     async with session_factory() as db:
@@ -118,7 +156,7 @@ async def _get_session_context_usage_ratio(
         cache_read = int(tokens.get("cache_read", 0) or 0)
         total_tokens = input_tokens + cache_read
         if total_tokens > 0:
-            return total_tokens / max_context
+            return total_tokens / context_limit
     return 0.0
 
 
@@ -133,6 +171,13 @@ async def start_prompt(
     index_manager: IndexManagerDep,
 ) -> PromptResponse:
     """Start a new generation. Returns stream_id for SSE subscription."""
+    _ensure_image_attachments_supported(
+        attachments=body.attachments,
+        provider_registry=provider_registry,
+        model_id=body.model,
+        provider_id=body.provider_id,
+    )
+
     session_id = body.session_id or generate_ulid()
     stream_id = generate_ulid()
 
@@ -259,6 +304,13 @@ async def edit_and_resend(
     index_manager: IndexManagerDep,
 ) -> PromptResponse:
     """Edit a user message, delete all subsequent messages, and re-generate."""
+    _ensure_image_attachments_supported(
+        attachments=body.attachments,
+        provider_registry=provider_registry,
+        model_id=body.model,
+        provider_id=body.provider_id,
+    )
+
     stream_id = generate_ulid()
 
     # Atomic DB operation: update message text + delete subsequent messages
@@ -280,6 +332,7 @@ async def edit_and_resend(
         session_id=body.session_id,
         text=body.text,
         model=body.model,
+        provider_id=body.provider_id,
         agent=body.agent,
         attachments=body.attachments,
         permission_presets=body.permission_presets,

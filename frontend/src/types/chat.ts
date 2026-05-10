@@ -15,6 +15,7 @@ export interface PromptRequest {
   session_id?: string | null;
   text: string;
   model?: string | null;
+  provider_id?: string | null;
   agent?: string;
   attachments?: FileAttachment[];
   permission_presets?: Record<string, boolean> | null;
@@ -33,6 +34,7 @@ export interface EditAndResendRequest {
   message_id: string;
   text: string;
   model?: string | null;
+  provider_id?: string | null;
   agent?: string;
   attachments?: FileAttachment[];
   permission_presets?: Record<string, boolean> | null;
