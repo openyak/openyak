@@ -116,6 +116,8 @@ export function MessageList({
   const { scrollRef, scrollElementRef, bottomRef, isAtBottom, scrollToBottom } = useScrollAnchor();
   const topSentinelRef = useRef<HTMLDivElement>(null);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [canFetchOlderMessages, setCanFetchOlderMessages] = useState(false);
+  const anchoredSessionRef = useRef<string | undefined>(undefined);
 
   // Keep StreamingMessage visible briefly after generation finishes so the
   // DB-fetched AssistantMessageGroup has time to render. Without this,
@@ -144,11 +146,31 @@ export function MessageList({
     }
   }, [messages.length, showStreamingFallback]);
 
+  useEffect(() => {
+    if (anchoredSessionRef.current === sessionId) return;
+    anchoredSessionRef.current = sessionId;
+    setCanFetchOlderMessages(false);
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (canFetchOlderMessages || isLoading || messages.length === 0) return;
+    if (sessionId && messages.some((message) => message.session_id !== sessionId)) return;
+
+    const frame = requestAnimationFrame(() => {
+      const container = scrollElementRef.current;
+      if (!container) return;
+      container.scrollTop = container.scrollHeight;
+      setCanFetchOlderMessages(true);
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [canFetchOlderMessages, isLoading, messages, scrollElementRef, sessionId]);
+
   // Reverse infinite scroll: observe top sentinel to load older messages
   useEffect(() => {
     const sentinel = topSentinelRef.current;
     const container = scrollElementRef.current;
-    if (!sentinel || !container || !hasPreviousPage || isFetchingPreviousPage) return;
+    if (!sentinel || !container || !canFetchOlderMessages || !hasPreviousPage || isFetchingPreviousPage) return;
 
     const observer = new IntersectionObserver(
       ([entry]) => {
@@ -167,7 +189,7 @@ export function MessageList({
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [hasPreviousPage, isFetchingPreviousPage, fetchPreviousPage, scrollElementRef]);
+  }, [canFetchOlderMessages, hasPreviousPage, isFetchingPreviousPage, fetchPreviousPage, scrollElementRef]);
 
   // Track known message IDs to distinguish historical vs new messages.
   // Messages present on first render (or first data load) are "old" — skip animation.
@@ -255,7 +277,11 @@ export function MessageList({
     // to avoid a jarring skeleton → content transition during page navigation
     if (isGenerating || !!streamId) {
       return (
-        <div ref={scrollRef} className="relative flex-1 overflow-y-auto overscroll-contain scrollbar-auto">
+        <div
+          ref={scrollRef}
+          data-testid="message-list-scroller"
+          className="relative flex-1 overflow-y-auto overscroll-contain scrollbar-auto"
+        >
           {/* Show optimistic user bubble during loading so it doesn't flash
               away between navigation and message fetch completion */}
           {pendingUserText && (
@@ -323,7 +349,11 @@ export function MessageList({
 
   return (
     <div className="relative flex-1 overflow-hidden">
-      <div ref={scrollRef} className="h-full overflow-y-auto overscroll-contain scrollbar-auto">
+      <div
+        ref={scrollRef}
+        data-testid="message-list-scroller"
+        className="h-full overflow-y-auto overscroll-contain scrollbar-auto"
+      >
         {/* Top sentinel for reverse infinite scroll */}
         <div ref={topSentinelRef} className="h-px" />
         {isFetchingPreviousPage && (
