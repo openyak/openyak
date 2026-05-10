@@ -696,27 +696,27 @@ const longConversationMessages = Array.from({ length: 60 }, (_, index) => {
       "session-long",
       `user-${turn}`,
       "user",
-      index >= 56
+      `Long user turn ${turn}: ${index >= 56
         ? [
             "Before I send this to the board, can you sanity-check whether the vendor renewal risk should stay yellow or move to red?",
             "Can you use the same context to draft the final decision paragraph for the pre-read?",
             "Please make the last paragraph sound like an operator wrote it, not like a generic summary.",
             "Now give me the final version with the launch decision, owners, deadlines, and open risks in one place.",
           ][index - 56]
-        : prompt,
+        : prompt}`,
     ),
     textMessage(
       "session-long",
       `assistant-${turn}`,
       "assistant",
-      index >= 56
+      `Long assistant turn ${turn}: ${index >= 56
         ? [
             "Keep vendor renewal at yellow unless Legal misses the notice-window confirmation. It becomes red only if the renewal date is inside the freeze period or if the DPA language cannot be confirmed before procurement approval.",
             "Recommended decision: approve the launch for the board packet, conditional on Finance confirming the contractor exit date, Product closing the onboarding checklist, and Legal locking the renewal notice window before final approval.",
             "Here is a more operator-style close: We can move forward, but only with named owners on the three unresolved items. Finance owns run-rate, Product owns onboarding completion, and Legal owns renewal timing.",
             "Final version: launch is approved with conditions. Product closes enterprise onboarding gaps by Wednesday, Finance confirms the support contractor run-rate by Friday, Legal locks the vendor renewal window before procurement approval, and CS sends account-owner guidance after those three checks are complete.",
           ][index - 56]
-        : reply,
+        : reply}`,
       { input: 48000 + index * 700, output: 180, reasoning: 12, cache_read: 0, cache_write: 0 },
     ),
   ];

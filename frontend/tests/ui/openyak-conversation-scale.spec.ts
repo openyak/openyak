@@ -66,7 +66,7 @@ test.describe("OpenYak conversation scale and compaction GUI workflows", () => {
     await expect(page.getByText("Long assistant turn 060")).toBeVisible();
     await expect(page.getByText("Long user turn 001")).toHaveCount(0);
 
-    const scroller = page.locator(".scrollbar-auto").first();
+    const scroller = page.getByTestId("message-list-scroller");
     await scroller.hover();
     await page.mouse.wheel(0, -12000);
 
