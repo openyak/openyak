@@ -14,6 +14,11 @@ from typing import Any
 import httpx
 
 from app.provider.rapid_mlx import DEFAULT_BASE_URL, DEFAULT_MODEL
+from app.rapid_mlx.catalog import (
+    RAPID_MLX_ALIAS_REPOS,
+    canonical_rapid_mlx_model,
+    resolve_rapid_mlx_repo,
+)
 
 DEFAULT_PORT = 18080
 
@@ -22,31 +27,7 @@ _COMMON_BINARY_PATHS = (
     "/usr/local/bin/rapid-mlx",
 )
 
-_ALIAS_REPOS: dict[str, str] = {
-    "deepseek-r1-32b": "mlx-community/DeepSeek-R1-Distill-Qwen-32B-4bit",
-    "deepseek-r1-8b": "mlx-community/DeepSeek-R1-0528-Qwen3-8B-4bit",
-    "devstral-v2-24b": "mlx-community/Devstral-Small-2-24B-Instruct-2512-4bit",
-    "gemma-4-26b": "mlx-community/gemma-4-26b-a4b-it-4bit",
-    "gemma-4-31b": "mlx-community/gemma-4-31b-it-4bit",
-    "gpt-oss-20b": "mlx-community/GPT-OSS-20B-4bit",
-    "mistral-24b": "mlx-community/Mistral-Small-3.1-24B-Instruct-2503-4bit",
-    "nemotron-30b": "lmstudio-community/NVIDIA-Nemotron-3-Nano-30B-A3B-MLX-4bit",
-    "qwen3-coder": "lmstudio-community/Qwen3-Coder-Next-MLX-4bit",
-    "qwen3-coder-30b": "mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit",
-    "qwen3-vl-30b": "mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit",
-    "qwen3-vl-4b": "mlx-community/Qwen3-VL-4B-Instruct-MLX-4bit",
-    "qwen3-vl-8b": "mlx-community/Qwen3-VL-8B-Instruct-4bit",
-    "qwen3.5-122b": "nightmedia/Qwen3.5-122B-A10B-Text-mxfp4-mlx",
-    "qwen3.5-122b-8bit": "mlx-community/Qwen3.5-122B-A10B-8bit",
-    "qwen3.5-27b": "mlx-community/Qwen3.5-27B-4bit",
-    "qwen3.5-35b": "mlx-community/Qwen3.5-35B-A3B-8bit",
-    "qwen3.5-4b": "mlx-community/Qwen3.5-4B-MLX-4bit",
-    "qwen3.5-9b": "mlx-community/Qwen3.5-9B-4bit",
-    "qwen3.6-27b": "mlx-community/Qwen3.6-27B-4bit",
-    "qwen3.6-27b-8bit": "unsloth/Qwen3.6-27B-MLX-8bit",
-    "qwen3.6-35b": "mlx-community/Qwen3.6-35B-A3B-4bit",
-    "qwen3.6-35b-6bit": "mlx-community/Qwen3.6-35B-A3B-6bit",
-}
+_ALIAS_REPOS = RAPID_MLX_ALIAS_REPOS
 
 
 def _platform_supported() -> bool:
@@ -127,7 +108,7 @@ class RapidMLXManager:
         return {alias: self.is_model_cached(alias) for alias in aliases}
 
     def is_model_cached(self, alias_or_repo: str) -> bool:
-        repo = _ALIAS_REPOS.get(alias_or_repo, alias_or_repo)
+        repo = resolve_rapid_mlx_repo(alias_or_repo)
         if "/" not in repo:
             return False
         cache_dir = _huggingface_cache_dir() / f"models--{repo.replace('/', '--')}"
@@ -148,8 +129,8 @@ class RapidMLXManager:
         model = alias_or_repo.strip()
         if not model:
             raise RuntimeError("Rapid-MLX model alias is required.")
-        resolved_model = _ALIAS_REPOS.get(model, model)
-        resolved_running_model = _ALIAS_REPOS.get(self._model, self._model)
+        resolved_model = canonical_rapid_mlx_model(model)
+        resolved_running_model = canonical_rapid_mlx_model(self._model)
         if self.is_managed_process_alive and (
             model == self._model or resolved_model == resolved_running_model
         ):
@@ -158,7 +139,7 @@ class RapidMLXManager:
         proc = await asyncio.create_subprocess_exec(
             executable,
             "rm",
-            resolved_model,
+            resolve_rapid_mlx_repo(model),
             cwd=str(self.data_dir),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -181,10 +162,11 @@ class RapidMLXManager:
             raise RuntimeError("rapid-mlx is not installed.")
 
         next_model = model.strip() or DEFAULT_MODEL
+        next_identity = canonical_rapid_mlx_model(next_model)
         base_url = _base_url_for_port(port)
         if await _rapid_mlx_running(base_url):
             if self.is_managed_process_alive:
-                if self._model == next_model and self._port == port:
+                if canonical_rapid_mlx_model(self._model) == next_identity and self._port == port:
                     return base_url
                 await self.stop()
             else:
@@ -197,7 +179,7 @@ class RapidMLXManager:
                 await _terminate_pid(pid)
 
         if self.is_managed_process_alive:
-            if self._model == next_model and self._port == port:
+            if canonical_rapid_mlx_model(self._model) == next_identity and self._port == port:
                 return base_url
             await self.stop()
 

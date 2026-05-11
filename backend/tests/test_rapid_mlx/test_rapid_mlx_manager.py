@@ -28,6 +28,15 @@ def test_rapid_mlx_port_parsing():
     assert manager_module._port_from_base_url("https://example.test/v1") is None
 
 
+def test_rapid_mlx_canonicalizes_alias_and_repo():
+    assert manager_module.canonical_rapid_mlx_model("qwen3.5-9b") == (
+        "mlx-community/qwen3.5-9b-4bit"
+    )
+    assert manager_module.canonical_rapid_mlx_model(
+        "rapid-mlx/mlx-community/Qwen3.5-9B-4bit"
+    ) == "mlx-community/qwen3.5-9b-4bit"
+
+
 def test_rapid_mlx_process_parser_finds_server_on_port():
     output = """
       123 /usr/bin/python /opt/homebrew/bin/rapid-mlx serve qwen3.5-4b --host 127.0.0.1 --port 18080

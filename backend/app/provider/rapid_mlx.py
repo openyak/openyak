@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 
 from app.provider.openai_compat import OpenAICompatProvider
+from app.rapid_mlx.catalog import rapid_mlx_model_supports_vision
 from app.schemas.provider import (
     ModelCapabilities,
     ModelInfo,
@@ -30,10 +31,10 @@ def _model_name(name: str) -> str:
     return "Rapid-MLX Default" if name == DEFAULT_MODEL else name
 
 
-def _rapid_capabilities() -> ModelCapabilities:
+def _rapid_capabilities(model: str = DEFAULT_MODEL) -> ModelCapabilities:
     return ModelCapabilities(
         function_calling=True,
-        vision=False,
+        vision=rapid_mlx_model_supports_vision(model),
         reasoning=True,
         json_output=True,
         max_context=32_768,
@@ -76,7 +77,7 @@ class RapidMLXProvider(OpenAICompatProvider):
                         id=_model_id(name),
                         name=_model_name(name),
                         provider_id=self.id,
-                        capabilities=_rapid_capabilities(),
+                        capabilities=_rapid_capabilities(name),
                         pricing=ModelPricing(prompt=0.0, completion=0.0),
                         metadata={"local": True},
                     )
@@ -93,7 +94,7 @@ class RapidMLXProvider(OpenAICompatProvider):
                     id=_model_id(DEFAULT_MODEL),
                     name=_model_name(DEFAULT_MODEL),
                     provider_id=self.id,
-                    capabilities=_rapid_capabilities(),
+                    capabilities=_rapid_capabilities(DEFAULT_MODEL),
                     pricing=ModelPricing(prompt=0.0, completion=0.0),
                     metadata={"local": True},
                 )

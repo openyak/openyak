@@ -24,7 +24,10 @@ import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
 import { errorToMessage } from "@/lib/errors";
 import { API, queryKeys } from "@/lib/constants";
-import { LOCAL_MODEL_RECOMMENDATIONS } from "@/lib/local-models";
+import {
+  canonicalRapidMlxModel,
+  LOCAL_MODEL_RECOMMENDATIONS,
+} from "@/lib/local-models";
 import { useSettingsStore } from "@/stores/settings-store";
 
 interface RapidMLXRuntimeStatus {
@@ -39,8 +42,6 @@ interface RapidMLXRuntimeStatus {
   executable_path: string | null;
   install_commands: string[];
 }
-
-const normalizeModelValue = (value: string) => value.trim().toLowerCase();
 
 export function RapidMLXPanel() {
   const qc = useQueryClient();
@@ -69,7 +70,11 @@ export function RapidMLXPanel() {
   const selectedModel = useMemo(
     () =>
       LOCAL_MODEL_RECOMMENDATIONS.find((model) =>
-        model.variants.some((variant) => variant.rapidMlxAlias === modelInput),
+        model.variants.some(
+          (variant) =>
+            canonicalRapidMlxModel(variant.rapidMlxAlias) ===
+            canonicalRapidMlxModel(modelInput),
+        ),
       ) ?? LOCAL_MODEL_RECOMMENDATIONS[0],
     [modelInput],
   );
@@ -147,7 +152,8 @@ export function RapidMLXPanel() {
   const isRunningModelAlias = (alias: string | undefined) =>
     !!alias &&
     !!status?.running &&
-    normalizeModelValue(status.current_model) === normalizeModelValue(alias);
+    canonicalRapidMlxModel(status.current_model) ===
+      canonicalRapidMlxModel(alias);
   const selectedModelIsRunning =
     isRunningModelAlias(modelInput) && status?.port === selectedPort;
   const primaryActionLabel = selectedModelIsRunning
@@ -282,7 +288,9 @@ export function RapidMLXPanel() {
               <select
                 value={
                   rapidVariants.find(
-                    (variant) => variant.rapidMlxAlias === modelInput,
+                    (variant) =>
+                      canonicalRapidMlxModel(variant.rapidMlxAlias) ===
+                      canonicalRapidMlxModel(modelInput),
                   )?.rapidMlxAlias ?? ""
                 }
                 onChange={(e) => setModelInput(e.target.value)}
