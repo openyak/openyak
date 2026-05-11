@@ -13,7 +13,6 @@ import { ArtifactPanel } from "@/components/artifacts/artifact-panel";
 import { PlanReviewPanel } from "@/components/plan-review/plan-review-panel";
 import { WorkspacePanel } from "@/components/workspace/workspace-panel";
 import { usePlanReviewStore } from "@/stores/plan-review-store";
-import { ConnectionStatus } from "@/components/layout/connection-status";
 import { RouteProgressBar } from "@/components/layout/route-progress-bar";
 import { SplashScreen } from "@/components/layout/splash-screen";
 import { TitleBar } from "@/components/desktop/title-bar";
@@ -283,7 +282,6 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
         animate={{ marginLeft, marginRight }}
         transition={{ type: "spring", damping: 30, stiffness: 300 }}
       >
-        <ConnectionStatus />
         <UpdateBanner />
         {children}
       </motion.main>
