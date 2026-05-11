@@ -14,9 +14,10 @@ import pytest
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api._route import Route, RouteSignatureError, _validate_and_bind
+from app.dependencies import SessionFactoryDep
 from app.errors import Conflict, NotFound, register_error_handlers
 
 
@@ -381,6 +382,26 @@ def test_stream_handler_must_accept_stream_id():
 
     with pytest.raises(RouteSignatureError, match="stream_id"):
         route.stream("/x", handler=no_stream_id, method="GET")
+
+
+def test_custom_handler_evaluates_future_annotations_for_openapi():
+    app = FastAPI()
+    route = Route(prefix="/sessions")
+
+    async def compact(
+        session_id: str,
+        session_factory: SessionFactoryDep,
+    ) -> dict[str, object]:
+        return {"session_id": session_id, "has_factory": isinstance(session_factory, async_sessionmaker)}
+
+    route.custom("POST", "/{session_id}/compact", handler=compact)
+    app.include_router(route.api_router)
+
+    schema = app.openapi()
+
+    assert "/sessions/{session_id}/compact" in schema["paths"]
+    operation = schema["paths"]["/sessions/{session_id}/compact"]["post"]
+    assert [p["name"] for p in operation["parameters"]] == ["session_id"]
 
 
 # ---------------------------------------------------------------------------

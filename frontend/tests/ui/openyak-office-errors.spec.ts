@@ -90,34 +90,30 @@ test.describe("OpenYak Office artifact and error-state GUI workflows", () => {
     await expectNoAppCrash(page);
   });
 
-  test("billing error workflow: quota and paid-model errors open the upgrade dialog", async ({ page }) => {
+  test("provider error workflow: rate-limit and payment-required errors stay in composer flow", async ({ page }) => {
     await setupMockedApp(page, {
       promptErrors: [
-        { match: "quota gate", status: 429, detail: "Weekly quota exceeded" },
-        { match: "paid model gate", status: 402, detail: "Balance required" },
+        { match: "rate limit gate", status: 429, detail: "Rate limit exceeded" },
+        { match: "payment required gate", status: 402, detail: "Payment required" },
       ],
     });
 
     await page.goto("/c/new");
-    await page.getByPlaceholder(/Describe the result you want/i).fill("quota gate");
-    const quotaResponse = page.waitForResponse((res) =>
+    await page.getByPlaceholder(/Describe the result you want/i).fill("rate limit gate");
+    const rateLimitResponse = page.waitForResponse((res) =>
       res.url().includes("/api/chat/prompt") && res.status() === 429,
     );
     await page.getByRole("button", { name: /Send message/i }).click();
-    await quotaResponse;
-    await expect(page.getByText("Weekly Free Quota Reached")).toBeVisible();
-    await page.getByRole("button", { name: "Try Again After Reset" }).click();
-    await expect(page.getByText("Weekly Free Quota Reached")).toBeHidden();
+    await rateLimitResponse;
+    await expect(page.getByText(/Failed to send message|API 429/i)).toBeVisible();
 
-    await page.getByPlaceholder(/Describe the result you want/i).fill("paid model gate");
-    const paidResponse = page.waitForResponse((res) =>
+    await page.getByPlaceholder(/Describe the result you want/i).fill("payment required gate");
+    const paymentRequiredResponse = page.waitForResponse((res) =>
       res.url().includes("/api/chat/prompt") && res.status() === 402,
     );
     await page.getByRole("button", { name: /Send message/i }).click();
-    await paidResponse;
-    await expect(page.getByText("Balance Required")).toBeVisible();
-    await page.getByRole("button", { name: "Use a Free Model" }).click();
-    await expect(page.getByText("Balance Required")).toBeHidden();
+    await paymentRequiredResponse;
+    await expect(page.getByText(/Failed to send message|API 402/i)).toBeVisible();
     await expectNoAppCrash(page);
   });
 

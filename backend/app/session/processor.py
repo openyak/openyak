@@ -112,7 +112,7 @@ def _normalize_step_finish_reason(reason: str | None) -> StepFinishReason:
     return "error"
 
 
-# --- Daily web_search quota tracking (single-user desktop app) ---
+# --- Daily web_search usage tracking (single-user desktop app) ---
 
 class SearchQuotaTracker:
     """Tracks daily web_search usage with automatic UTC-day reset.
@@ -123,7 +123,7 @@ class SearchQuotaTracker:
     def __init__(self) -> None:
         self._date: str = ""
         self._count: int = 0
-        self._credits_mode: bool = False  # Sticky: True once proxy confirms Credits billing
+        self._credits_mode: bool = False  # Sticky: True once hosted proxy confirms paid search.
         self._lock = asyncio.Lock()
 
     def _reset_if_new_day(self) -> None:
@@ -874,20 +874,6 @@ class SessionProcessor:
                 break
 
             except Exception as e:
-                if is_auth_error(e) and attempt == 0:
-                    _settings = get_settings()
-                    if _settings.proxy_refresh_token:
-                        from app.provider.proxy_auth import refresh_proxy_token
-
-                        refreshed = await refresh_proxy_token(_settings, sp.provider_registry)
-                        if refreshed:
-                            logger.info("Proxy token refreshed after 401, retrying stream")
-                            accumulated_text = ""
-                            accumulated_reasoning = ""
-                            tool_calls_in_step = []
-                            has_tool_calls = False
-                            continue
-
                 stream_error = e
                 retry_reason = is_retryable(e)
 
@@ -1111,7 +1097,7 @@ class SessionProcessor:
                             )
                         )
 
-                    # Web search quota tracking
+                    # Web search usage tracking
                     if tool.id == "web_search" and result.success:
                         charged = bool(result.metadata and result.metadata.get("charged"))
                         await _search_quota.increment(charged=charged)

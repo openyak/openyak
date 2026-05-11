@@ -13,13 +13,11 @@ MODEL_REFRESH_TIMEOUT_SECONDS = 45.0
 
 # Aggregator providers — their models should yield to direct providers
 # when no explicit provider_id is given.
-_AGGREGATOR_PROVIDERS = {"openrouter", "openyak-proxy"}
+_AGGREGATOR_PROVIDERS = {"openrouter"}
 
 
 def _provider_priority(provider_id: str) -> int:
     """Lower is better when deduplicating model IDs across providers."""
-    if provider_id == "openyak-proxy":
-        return 2
     if provider_id in _AGGREGATOR_PROVIDERS:
         return 1
     return 0

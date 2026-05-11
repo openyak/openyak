@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -45,7 +44,7 @@ _custom_endpoints_lock = asyncio.Lock()
 # Desktop mode (`run.py`) changes cwd to the app data directory, so this
 # becomes a writable per-user `.env` (instead of the read-only app bundle path
 # when running from a mounted DMG volume).
-# Server mode runs with `/opt/openyak-proxy` as working directory, so behavior
+# Server mode runs with its deployment directory as working directory, so behavior
 # remains compatible there as well.
 _ENV_PATH = Path(".env")
 
@@ -217,168 +216,9 @@ async def delete_api_key(settings: SettingsDep, registry: ProviderRegistryDep) -
     settings.openrouter_api_key = ""
     _remove_env_key("OPENYAK_OPENROUTER_API_KEY")
 
-    # Only unregister the provider if not in proxy mode.
-    # In proxy mode the active "openrouter" provider belongs to the proxy,
-    # not the direct API key — don't remove it.
-    if not (settings.proxy_url and settings.proxy_token):
-        registry.unregister("openrouter")
+    registry.unregister("openrouter")
 
     return ApiKeyStatus(is_configured=False)
-
-
-# ── OpenYak Account (proxy mode) ───────────────────────────────────────────
-
-class OpenYakAccountStatus(BaseModel):
-    is_connected: bool = False
-    proxy_url: str = ""
-    email: str = ""
-    has_refresh_token: bool = False
-
-
-class OpenYakAccountConnect(BaseModel):
-    proxy_url: str  # e.g. "https://api.openyak.app"
-    token: str  # JWT from proxy auth
-    refresh_token: str = ""  # Refresh token for auto-renewal
-
-
-class OpenYakAccountDisconnect(BaseModel):
-    pass
-
-
-def _is_unauthorized_error(exc: Exception) -> bool:
-    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 401
-
-
-async def _refresh_openyak_proxy_token(
-    proxy_url: str,
-    refresh_token: str,
-) -> tuple[str, str] | None:
-    """Refresh an OpenYak proxy access token without mutating persisted settings."""
-    if not refresh_token:
-        return None
-
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"{proxy_url}/api/auth/refresh",
-                json={"refresh_token": refresh_token},
-                timeout=15.0,
-            )
-    except Exception as exc:
-        logger.warning("OpenYak token refresh failed: %s", exc)
-        return None
-
-    if resp.status_code != 200:
-        logger.warning(
-            "OpenYak token refresh rejected: HTTP %d - %s",
-            resp.status_code,
-            resp.text[:200],
-        )
-        return None
-
-    data = resp.json()
-    access_token = data.get("access_token", "")
-    if not access_token:
-        logger.warning("OpenYak token refresh returned empty access_token")
-        return None
-
-    return access_token, data.get("refresh_token", "") or refresh_token
-
-
-@router.get("/config/openyak-account", response_model=OpenYakAccountStatus)
-async def get_openyak_account_status(settings: SettingsDep) -> OpenYakAccountStatus:
-    """Check if an OpenYak account is connected (proxy mode active)."""
-    if settings.proxy_url and settings.proxy_token:
-        return OpenYakAccountStatus(
-            is_connected=True,
-            proxy_url=settings.proxy_url,
-            has_refresh_token=bool(settings.proxy_refresh_token),
-        )
-    return OpenYakAccountStatus(is_connected=False)
-
-
-@router.post("/config/openyak-account", response_model=OpenYakAccountStatus)
-async def connect_openyak_account(
-    settings: SettingsDep, registry: ProviderRegistryDep, body: OpenYakAccountConnect,
-) -> OpenYakAccountStatus:
-    """Connect an OpenYak account: switch provider to proxy mode.
-
-    The local app will now route all LLM requests through the OpenYak
-    cloud proxy, which handles billing transparently.
-    """
-    proxy_url = body.proxy_url.rstrip("/")
-    token = body.token.strip()
-
-    if not proxy_url or not token:
-        raise HTTPException(400, "proxy_url and token are required")
-
-    # Validate by trying to list models through the proxy. Existing desktop
-    # installs may hold an expired access token while still having a valid
-    # refresh token, so refresh once on 401 before asking the user to sign in.
-    refresh_token = body.refresh_token.strip()
-
-    async def _list_proxy_models(access_token: str):
-        test_provider = OpenRouterProvider(access_token, base_url=proxy_url + "/v1", provider_id="openyak-proxy")
-        return await test_provider.list_models()
-
-    try:
-        models = await _list_proxy_models(token)
-    except HTTPException:
-        raise
-    except Exception as e:
-        if _is_unauthorized_error(e) and refresh_token:
-            refreshed = await _refresh_openyak_proxy_token(proxy_url, refresh_token)
-            if not refreshed:
-                raise HTTPException(400, "OpenYak session expired. Please sign in again.") from e
-            token, refresh_token = refreshed
-            try:
-                models = await _list_proxy_models(token)
-            except Exception as retry_error:
-                logger.warning("OpenYak account connection failed after token refresh: %s", retry_error)
-                raise HTTPException(400, f"Failed to connect to proxy: {retry_error}") from retry_error
-        else:
-            logger.warning("OpenYak account connection failed: %s", e)
-            raise HTTPException(400, f"Failed to connect to proxy: {e}") from e
-
-    if not models:
-        raise HTTPException(400, "Proxy returned no models")
-
-    # Switch the provider registry to use the proxy
-    new_provider = OpenRouterProvider(token, base_url=proxy_url + "/v1", provider_id="openyak-proxy")
-    registry.register(new_provider)
-    try:
-        await registry.refresh_models()
-    except Exception as e:
-        logger.warning("Model refresh failed after proxy connect: %s — will retry on next request", e)
-
-    # Persist to .env and update runtime settings
-    _update_env_file("OPENYAK_PROXY_URL", proxy_url)
-    _update_env_file("OPENYAK_PROXY_TOKEN", token)
-    settings.proxy_url = proxy_url
-    settings.proxy_token = token
-
-    if refresh_token:
-        _update_env_file("OPENYAK_PROXY_REFRESH_TOKEN", refresh_token)
-        settings.proxy_refresh_token = refresh_token
-
-    return OpenYakAccountStatus(is_connected=True, proxy_url=proxy_url)
-
-
-@router.delete("/config/openyak-account", response_model=OpenYakAccountStatus)
-async def disconnect_openyak_account(settings: SettingsDep, registry: ProviderRegistryDep) -> OpenYakAccountStatus:
-    """Disconnect OpenYak account: revert to local API key mode."""
-    # Clear proxy settings
-    settings.proxy_url = ""
-    settings.proxy_token = ""
-    settings.proxy_refresh_token = ""
-    _update_env_file("OPENYAK_PROXY_URL", "")
-    _update_env_file("OPENYAK_PROXY_TOKEN", "")
-    _remove_env_key("OPENYAK_PROXY_REFRESH_TOKEN")
-
-    # Unregister proxy provider
-    registry.unregister("openyak-proxy")
-
-    return OpenYakAccountStatus(is_connected=False)
 
 
 # ── Ollama (Local LLM) ────────────────────────────────────────────────────

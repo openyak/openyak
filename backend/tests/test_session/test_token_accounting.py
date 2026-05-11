@@ -37,7 +37,7 @@ def test_calculate_step_cost_zero_when_pricing_unavailable():
 
 
 def test_calculate_step_cost_direct_usd_no_markup():
-    """Billing uses direct USD — no markup applied."""
+    """Cost accounting uses direct USD with no markup applied."""
     model = _model(prompt_per_million=2.0, completion_per_million=8.0)
     usage = {"input": 1_000, "output": 500, "reasoning": 500}
 

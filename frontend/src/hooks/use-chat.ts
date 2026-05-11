@@ -9,7 +9,6 @@ import { API, queryKeys } from "@/lib/constants";
 import { getChatRoute } from "@/lib/routes";
 import { useChatStore } from "@/stores/chat-store";
 import { useSettingsStore } from "@/stores/settings-store";
-import { useBillingStore } from "@/stores/billing-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useActivityStore } from "@/stores/activity-store";
 import { useSSE } from "./use-sse";
@@ -200,20 +199,13 @@ export function useChat(currentSessionId?: string) {
         console.error("Failed to start generation:", err);
         useChatStore.getState().reset();
 
-        // Show upgrade prompt for billing errors (proxied from OpenYak proxy)
         if (err instanceof ApiError) {
           if (isUnsupportedImagesError(err)) {
             toast.error(VISION_MODEL_REQUIRED_MESSAGE);
             return false;
           }
-          if (err.status === 429) {
-            useBillingStore.getState().showUpgrade("quota_exceeded");
-            return false;
-          }
-          if (err.status === 402) {
-            useBillingStore.getState().showUpgrade("credits_required");
-            return false;
-          }
+          toast.error(err.message, { duration: 8000 });
+          return false;
         }
 
         toast.error("Failed to send message", { duration: 8000 });
@@ -393,14 +385,8 @@ export function useChat(currentSessionId?: string) {
             toast.error(VISION_MODEL_REQUIRED_MESSAGE);
             return false;
           }
-          if (err.status === 429) {
-            useBillingStore.getState().showUpgrade("quota_exceeded");
-            return false;
-          }
-          if (err.status === 402) {
-            useBillingStore.getState().showUpgrade("credits_required");
-            return false;
-          }
+          toast.error(err.message);
+          return false;
         }
 
         toast.error("Failed to edit message");

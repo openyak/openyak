@@ -23,28 +23,6 @@ async function expectNoAppCrash(page: Page) {
 test.describe("OpenYak edge-state GUI regressions", () => {
   test.describe.configure({ timeout: 75_000 });
 
-  test("billing return workflow: checkout success refreshes billing and cleans the return URL", async ({ page }) => {
-    await setupMockedApp(page);
-
-    await page.goto("/settings?tab=billing&checkout=success");
-    await expect(page).toHaveURL(/\/settings\?tab=billing$/);
-    await expect(page.getByRole("heading", { name: "Billing" })).toBeVisible();
-    await expect(page.getByText("$12.50", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("Chat: Best Free")).toBeVisible();
-    await expectNoAppCrash(page);
-  });
-
-  test("billing disconnected workflow: signed-out account shows the billing empty state and routes to providers", async ({ page }) => {
-    await setupMockedApp(page, undefined, { authConnected: false });
-
-    await page.goto("/settings?tab=billing");
-    await expect(page.locator("p:visible").filter({ hasText: "Connect an OpenYak account to top up and access premium models." })).toBeVisible();
-    await page.getByRole("button", { name: "Go to Settings" }).click();
-    await expect(page).toHaveURL(/\/settings\?tab=providers$/);
-    await expect(page.getByRole("heading", { name: "Providers" })).toBeVisible();
-    await expectNoAppCrash(page);
-  });
-
   test("auth expiry workflow: backend 401 while sending is recoverable and keeps the composer usable", async ({ page }) => {
     await setupMockedApp(page, {
       promptErrors: [{ match: "expired auth", status: 401, detail: "Session expired" }],
@@ -58,7 +36,7 @@ test.describe("OpenYak edge-state GUI regressions", () => {
     await page.getByRole("button", { name: /Send message/i }).click();
     await failedPrompt;
 
-    await expect(page.getByText("Failed to send message")).toBeVisible();
+    await expect(page.getByText(/Session expired|API 401/i)).toBeVisible();
     await expect(page.getByPlaceholder(/Describe the result you want/i)).toBeVisible();
     await expectNoAppCrash(page);
   });

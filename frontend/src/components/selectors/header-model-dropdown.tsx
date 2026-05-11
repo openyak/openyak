@@ -3,11 +3,15 @@
 import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "react-i18next";
-import { AlertCircle, Check, ChevronDown, Loader2, Star } from "lucide-react";
+import { AlertCircle, Check, ChevronDown, Loader2 } from "lucide-react";
 import { useProviderModels } from "@/hooks/use-provider-models";
 import { useModelArenaMap, type ArenaScore } from "@/hooks/use-arena-scores";
 import { useSettingsStore } from "@/stores/settings-store";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   Command,
   CommandInput,
@@ -23,14 +27,24 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { usdToCreditsPerM, formatCreditsPerM } from "@/lib/pricing";
+import { usdToCentsPerM, formatUsdPerM } from "@/lib/pricing";
 import type { ModelInfo } from "@/types/model";
 
 const PROVIDER_LABELS: Record<string, string> = {
-  openai: "OpenAI", anthropic: "Anthropic", google: "Gemini", groq: "Groq",
-  deepseek: "DeepSeek", mistral: "Mistral", xai: "xAI", together: "Together",
-  deepinfra: "DeepInfra", cerebras: "Cerebras", cohere: "Cohere",
-  perplexity: "Perplexity", fireworks: "Fireworks", azure: "Azure",
+  openai: "OpenAI",
+  anthropic: "Anthropic",
+  google: "Gemini",
+  groq: "Groq",
+  deepseek: "DeepSeek",
+  mistral: "Mistral",
+  xai: "xAI",
+  together: "Together",
+  deepinfra: "DeepInfra",
+  cerebras: "Cerebras",
+  cohere: "Cohere",
+  perplexity: "Perplexity",
+  fireworks: "Fireworks",
+  azure: "Azure",
   openrouter: "OpenRouter",
   qwen: "Qwen",
   kimi: "Kimi",
@@ -38,6 +52,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   zhipu: "ZhipuAI",
   siliconflow: "SiliconFlow",
   xiaomi: "MiMo",
+  "rapid-mlx": "Rapid-MLX",
 };
 
 type SortMode = "name" | "price" | "quality" | "popular" | "free";
@@ -65,10 +80,10 @@ const SORT_BUTTONS_SIMPLE: { key: SortMode; i18n: string }[] = [
 ];
 
 /** Providers that have arena ranking data */
-const ARENA_PROVIDERS = new Set<string | null>(["openyak"]);
+const ARENA_PROVIDERS = new Set<string | null>([]);
 
 /**
- * Variant keywords that disambiguate OpenYak's own model tiers
+ * Variant keywords that disambiguate providers with explicit tier naming
  * (Fast / Heavy / Heavy Reasoning, etc.). Order matters: longer multi-word
  * variants are matched before single-word ones.
  *
@@ -78,15 +93,10 @@ const ARENA_PROVIDERS = new Set<string | null>(["openyak"]);
  * identity rather than as a tier, and substring matching there would split
  * legitimate brand names and collide otherwise-distinct models in the UI.
  */
-const VARIANT_KEYWORDS = [
-  "Heavy Reasoning",
-  "Fast Reasoning",
-  "Heavy",
-  "Fast",
-];
+const VARIANT_KEYWORDS = ["Heavy Reasoning", "Fast Reasoning", "Heavy", "Fast"];
 
 /** Providers whose model names use the OpenYak Fast/Heavy variant scheme. */
-const VARIANT_AWARE_PROVIDERS = new Set<string | null>(["openyak"]);
+const VARIANT_AWARE_PROVIDERS = new Set<string | null>([]);
 
 /**
  * Splits a model display name into {family, variant}. Only attempts variant
@@ -126,10 +136,16 @@ export function HeaderModelDropdown() {
   const { t } = useTranslation("common");
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const { data: models, isLoading, isError, activeProvider } = useProviderModels();
+  const {
+    data: models,
+    isLoading,
+    isError,
+    activeProvider,
+  } = useProviderModels();
   const hasArena = ARENA_PROVIDERS.has(activeProvider);
   const [sortBy, setSortBy] = useState<SortMode>(hasArena ? "popular" : "name");
-  const { selectedModel, selectedProviderId, setSelectedModel } = useSettingsStore();
+  const { selectedModel, selectedProviderId, setSelectedModel } =
+    useSettingsStore();
   const sortButtons = hasArena ? SORT_BUTTONS_FULL : SORT_BUTTONS_SIMPLE;
   // Reset sort mode when switching between providers with/without arena data
   useEffect(() => {
@@ -148,14 +164,14 @@ export function HeaderModelDropdown() {
       if (selectedModel) setSelectedModel(null);
       return;
     }
-    const modelExists = selectedModel && visibleModels.some((m) => m.id === selectedModel && m.provider_id === selectedProviderId);
+    const modelExists =
+      selectedModel &&
+      visibleModels.some(
+        (m) => m.id === selectedModel && m.provider_id === selectedProviderId,
+      );
     if (!modelExists) {
       let chosen: ModelInfo;
-      if (activeProvider === "openyak") {
-        const preferred = visibleModels.find((m) => m.id === "openyak/best-free");
-        const fallback = visibleModels.find((m) => isFreeModel(m));
-        chosen = preferred ?? fallback ?? visibleModels[0];
-      } else if (activeProvider === "chatgpt") {
+      if (activeProvider === "chatgpt") {
         // Prefer the newest flagship (5.5), fall back to 5.4 if the user's
         // subscription tier hasn't rolled it out yet, then to whatever the
         // backend did return.
@@ -168,19 +184,23 @@ export function HeaderModelDropdown() {
       }
       setSelectedModel(chosen.id, chosen.provider_id);
     }
-  }, [visibleModels, selectedModel, selectedProviderId, setSelectedModel, activeProvider]);
+  }, [
+    visibleModels,
+    selectedModel,
+    selectedProviderId,
+    setSelectedModel,
+    activeProvider,
+  ]);
 
-  const { pinnedModel, freeModels, paidModels } = useMemo(() => {
-    if (visibleModels.length === 0) return { pinnedModel: null, freeModels: [], paidModels: [] };
+  const { freeModels, paidModels } = useMemo(() => {
+    if (visibleModels.length === 0) return { freeModels: [], paidModels: [] };
 
-    let pinned: ModelInfo | null = null;
     const free: ModelInfo[] = [];
     const paid: ModelInfo[] = [];
     const isSubscription = activeProvider === "chatgpt";
 
     for (const m of visibleModels) {
-      if (m.id === "openyak/best-free" && activeProvider === "openyak") pinned = m;
-      else if (isFreeModel(m)) free.push(m);
+      if (isFreeModel(m)) free.push(m);
       else paid.push(m);
     }
 
@@ -214,12 +234,20 @@ export function HeaderModelDropdown() {
       paid.sort(makeSortFn());
     }
 
-    return { pinnedModel: pinned, freeModels: free, paidModels: paid };
+    return { freeModels: free, paidModels: paid };
   }, [visibleModels, sortBy, arenaMap, activeProvider]);
 
-  const selectedInfo = visibleModels.find((m) => m.id === selectedModel && m.provider_id === selectedProviderId)
-    ?? visibleModels.find((m) => m.id === selectedModel);
-  const selectedLabel = selectedInfo?.name ?? (selectedModel ? (selectedModel.includes("/") ? selectedModel.split("/").pop() ?? selectedModel : selectedModel) : t("noModelFound"));
+  const selectedInfo =
+    visibleModels.find(
+      (m) => m.id === selectedModel && m.provider_id === selectedProviderId,
+    ) ?? visibleModels.find((m) => m.id === selectedModel);
+  const selectedLabel =
+    selectedInfo?.name ??
+    (selectedModel
+      ? selectedModel.includes("/")
+        ? (selectedModel.split("/").pop() ?? selectedModel)
+        : selectedModel
+      : t("noModelFound"));
   const shortModel = preserveModelSuffix(selectedLabel);
 
   // Models still loading with an active provider — show loading indicator
@@ -231,7 +259,9 @@ export function HeaderModelDropdown() {
         className="inline-flex h-7 max-w-[220px] items-center gap-1.5 rounded-lg border-none bg-transparent px-3 text-[13px] font-semibold text-[var(--text-tertiary)] shadow-none focus:outline-none cursor-default"
       >
         <Loader2 className="h-4 w-4 animate-spin shrink-0" />
-        <span className="truncate">{t("loadingModels", "Loading models...")}</span>
+        <span className="truncate">
+          {t("loadingModels", "Loading models...")}
+        </span>
       </button>
     );
   }
@@ -247,11 +277,18 @@ export function HeaderModelDropdown() {
               className="inline-flex h-7 max-w-[220px] items-center gap-1.5 rounded-lg border-none bg-transparent px-3 text-[13px] font-semibold text-[var(--text-secondary)] shadow-none transition-colors hover:bg-[var(--surface-secondary)] focus:outline-none cursor-pointer"
             >
               <AlertCircle className="h-4 w-4 shrink-0 text-[var(--color-destructive)]" />
-              <span className="truncate">{t("modelsUnavailable", "Models unavailable")}</span>
+              <span className="truncate">
+                {t("modelsUnavailable", "Models unavailable")}
+              </span>
             </button>
           </TooltipTrigger>
           <TooltipContent>
-            <p>{t("modelsUnavailableHint", "Check your provider connection, firewall, or VPN settings.")}</p>
+            <p>
+              {t(
+                "modelsUnavailableHint",
+                "Check your provider connection, firewall, or VPN settings.",
+              )}
+            </p>
           </TooltipContent>
         </Tooltip>
       </TooltipProvider>
@@ -310,7 +347,11 @@ export function HeaderModelDropdown() {
           <ChevronDown className="h-4 w-4 opacity-50 shrink-0" />
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-[min(520px,calc(100vw-24px))] p-0 overflow-hidden" align="start" sideOffset={4}>
+      <PopoverContent
+        className="w-[min(520px,calc(100vw-24px))] p-0 overflow-hidden"
+        align="start"
+        sideOffset={4}
+      >
         <TooltipProvider delayDuration={300}>
           <Command>
             <CommandInput placeholder={t("searchModels")} />
@@ -345,40 +386,19 @@ export function HeaderModelDropdown() {
                 </div>
               ) : (
                 <>
-                  {/* Pinned platform model at top */}
-                  {pinnedModel && (
-                    <CommandGroup>
-                      <CommandItem
-                        value={pinnedModel.name}
-                        onSelect={() => {
-                          setSelectedModel(pinnedModel.id, pinnedModel.provider_id);
-                          setOpen(false);
-                        }}
-                        className="text-sm"
-                      >
-                        <Check
-                          className={cn(
-                            "mr-2 h-4 w-4 shrink-0",
-                            selectedModel === pinnedModel.id && selectedProviderId === pinnedModel.provider_id ? "opacity-100" : "opacity-0",
-                          )}
-                        />
-                        <Star className="mr-1.5 h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)] fill-[var(--text-tertiary)]" />
-                        <span className="truncate flex-1 font-medium">{pinnedModel.name}</span>
-                        <span className="ml-2 shrink-0 text-[10px] font-medium text-[var(--color-success)] bg-[var(--color-success)]/10 px-1.5 py-0.5 rounded">
-                          FREE
-                        </span>
-                      </CommandItem>
-                    </CommandGroup>
-                  )}
-
                   {/* Paid models first (hidden in free filter mode) */}
                   {sortBy !== "free" && paidModels.length > 0 && (
-                    <CommandGroup heading={freeModels.length > 0 ? t("premium") : undefined}>
+                    <CommandGroup
+                      heading={freeModels.length > 0 ? t("premium") : undefined}
+                    >
                       {paidModels.map((model) => (
                         <ModelRow
                           key={`${model.provider_id}/${model.id}`}
                           model={model}
-                          isSelected={selectedModel === model.id && selectedProviderId === model.provider_id}
+                          isSelected={
+                            selectedModel === model.id &&
+                            selectedProviderId === model.provider_id
+                          }
                           arena={arenaMap.get(model.id)}
                           sortBy={sortBy}
                           onSelect={() => {
@@ -398,7 +418,10 @@ export function HeaderModelDropdown() {
                         <ModelRow
                           key={`${model.provider_id}/${model.id}`}
                           model={model}
-                          isSelected={selectedModel === model.id && selectedProviderId === model.provider_id}
+                          isSelected={
+                            selectedModel === model.id &&
+                            selectedProviderId === model.provider_id
+                          }
                           arena={arenaMap.get(model.id)}
                           sortBy={sortBy}
                           onSelect={() => {
@@ -437,15 +460,19 @@ function ModelRow({
 }) {
   const free = isFreeModel(model);
   const isSubscription = model.provider_id === "openai-subscription";
-  const inputCredits = usdToCreditsPerM(model.pricing.prompt);
-  const outputCredits = usdToCreditsPerM(model.pricing.completion);
+  const inputCents = usdToCentsPerM(model.pricing.prompt);
+  const outputCents = usdToCentsPerM(model.pricing.completion);
 
   const showArena =
     (sortBy === "quality" && arena && arena.arenaScore > 0) ||
     (sortBy === "popular" && arena && arena.popularityRank > 0);
 
   const providerLabel = PROVIDER_LABELS[model.provider_id] ?? model.provider_id;
-  const showProviderBadge = model.provider_id !== "openrouter" && model.provider_id !== "openai-subscription" && model.provider_id !== "ollama";
+  const showProviderBadge =
+    model.provider_id !== "openrouter" &&
+    model.provider_id !== "openai-subscription" &&
+    model.provider_id !== "ollama" &&
+    model.provider_id !== "rapid-mlx";
 
   return (
     <CommandItem
@@ -478,7 +505,8 @@ function ModelRow({
         <span className="ml-2 shrink-0 text-[10px] font-medium text-[var(--brand-primary)] bg-[var(--brand-primary)]/10 px-1.5 py-0.5 rounded">
           INCLUDED
         </span>
-      ) : model.provider_id === "ollama" ? (
+      ) : model.provider_id === "ollama" ||
+        model.provider_id === "rapid-mlx" ? (
         <span className="ml-2 shrink-0 text-[10px] font-medium text-[var(--text-tertiary)] bg-[var(--surface-tertiary)] px-1.5 py-0.5 rounded">
           LOCAL
         </span>
@@ -490,28 +518,46 @@ function ModelRow({
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="ml-2 shrink-0 text-[11px] font-mono tabular-nums text-[var(--text-tertiary)]">
-              {sortBy === "quality" ? arena.arenaScore : `#${arena.popularityRank}`}
+              {sortBy === "quality"
+                ? arena.arenaScore
+                : `#${arena.popularityRank}`}
             </span>
           </TooltipTrigger>
           <TooltipContent side="right" className="text-xs">
-            {arena.arenaScore > 0 && <div>Intelligence: {arena.arenaScore}</div>}
-            {arena.popularityRank > 0 && <div>Popularity: #{arena.popularityRank}</div>}
-            <div>{t("inputPrice")}: {formatCreditsPerM(inputCredits)}</div>
-            <div>{t("outputPrice")}: {formatCreditsPerM(outputCredits)}</div>
+            {arena.arenaScore > 0 && (
+              <div>Intelligence: {arena.arenaScore}</div>
+            )}
+            {arena.popularityRank > 0 && (
+              <div>Popularity: #{arena.popularityRank}</div>
+            )}
+            <div>
+              {t("inputPrice")}: {formatUsdPerM(inputCents)}
+            </div>
+            <div>
+              {t("outputPrice")}: {formatUsdPerM(outputCents)}
+            </div>
           </TooltipContent>
         </Tooltip>
       ) : (
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="ml-2 shrink-0 text-[11px] font-mono tabular-nums text-[var(--text-tertiary)]">
-              {formatCreditsPerM(inputCredits)}
+              {formatUsdPerM(inputCents)}
             </span>
           </TooltipTrigger>
           <TooltipContent side="right" className="text-xs">
-            <div>{t("inputPrice")}: {formatCreditsPerM(inputCredits)}</div>
-            <div>{t("outputPrice")}: {formatCreditsPerM(outputCredits)}</div>
-            {arena && arena.arenaScore > 0 && <div>Intelligence: {arena.arenaScore}</div>}
-            {arena && arena.popularityRank > 0 && <div>Popularity: #{arena.popularityRank}</div>}
+            <div>
+              {t("inputPrice")}: {formatUsdPerM(inputCents)}
+            </div>
+            <div>
+              {t("outputPrice")}: {formatUsdPerM(outputCents)}
+            </div>
+            {arena && arena.arenaScore > 0 && (
+              <div>Intelligence: {arena.arenaScore}</div>
+            )}
+            {arena && arena.popularityRank > 0 && (
+              <div>Popularity: #{arena.popularityRank}</div>
+            )}
           </TooltipContent>
         </Tooltip>
       )}

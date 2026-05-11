@@ -1,7 +1,7 @@
 """Web search tool — search via OpenYak Proxy (Serper/Google) or DuckDuckGo fallback.
 
 When proxy mode is active, searches go through the deployed proxy which
-holds the Serper API key and handles billing/quota. Without proxy, falls
+holds the Serper API key and handles hosted-search limits. Without proxy, falls
 back to free DuckDuckGo HTML scraping.
 """
 
@@ -85,23 +85,22 @@ class WebSearchTool(ToolDefinition):
             if resp.status_code == 429:
                 return ToolResult(error="Daily search limit reached")
             if resp.status_code == 402:
-                return ToolResult(error="Insufficient credits for web search")
+                return ToolResult(error="Hosted web search is unavailable")
             if resp.status_code != 200:
                 return ToolResult(error=f"Search failed: HTTP {resp.status_code}")
 
             data = resp.json()
             serper_data = data.get("results", {})
-            billing = data.get("billing", {})
+            proxy_usage = data.get("usage", {})
 
-            # Store billing info in metadata for processor to read
-            billing_meta = {
-                "charged": billing.get("charged", False),
-                "credits_deducted": billing.get("credits_deducted", 0),
-                "daily_searches_used": billing.get("daily_searches_used", 0),
-                "daily_search_limit": billing.get("daily_search_limit", 0),
+            # Store hosted-search usage info in metadata for processor to read.
+            usage_meta = {
+                "hosted_search_used": proxy_usage.get("charged", False),
+                "daily_searches_used": proxy_usage.get("daily_searches_used", 0),
+                "daily_search_limit": proxy_usage.get("daily_search_limit", 0),
             }
 
-            return self._format_serper_results(query, max_results, serper_data, billing_meta)
+            return self._format_serper_results(query, max_results, serper_data, usage_meta)
 
         except Exception as e:
             return ToolResult(error=f"Search failed: {e}")
@@ -109,7 +108,7 @@ class WebSearchTool(ToolDefinition):
     @staticmethod
     def _format_serper_results(
         query: str, max_results: int,
-        data: dict[str, Any], billing_meta: dict[str, Any],
+        data: dict[str, Any], usage_meta: dict[str, Any],
     ) -> ToolResult:
         output_lines: list[str] = []
         results_data: list[dict[str, str]] = []
@@ -147,7 +146,7 @@ class WebSearchTool(ToolDefinition):
             return ToolResult(
                 output="No results found.",
                 title=f"Search: {query[:50]}",
-                metadata=billing_meta,
+                metadata=usage_meta,
             )
 
         count = min(len(organic), max_results)
@@ -158,7 +157,7 @@ class WebSearchTool(ToolDefinition):
                 "query": query,
                 "count": count,
                 "results": results_data,
-                **billing_meta,
+                **usage_meta,
             },
         )
 

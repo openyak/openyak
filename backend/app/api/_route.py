@@ -556,8 +556,10 @@ def _wrap_with_audit(handler: Callable[..., Awaitable[Any]]) -> Callable[..., Aw
     """Wrap a hand-written async handler with one audit line on close."""
 
     sig = inspect.signature(handler)
+    hints = get_type_hints(handler, include_extras=True)
     has_request = any(
-        p.annotation is Request or n == "request" for n, p in sig.parameters.items()
+        hints.get(n, p.annotation) is Request or n == "request"
+        for n, p in sig.parameters.items()
     )
 
     async def wrapped(*args: Any, **kwargs: Any) -> Any:
@@ -588,7 +590,14 @@ def _wrap_with_audit(handler: Callable[..., Awaitable[Any]]) -> Callable[..., Aw
                 duration_ms=duration_ms,
             )
 
-    wrapped.__signature__ = sig  # type: ignore[attr-defined]
+    parameters = [
+        p.replace(annotation=hints.get(name, p.annotation))
+        for name, p in sig.parameters.items()
+    ]
+    wrapped.__signature__ = sig.replace(  # type: ignore[attr-defined]
+        parameters=parameters,
+        return_annotation=hints.get("return", sig.return_annotation),
+    )
     wrapped.__name__ = f"{handler.__name__}_audited"
     wrapped.__qualname__ = wrapped.__name__
     return wrapped

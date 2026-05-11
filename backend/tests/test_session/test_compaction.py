@@ -14,7 +14,7 @@ class TestShouldCompact:
 
     def test_below_output_safe_threshold(self):
         usage = {"input": 99_807, "output": 0}
-        # usable = 128000 - 8192(effective_output) - 20000(reserved) = 99808
+        # usable = min(128000 - 8192(output) - 20000(reserved), 85% context) = 99808
         assert not should_compact(usage, model_max_context=128_000, reserved=20_000)
 
     def test_over_output_safe_threshold(self):

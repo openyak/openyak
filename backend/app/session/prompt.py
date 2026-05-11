@@ -236,6 +236,13 @@ class SessionPrompt:
                 _update_env_file("OPENYAK_OLLAMA_LAST_MODEL", model_id.removeprefix("ollama/"))
             except Exception:
                 pass
+        elif self.provider.id == "rapid-mlx":
+            try:
+                from app.api.config import _update_env_file
+
+                _update_env_file("OPENYAK_RAPID_MLX_MODEL", model_id.removeprefix("rapid-mlx/"))
+            except Exception:
+                pass
 
         # --- 3. Create/load session and persist user message ---
         if self.skip_user_message:
@@ -439,17 +446,6 @@ class SessionPrompt:
                 # Fall through to normal step execution (do NOT break or continue)
 
             self.job.publish(SSEEvent(STEP_START, {"step": self.step, "session_id": self.job.session_id}))
-
-            # Proactively refresh proxy token if expired (step 1 only)
-            if self.step == 1:
-                _settings = get_settings()
-                if _settings.proxy_url and _settings.proxy_refresh_token:
-                    from app.session.utils import is_jwt_expired as _is_jwt_expired
-                    _token = getattr(_settings, "proxy_token", "")
-                    if _token and _is_jwt_expired(_token):
-                        logger.info("Proxy token expired, refreshing before LLM call")
-                        from app.provider.proxy_auth import refresh_proxy_token
-                        await refresh_proxy_token(_settings, self.provider_registry)
 
             # Load message history for this step
             async with self.session_factory() as db:

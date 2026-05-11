@@ -2,11 +2,17 @@
 
 import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useSettingsHasHydrated, useSettingsStore } from "@/stores/settings-store";
-import { useAuthHasHydrated, useAuthStore } from "@/stores/auth-store";
+import {
+  useSettingsHasHydrated,
+  useSettingsStore,
+} from "@/stores/settings-store";
 import { api } from "@/lib/api";
 import { API, queryKeys } from "@/lib/constants";
-import type { ApiKeyStatus, ProviderInfo, LocalProviderStatus } from "@/types/usage";
+import type {
+  ApiKeyStatus,
+  ProviderInfo,
+  LocalProviderStatus,
+} from "@/types/usage";
 
 interface OpenAISubscriptionStatus {
   is_connected: boolean;
@@ -19,6 +25,10 @@ interface OllamaRuntimeStatus {
   running: boolean;
 }
 
+interface RapidMLXRuntimeStatus {
+  running: boolean;
+}
+
 /**
  * Auto-detect and set activeProvider when it is null.
  * Should be called at the layout level so it runs regardless of which page the user visits.
@@ -26,9 +36,7 @@ interface OllamaRuntimeStatus {
 export function useAutoDetectProvider(): { hasProvider: boolean } {
   const activeProvider = useSettingsStore((s) => s.activeProvider);
   const setActiveProvider = useSettingsStore((s) => s.setActiveProvider);
-  const isConnected = useAuthStore((s) => s.isConnected);
   const settingsHydrated = useSettingsHasHydrated();
-  const authHydrated = useAuthHasHydrated();
 
   const { data: keyStatus } = useQuery({
     queryKey: queryKeys.apiKeyStatus,
@@ -47,7 +55,8 @@ export function useAutoDetectProvider(): { hasProvider: boolean } {
 
   const { data: openaiSubStatus } = useQuery({
     queryKey: queryKeys.openaiSubscription,
-    queryFn: () => api.get<OpenAISubscriptionStatus>(API.CONFIG.OPENAI_SUBSCRIPTION),
+    queryFn: () =>
+      api.get<OpenAISubscriptionStatus>(API.CONFIG.OPENAI_SUBSCRIPTION),
   });
 
   const { data: ollamaRuntimeStatus } = useQuery({
@@ -56,28 +65,43 @@ export function useAutoDetectProvider(): { hasProvider: boolean } {
     refetchInterval: activeProvider === null ? 10_000 : false,
   });
 
+  const { data: rapidMlxRuntimeStatus } = useQuery({
+    queryKey: ["rapidMlxRuntime"],
+    queryFn: () => api.get<RapidMLXRuntimeStatus>(API.RAPID_MLX.STATUS),
+    refetchInterval: activeProvider === null ? 10_000 : false,
+    retry: false,
+  });
+
   const ollamaConnected = !!ollamaRuntimeStatus?.running;
-  const hasAnyDirectProvider = (providers ?? []).some((p) => p.is_configured);
+  const rapidMlxConnected = !!rapidMlxRuntimeStatus?.running;
+  const hasConfiguredByokProvider = (providers ?? []).some(
+    (p) => p.is_configured && !p.id.startsWith("custom_"),
+  );
+  const hasCustomEndpoint = (providers ?? []).some(
+    (p) => p.is_configured && p.id.startsWith("custom_"),
+  );
+  const customEndpointConnected =
+    !!localStatus?.is_connected || hasCustomEndpoint;
 
   useEffect(() => {
-    if (!settingsHydrated || !authHydrated) return;
+    if (!settingsHydrated) return;
     if (activeProvider !== null) return;
     if (openaiSubStatus?.is_connected) setActiveProvider("chatgpt");
-    else if (isConnected) setActiveProvider("openyak");
-    else if (localStatus?.is_connected) setActiveProvider("local");
-    else if (keyStatus?.is_configured || hasAnyDirectProvider) setActiveProvider("byok");
+    else if (customEndpointConnected) setActiveProvider("custom");
+    else if (keyStatus?.is_configured || hasConfiguredByokProvider)
+      setActiveProvider("byok");
+    else if (rapidMlxConnected) setActiveProvider("rapid-mlx");
     else if (ollamaConnected) setActiveProvider("ollama");
   }, [
     activeProvider,
     openaiSubStatus?.is_connected,
-    isConnected,
     keyStatus?.is_configured,
-    hasAnyDirectProvider,
-    localStatus?.is_connected,
+    hasConfiguredByokProvider,
+    customEndpointConnected,
+    rapidMlxConnected,
     ollamaConnected,
     setActiveProvider,
     settingsHydrated,
-    authHydrated,
   ]);
 
   return { hasProvider: settingsHydrated && activeProvider !== null };

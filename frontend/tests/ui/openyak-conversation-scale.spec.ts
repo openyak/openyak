@@ -80,12 +80,12 @@ test.describe("OpenYak conversation scale and compaction GUI workflows", () => {
 
     await page.goto("/c/session-alpha");
     await expect(page.getByText("Quarterly planning notes").first()).toBeVisible();
-    await expect(page.getByText(/retention, onboarding, and billing clarity/i)).toBeVisible();
+    await expect(page.getByText(/retention, onboarding, and pricing clarity/i)).toBeVisible();
 
     await page.getByRole("option", { name: /Invoice cleanup/i }).click();
     await expect(page).toHaveURL(/\/c\/session-beta$/);
     await expect(page.getByText("Invoice cleanup").first()).toBeVisible();
-    await expect(page.getByText(/retention, onboarding, and billing clarity/i)).toHaveCount(0);
+    await expect(page.getByText(/retention, onboarding, and pricing clarity/i)).toHaveCount(0);
 
     await page.getByRole("option", { name: /Long conversation load test/i }).click();
     await expect(page).toHaveURL(/\/c\/session-long$/);

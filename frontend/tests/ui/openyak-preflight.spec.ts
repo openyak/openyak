@@ -1,5 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
-import { mockOpenYakApi, seedOpenYakStorage, type OpenYakMockState } from "./fixtures/openyak-api";
+import {
+  mockOpenYakApi,
+  seedOpenYakStorage,
+  type OpenYakMockState,
+} from "./fixtures/openyak-api";
 
 let mockState: OpenYakMockState;
 
@@ -13,25 +17,42 @@ async function openNewChat(page: Page, workspace = false) {
     ? `/c/new?directory=${encodeURIComponent("/Users/alex/openyak-demo")}`
     : "/c/new";
   await page.goto(path);
-  await expect(page.getByRole("heading", { name: /What should (OpenYak help you do|we do in)/i }).first()).toBeVisible();
-  await expect(page.getByRole("button", { name: /Best Free/i })).toBeVisible({ timeout: 15_000 });
+  await expect(
+    page
+      .getByRole("heading", {
+        name: /What should (OpenYak help you do|we do in)/i,
+      })
+      .first(),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /Claude Sonnet 4\.5/i }),
+  ).toBeVisible({ timeout: 15_000 });
 }
 
 async function sendPrompt(page: Page, text: string) {
   await page.getByPlaceholder(/Describe the result you want/i).fill(text);
-  const promptResponse = page.waitForResponse((res) =>
-    res.url().includes("/api/chat/prompt") && res.status() === 200,
+  const promptResponse = page.waitForResponse(
+    (res) => res.url().includes("/api/chat/prompt") && res.status() === 200,
   );
-  await page.locator('button[aria-label="Send message"]:not([disabled])').click();
+  await page
+    .locator('button[aria-label="Send message"]:not([disabled])')
+    .click();
   await promptResponse;
 }
 
-async function dispatchBrowserFileDrop(page: Page, filename: string, content: string, mimeType: string) {
+async function dispatchBrowserFileDrop(
+  page: Page,
+  filename: string,
+  content: string,
+  mimeType: string,
+) {
   await page.getByPlaceholder(/Describe the result you want/i).evaluate(
     (textarea, payload) => {
       const target = textarea.closest("div.relative.rounded-3xl");
       if (!target) throw new Error("Composer drop target not found");
-      const file = new File([payload.content], payload.filename, { type: payload.mimeType });
+      const file = new File([payload.content], payload.filename, {
+        type: payload.mimeType,
+      });
       const dataTransfer = {
         files: [file],
         items: [],
@@ -47,16 +68,19 @@ async function dispatchBrowserFileDrop(page: Page, filename: string, content: st
 }
 
 async function dispatchTextPaste(page: Page, text: string) {
-  await page.getByPlaceholder(/Describe the result you want/i).evaluate((textarea, pastedText) => {
-    const clipboardData = {
-      files: [],
-      items: [],
-      getData: (format: string) => format === "text/plain" ? pastedText : "",
-    };
-    const event = new Event("paste", { bubbles: true, cancelable: true });
-    Object.defineProperty(event, "clipboardData", { value: clipboardData });
-    textarea.dispatchEvent(event);
-  }, text);
+  await page
+    .getByPlaceholder(/Describe the result you want/i)
+    .evaluate((textarea, pastedText) => {
+      const clipboardData = {
+        files: [],
+        items: [],
+        getData: (format: string) =>
+          format === "text/plain" ? pastedText : "",
+      };
+      const event = new Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "clipboardData", { value: clipboardData });
+      textarea.dispatchEvent(event);
+    }, text);
 }
 
 async function installTauriDragDropMock(page: Page) {
@@ -69,7 +93,10 @@ async function installTauriDragDropMock(page: Page) {
           currentWindow: { label: string };
           currentWebview: { label: string };
         };
-        invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+        invoke: (
+          cmd: string,
+          args?: Record<string, unknown>,
+        ) => Promise<unknown>;
         transformCallback: (callback: ListenerCallback) => number;
         unregisterCallback: (id: number) => void;
         convertFileSrc: (filePath: string) => string;
@@ -77,7 +104,10 @@ async function installTauriDragDropMock(page: Page) {
       __TAURI_EVENT_PLUGIN_INTERNALS__: {
         unregisterListener: (event: string, eventId: number) => void;
       };
-      __OPENYAK_TEST_EMIT_TAURI_EVENT__: (event: string, payload: unknown) => void;
+      __OPENYAK_TEST_EMIT_TAURI_EVENT__: (
+        event: string,
+        payload: unknown,
+      ) => void;
       __OPENYAK_TEST_TAURI_LISTENER_COUNT__: (event: string) => number;
     };
 
@@ -86,7 +116,10 @@ async function installTauriDragDropMock(page: Page) {
     let nextListenerId = 1;
     const callbacks = new Map<number, ListenerCallback>();
     const listeners = new Map<string, number[]>();
-    const listenerEntries = new Map<number, { event: string; handler: number }>();
+    const listenerEntries = new Map<
+      number,
+      { event: string; handler: number }
+    >();
 
     w.__TAURI_INTERNALS__ = {
       metadata: {
@@ -113,7 +146,9 @@ async function installTauriDragDropMock(page: Page) {
           if (entry) {
             listeners.set(
               entry.event,
-              (listeners.get(entry.event) ?? []).filter((handler) => handler !== entry.handler),
+              (listeners.get(entry.event) ?? []).filter(
+                (handler) => handler !== entry.handler,
+              ),
             );
             listenerEntries.delete(eventId);
           }
@@ -135,7 +170,12 @@ async function installTauriDragDropMock(page: Page) {
       unregisterListener: (event, eventId) => {
         const entry = listenerEntries.get(eventId);
         if (!entry || entry.event !== event) return;
-        listeners.set(event, (listeners.get(event) ?? []).filter((handler) => handler !== entry.handler));
+        listeners.set(
+          event,
+          (listeners.get(event) ?? []).filter(
+            (handler) => handler !== entry.handler,
+          ),
+        );
         listenerEntries.delete(eventId);
       },
     };
@@ -144,17 +184,22 @@ async function installTauriDragDropMock(page: Page) {
         callbacks.get(handler)?.({ id: 1, event, payload });
       }
     };
-    w.__OPENYAK_TEST_TAURI_LISTENER_COUNT__ = (event) => listeners.get(event)?.length ?? 0;
+    w.__OPENYAK_TEST_TAURI_LISTENER_COUNT__ = (event) =>
+      listeners.get(event)?.length ?? 0;
   });
 }
 
 test.describe("OpenYak UI preflight", () => {
-  test("desktop chat path: landing, mode switch, attachments, mentions, send, workspace panel", async ({ page }) => {
+  test("desktop chat path: landing, mode switch, attachments, mentions, send, workspace panel", async ({
+    page,
+  }) => {
     await openNewChat(page, true);
 
     await page.getByRole("button", { name: /Auto-edit/i }).click();
     await page.getByRole("button", { name: /Plan first/i }).click();
-    await expect(page.getByRole("button", { name: /Plan first/i })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /Plan first/i }),
+    ).toBeVisible();
 
     await page.locator('input[type="file"]').setInputFiles({
       name: "sample-preflight.csv",
@@ -165,28 +210,43 @@ test.describe("OpenYak UI preflight", () => {
 
     const input = page.getByPlaceholder(/Describe the result you want/i);
     await input.fill("@rel");
-    await expect(page.getByRole("button", { name: /release-notes\.md docs\/release/i })).toBeVisible();
-    await page.getByRole("button", { name: /release-notes\.md docs\/release/i }).click();
+    await expect(
+      page.getByRole("button", { name: /release-notes\.md docs\/release/i }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: /release-notes\.md docs\/release/i })
+      .click();
     await expect(page.getByText("release-notes.md").first()).toBeVisible();
 
     await sendPrompt(page, "Create a UI preflight checklist");
 
-    await expect(page.getByText("Create a UI preflight checklist").first()).toBeVisible();
+    await expect(
+      page.getByText("Create a UI preflight checklist").first(),
+    ).toBeVisible();
     await expect(page.getByText("sample-preflight.csv").first()).toBeVisible();
 
     const showWorkspace = page.getByRole("button", { name: /Show workspace/i });
     if (await showWorkspace.isVisible().catch(() => false)) {
       await showWorkspace.click();
     }
-    const filesCard = page.getByRole("button", { name: /Files \d+ generated files/i });
+    const filesCard = page.getByRole("button", {
+      name: /Files \d+ generated files/i,
+    });
     await expect(filesCard).toBeVisible();
-    if (!(await page.getByText("plan.md").isVisible().catch(() => false))) {
+    if (
+      !(await page
+        .getByText("plan.md")
+        .isVisible()
+        .catch(() => false))
+    ) {
       await filesCard.click();
     }
     await expect(page.getByText("plan.md")).toBeVisible();
   });
 
-  test("desktop chat path: IME Enter confirms composition without sending", async ({ page }) => {
+  test("desktop chat path: IME Enter confirms composition without sending", async ({
+    page,
+  }) => {
     await openNewChat(page);
 
     const input = page.getByPlaceholder(/Describe the result you want/i);
@@ -216,33 +276,46 @@ test.describe("OpenYak UI preflight", () => {
     expect(mockState.promptBodies).toHaveLength(0);
 
     await page.waitForTimeout(120);
-    const promptResponse = page.waitForResponse((res) =>
-      res.url().includes("/api/chat/prompt") && res.status() === 200,
+    const promptResponse = page.waitForResponse(
+      (res) => res.url().includes("/api/chat/prompt") && res.status() === 200,
     );
     await input.press("Enter");
     await promptResponse;
     expect(mockState.promptBodies).toHaveLength(1);
   });
 
-  test("desktop chat path: drag-dropping a browser file attaches and sends it", async ({ page }) => {
+  test("desktop chat path: drag-dropping a browser file attaches and sends it", async ({
+    page,
+  }) => {
     await openNewChat(page);
 
-    await dispatchBrowserFileDrop(page, "dragged-note.md", "# Dragged note\n", "text/markdown");
+    await dispatchBrowserFileDrop(
+      page,
+      "dragged-note.md",
+      "# Dragged note\n",
+      "text/markdown",
+    );
     await expect(page.getByText("dragged-note.md")).toBeVisible();
     expect(mockState.fileUploads).toEqual(["dragged-note.md"]);
 
     await sendPrompt(page, "Summarize the dropped note");
-    expect(JSON.stringify(mockState.promptBodies.at(-1))).toContain("dragged-note.md");
+    expect(JSON.stringify(mockState.promptBodies.at(-1))).toContain(
+      "dragged-note.md",
+    );
   });
 
-  test("desktop chat path: pasted local file path attaches by path", async ({ page }) => {
+  test("desktop chat path: pasted local file path attaches by path", async ({
+    page,
+  }) => {
     await openNewChat(page);
     const filePath = "/Users/alex/Desktop/Receipt-2768-7987-6551.pdf";
 
     await dispatchTextPaste(page, filePath);
 
     await expect(page.getByText("Receipt-2768-7987-6551.pdf")).toBeVisible();
-    await expect(page.getByPlaceholder(/Describe the result you want/i)).toHaveValue("");
+    await expect(
+      page.getByPlaceholder(/Describe the result you want/i),
+    ).toHaveValue("");
     expect(mockState.attachedPaths).toEqual([filePath]);
     expect(mockState.fileUploads).toEqual([]);
 
@@ -250,22 +323,33 @@ test.describe("OpenYak UI preflight", () => {
     expect(JSON.stringify(mockState.promptBodies.at(-1))).toContain(filePath);
   });
 
-  test("desktop chat path: Tauri native path drop attaches files and folders by local path", async ({ page }) => {
+  test("desktop chat path: Tauri native path drop attaches files and folders by local path", async ({
+    page,
+  }) => {
     await installTauriDragDropMock(page);
     await seedOpenYakStorage(page, { force: true });
     await openNewChat(page);
     await expect
       .poll(() =>
         page.evaluate(() => {
-          const w = window as unknown as Window & { __OPENYAK_TEST_TAURI_LISTENER_COUNT__?: (event: string) => number };
-          return w.__OPENYAK_TEST_TAURI_LISTENER_COUNT__?.("tauri://drag-drop") ?? 0;
+          const w = window as unknown as Window & {
+            __OPENYAK_TEST_TAURI_LISTENER_COUNT__?: (event: string) => number;
+          };
+          return (
+            w.__OPENYAK_TEST_TAURI_LISTENER_COUNT__?.("tauri://drag-drop") ?? 0
+          );
         }),
       )
       .toBeGreaterThan(0);
 
-    const box = await page.getByPlaceholder(/Describe the result you want/i).boundingBox();
+    const box = await page
+      .getByPlaceholder(/Describe the result you want/i)
+      .boundingBox();
     expect(box).not.toBeNull();
-    const position = { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 };
+    const position = {
+      x: box!.x + box!.width / 2,
+      y: box!.y + box!.height / 2,
+    };
     const paths = [
       "/Users/alex/Desktop/dragged-image.png",
       "/Users/alex/Desktop/drag-folder",
@@ -273,9 +357,20 @@ test.describe("OpenYak UI preflight", () => {
 
     await page.evaluate(
       ({ position, paths }) => {
-        const w = window as unknown as Window & { __OPENYAK_TEST_EMIT_TAURI_EVENT__: (event: string, payload: unknown) => void };
-        w.__OPENYAK_TEST_EMIT_TAURI_EVENT__("tauri://drag-enter", { paths, position });
-        w.__OPENYAK_TEST_EMIT_TAURI_EVENT__("tauri://drag-drop", { paths, position });
+        const w = window as unknown as Window & {
+          __OPENYAK_TEST_EMIT_TAURI_EVENT__: (
+            event: string,
+            payload: unknown,
+          ) => void;
+        };
+        w.__OPENYAK_TEST_EMIT_TAURI_EVENT__("tauri://drag-enter", {
+          paths,
+          position,
+        });
+        w.__OPENYAK_TEST_EMIT_TAURI_EVENT__("tauri://drag-drop", {
+          paths,
+          position,
+        });
       },
       { position, paths },
     );
@@ -292,31 +387,46 @@ test.describe("OpenYak UI preflight", () => {
     expect(prompt).toContain("inode/directory");
   });
 
-  test("desktop history path: sidebar navigation and persisted conversation render", async ({ page }) => {
+  test("desktop history path: sidebar navigation and persisted conversation render", async ({
+    page,
+  }) => {
     await page.goto("/c/session-alpha");
-    await expect(page.getByText("Quarterly planning notes").first()).toBeVisible();
+    await expect(
+      page.getByText("Quarterly planning notes").first(),
+    ).toBeVisible();
     await expect(page.getByText("Summarize the quarterly plan")).toBeVisible();
-    await expect(page.getByText(/retention, onboarding, and billing clarity/i)).toBeVisible();
+    await expect(
+      page.getByText(/retention, onboarding, and pricing clarity/i),
+    ).toBeVisible();
     await expect(page.getByRole("button", { name: /Export/i })).toBeVisible();
 
-    const invoiceOption = page.getByRole("option", { name: /Invoice cleanup/i });
+    const invoiceOption = page.getByRole("option", {
+      name: /Invoice cleanup/i,
+    });
     await expect(invoiceOption).toBeVisible();
     await invoiceOption.click();
     await expect(page).toHaveURL(/\/c\/session-beta$/, { timeout: 15_000 });
     await expect(page.getByText("Invoice cleanup").first()).toBeVisible();
   });
 
-  test("desktop search path: command palette finds and opens a conversation", async ({ page }) => {
+  test("desktop search path: command palette finds and opens a conversation", async ({
+    page,
+  }) => {
     await page.goto("/c/new");
     await page.keyboard.press("Control+K");
     await expect(page.getByPlaceholder("Search chats")).toBeVisible();
     await page.getByPlaceholder("Search chats").fill("quarter");
     await expect(page.getByText("quarterly plan and retention")).toBeVisible();
-    await page.getByLabel("Results").getByText("Quarterly planning notes").click();
+    await page
+      .getByLabel("Results")
+      .getByText("Quarterly planning notes")
+      .click();
     await expect(page).toHaveURL(/\/c\/session-alpha$/);
   });
 
-  test("desktop artifact path: artifact cards and plan review panel open from chat", async ({ page }) => {
+  test("desktop artifact path: artifact cards and plan review panel open from chat", async ({
+    page,
+  }) => {
     await page.goto("/c/session-artifacts");
     await expect(page.getByText("Artifact showcase").first()).toBeVisible();
     await expect(page.getByText("Release Brief")).toBeVisible();
@@ -328,10 +438,14 @@ test.describe("OpenYak UI preflight", () => {
 
     await page.getByRole("button", { name: /Release Brief/i }).click();
     await expect(page.getByText("Markdown")).toBeVisible();
-    await expect(page.getByText(/Validate desktop GUI workflows/i)).toBeVisible();
+    await expect(
+      page.getByText(/Validate desktop GUI workflows/i),
+    ).toBeVisible();
 
     await page.getByRole("button", { name: /Demo Page/i }).click();
-    await expect(page.frameLocator("iframe").getByText("OpenYak GUI Preflight")).toBeVisible();
+    await expect(
+      page.frameLocator("iframe").getByText("OpenYak GUI Preflight"),
+    ).toBeVisible();
 
     await page.getByRole("button", { name: /Coverage Matrix/i }).click();
     await expect(page.getByText("CSV", { exact: true }).last()).toBeVisible();
@@ -339,30 +453,42 @@ test.describe("OpenYak UI preflight", () => {
 
     await page.getByRole("button", { name: /GUI Preflight Plan/i }).click();
     await expect(page.getByText("Plan Review")).toBeVisible();
-    await expect(page.getByText("frontend/tests/ui/openyak-preflight.spec.ts")).toBeVisible();
+    await expect(
+      page.getByText("frontend/tests/ui/openyak-preflight.spec.ts"),
+    ).toBeVisible();
   });
 
-  test("desktop interactive path: permission request is answered through the GUI", async ({ page }) => {
+  test("desktop interactive path: permission request is answered through the GUI", async ({
+    page,
+  }) => {
     await openNewChat(page);
     await page.getByRole("button", { name: /Auto-edit/i }).click();
     await page.getByRole("button", { name: /Ask first/i }).click();
 
     await sendPrompt(page, "Trigger permission flow for the preflight");
     await expect(page.getByText("Permission Required")).toBeVisible();
-    await expect(page.getByText("Allow running this shell command?")).toBeVisible();
+    await expect(
+      page.getByText("Allow running this shell command?"),
+    ).toBeVisible();
     await expect(page.getByText("Command", { exact: true })).toBeVisible();
-    await expect(page.locator("pre", { hasText: "npm run preflight:ui" })).toBeVisible();
-    await expect(page.getByText("/Users/alex/openyak-demo/frontend")).toBeVisible();
+    await expect(
+      page.locator("pre", { hasText: "npm run preflight:ui" }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("/Users/alex/openyak-demo/frontend"),
+    ).toBeVisible();
 
-    const respond = page.waitForResponse((res) =>
-      res.url().includes("/api/chat/respond") && res.status() === 200,
+    const respond = page.waitForResponse(
+      (res) => res.url().includes("/api/chat/respond") && res.status() === 200,
     );
     await page.getByRole("button", { name: /Allow/i }).click();
     await respond;
     await expect(page.getByText("Permission Required")).toBeHidden();
   });
 
-  test("desktop interactive path: allow once does not persist a permission rule", async ({ page }) => {
+  test("desktop interactive path: allow once does not persist a permission rule", async ({
+    page,
+  }) => {
     await openNewChat(page);
     await page.getByRole("button", { name: /Auto-edit/i }).click();
     await page.getByRole("button", { name: /Ask first/i }).click();
@@ -370,8 +496,8 @@ test.describe("OpenYak UI preflight", () => {
     await sendPrompt(page, "Trigger permission flow for allow once");
     await expect(page.getByText("Permission Required")).toBeVisible();
 
-    const respond = page.waitForResponse((res) =>
-      res.url().includes("/api/chat/respond") && res.status() === 200,
+    const respond = page.waitForResponse(
+      (res) => res.url().includes("/api/chat/respond") && res.status() === 200,
     );
     await page.getByRole("button", { name: /Allow/i }).click();
     await respond;
@@ -392,17 +518,21 @@ test.describe("OpenYak UI preflight", () => {
     });
   });
 
-  test("desktop interactive path: always allow persists permission rules to future prompts", async ({ page }) => {
+  test("desktop interactive path: always allow persists permission rules to future prompts", async ({
+    page,
+  }) => {
     await openNewChat(page);
     await page.getByRole("button", { name: /Auto-edit/i }).click();
     await page.getByRole("button", { name: /Ask first/i }).click();
 
     await sendPrompt(page, "Trigger permission flow for always allow");
     await expect(page.getByText("Permission Required")).toBeVisible();
-    await page.getByRole("switch", { name: /Remember this choice for bash/i }).setChecked(true);
+    await page
+      .getByRole("switch", { name: /Remember this choice for bash/i })
+      .setChecked(true);
 
-    const respond = page.waitForResponse((res) =>
-      res.url().includes("/api/chat/respond") && res.status() === 200,
+    const respond = page.waitForResponse(
+      (res) => res.url().includes("/api/chat/respond") && res.status() === 200,
     );
     await page.getByRole("button", { name: /Allow/i }).click();
     await respond;
@@ -429,7 +559,9 @@ test.describe("OpenYak UI preflight", () => {
     });
   });
 
-  test("desktop interactive path: deny once does not persist a permission rule", async ({ page }) => {
+  test("desktop interactive path: deny once does not persist a permission rule", async ({
+    page,
+  }) => {
     await openNewChat(page);
     await page.getByRole("button", { name: /Auto-edit/i }).click();
     await page.getByRole("button", { name: /Ask first/i }).click();
@@ -437,8 +569,8 @@ test.describe("OpenYak UI preflight", () => {
     await sendPrompt(page, "Trigger permission flow for deny once");
     await expect(page.getByText("Permission Required")).toBeVisible();
 
-    const respond = page.waitForResponse((res) =>
-      res.url().includes("/api/chat/respond") && res.status() === 200,
+    const respond = page.waitForResponse(
+      (res) => res.url().includes("/api/chat/respond") && res.status() === 200,
     );
     await page.getByRole("button", { name: /Deny/i }).click();
     await respond;
@@ -459,17 +591,21 @@ test.describe("OpenYak UI preflight", () => {
     });
   });
 
-  test("desktop interactive path: always deny persists permission rules to future prompts", async ({ page }) => {
+  test("desktop interactive path: always deny persists permission rules to future prompts", async ({
+    page,
+  }) => {
     await openNewChat(page);
     await page.getByRole("button", { name: /Auto-edit/i }).click();
     await page.getByRole("button", { name: /Ask first/i }).click();
 
     await sendPrompt(page, "Trigger permission flow for always deny");
     await expect(page.getByText("Permission Required")).toBeVisible();
-    await page.getByRole("switch", { name: /Remember this choice for bash/i }).setChecked(true);
+    await page
+      .getByRole("switch", { name: /Remember this choice for bash/i })
+      .setChecked(true);
 
-    const respond = page.waitForResponse((res) =>
-      res.url().includes("/api/chat/respond") && res.status() === 200,
+    const respond = page.waitForResponse(
+      (res) => res.url().includes("/api/chat/respond") && res.status() === 200,
     );
     await page.getByRole("button", { name: /Deny/i }).click();
     await respond;
@@ -496,38 +632,48 @@ test.describe("OpenYak UI preflight", () => {
     });
   });
 
-  test("desktop interactive path: agent question is answered through the GUI", async ({ page }) => {
+  test("desktop interactive path: agent question is answered through the GUI", async ({
+    page,
+  }) => {
     await openNewChat(page);
     await sendPrompt(page, "Trigger question flow for release setup");
 
     await expect(page.getByText("Agent is asking")).toBeVisible();
-    await expect(page.getByText("Which release channel should this automation watch?")).toBeVisible();
+    await expect(
+      page.getByText("Which release channel should this automation watch?"),
+    ).toBeVisible();
 
-    const respond = page.waitForResponse((res) =>
-      res.url().includes("/api/chat/respond") && res.status() === 200,
+    const respond = page.waitForResponse(
+      (res) => res.url().includes("/api/chat/respond") && res.status() === 200,
     );
     await page.getByRole("button", { name: /Stable/i }).click();
     await respond;
     await expect(page.getByText("Agent is asking")).toBeHidden();
   });
 
-  test("desktop interactive path: plan review is accepted through the GUI", async ({ page }) => {
+  test("desktop interactive path: plan review is accepted through the GUI", async ({
+    page,
+  }) => {
     await openNewChat(page);
     await sendPrompt(page, "Trigger plan review flow for the preflight");
 
     await expect(page.getByText("Accept this plan?")).toBeVisible();
     await expect(page.getByText("Preflight implementation plan")).toBeVisible();
-    await expect(page.getByText("frontend/tests/ui/openyak-preflight.spec.ts")).toBeVisible();
+    await expect(
+      page.getByText("frontend/tests/ui/openyak-preflight.spec.ts"),
+    ).toBeVisible();
 
-    const respond = page.waitForResponse((res) =>
-      res.url().includes("/api/chat/respond") && res.status() === 200,
+    const respond = page.waitForResponse(
+      (res) => res.url().includes("/api/chat/respond") && res.status() === 200,
     );
     await page.getByRole("button", { name: /manually approve edits/i }).click();
     await respond;
     await expect(page.getByText("Accept this plan?")).toBeHidden();
   });
 
-  test("settings path: every settings tab has its primary controls", async ({ page }) => {
+  test("settings path: every settings tab has its primary controls", async ({
+    page,
+  }) => {
     await page.goto("/settings");
 
     await expect(page.getByRole("heading", { name: "General" })).toBeVisible();
@@ -535,34 +681,41 @@ test.describe("OpenYak UI preflight", () => {
     await expect(page.getByRole("button", { name: "中文" })).toBeVisible();
 
     await page.getByRole("button", { name: "Providers" }).click();
-    await expect(page.getByRole("heading", { name: "Providers" })).toBeVisible();
-    await expect(page.getByText("OpenYak Account")).toBeVisible();
-    await page.getByRole("button", { name: /Own API Key/i }).click();
+    await expect(
+      page.getByRole("heading", { name: "Providers" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /Own API Key/i }),
+    ).toBeVisible();
     await expect(page.getByText("OpenRouter")).toBeVisible();
 
     await page.getByRole("button", { name: "Permissions" }).click();
-    await expect(page.getByRole("heading", { name: "Permissions", exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Permissions", exact: true }),
+    ).toBeVisible();
     await expect(page.getByText("No remembered permissions")).toBeVisible();
 
     await page.getByRole("button", { name: "Automations" }).click();
-    await expect(page.getByRole("heading", { name: "Automations" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Automations" }),
+    ).toBeVisible();
     await expect(page.getByText("Morning brief")).toBeVisible();
 
     await page.getByRole("button", { name: "Plugins" }).click();
     await expect(page.getByRole("heading", { name: "Plugins" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Connectors" })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Connectors" }),
+    ).toBeVisible();
     await expect(page.getByText("GitHub")).toBeVisible();
 
     await page.getByRole("button", { name: "Remote" }).click();
     await expect(page.getByRole("heading", { name: "Remote" })).toBeVisible();
     await expect(page.getByText("Remote Access Disabled")).toBeVisible();
 
-    await page.getByRole("button", { name: "Billing" }).click();
-    await expect(page.getByRole("heading", { name: "Billing" })).toBeVisible();
-    await expect(page.getByText("$12.50", { exact: true }).first()).toBeVisible();
-
     await page.getByRole("button", { name: "Usage" }).click();
-    await expect(page.getByRole("heading", { name: "Usage", exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Usage", exact: true }),
+    ).toBeVisible();
     await expect(page.getByText("Total Tokens")).toBeVisible();
 
     await page.getByRole("button", { name: "Memory" }).click();
@@ -570,7 +723,9 @@ test.describe("OpenYak UI preflight", () => {
     await page.getByRole("button", { name: /alex\/openyak-demo/i }).click();
     await expect(page.getByText("Prefer concise release notes.")).toBeVisible();
     await page.getByTitle("Edit").click();
-    await page.getByPlaceholder("Workspace memory (Markdown)...").fill("# Project Memory\nPrefer GUI preflight reports.");
+    await page
+      .getByPlaceholder("Workspace memory (Markdown)...")
+      .fill("# Project Memory\nPrefer GUI preflight reports.");
     await page.getByRole("button", { name: "Save" }).click();
     await page.getByTitle("Export").click();
     await page.getByTitle("Delete").click();
@@ -579,17 +734,29 @@ test.describe("OpenYak UI preflight", () => {
     await expect(page.getByText("Delete workspace memory?")).toBeHidden();
   });
 
-  test("settings permissions path: remembered choices can be reviewed and cleared", async ({ page }) => {
+  test("settings permissions path: remembered choices can be reviewed and cleared", async ({
+    page,
+  }) => {
     await seedOpenYakStorage(page, {
       force: true,
       savedPermissions: [
-        { tool: "bash", allow: true, timestamp: Date.parse("2026-04-26T12:00:00.000Z") },
-        { tool: "write", allow: false, timestamp: Date.parse("2026-04-26T12:05:00.000Z") },
+        {
+          tool: "bash",
+          allow: true,
+          timestamp: Date.parse("2026-04-26T12:00:00.000Z"),
+        },
+        {
+          tool: "write",
+          allow: false,
+          timestamp: Date.parse("2026-04-26T12:05:00.000Z"),
+        },
       ],
     });
 
     await page.goto("/settings?tab=permissions");
-    await expect(page.getByRole("heading", { name: "Permissions", exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Permissions", exact: true }),
+    ).toBeVisible();
     await expect(page.getByText("Shell", { exact: true })).toBeVisible();
     await expect(page.getByText("All bash requests")).toBeVisible();
     await expect(page.getByText("Write", { exact: true })).toBeVisible();
@@ -604,9 +771,13 @@ test.describe("OpenYak UI preflight", () => {
     await expect(page.getByText("No remembered permissions")).toBeVisible();
   });
 
-  test("settings providers path: all provider modes can be configured from GUI controls", async ({ page }) => {
+  test("settings providers path: all provider modes can be configured from GUI controls", async ({
+    page,
+  }) => {
     await page.goto("/settings?tab=providers");
-    await expect(page.getByRole("heading", { name: "Providers" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Providers" }),
+    ).toBeVisible();
 
     await page.getByRole("button", { name: /Own API Key/i }).click();
     await page.getByPlaceholder("sk-or-...").fill("sk-or-preflight");
@@ -615,39 +786,68 @@ test.describe("OpenYak UI preflight", () => {
 
     await page.getByRole("button", { name: /ChatGPT Subscription/i }).click();
     await expect(page.getByText("chatgpt@openyak.test")).toBeVisible();
-    await expect(page.getByRole("button", { name: /Disconnect/i })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /Disconnect/i }),
+    ).toBeVisible();
 
-    await page.getByRole("button", { name: /Local API/i }).click();
-    await expect(page.getByText("http://localhost:11434/v1", { exact: true })).toBeVisible();
-    await page.getByPlaceholder("http://localhost:11434/v1").fill("http://localhost:1234/v1");
-    await page.getByRole("button", { name: "Save" }).click();
+    await page.getByRole("button", { name: /Rapid-MLX/i }).click();
+    await expect(
+      page.getByText("brew install raullenchai/rapid-mlx/rapid-mlx"),
+    ).toBeVisible();
 
     await page.getByRole("button", { name: /Custom Endpoint/i }).click();
+    await expect(page.getByRole("button", { name: /Local API/i })).toBeHidden();
+    await expect(page.getByText("Local endpoint")).toBeVisible();
+    await expect(
+      page.getByText("http://localhost:11434/v1", { exact: true }),
+    ).toBeVisible();
     await expect(page.getByText("Acme Local Proxy")).toBeVisible();
-    await page.getByPlaceholder("Endpoint Name (e.g. My Local Model)").fill("Preflight Endpoint");
-    await page.getByPlaceholder("https://api.example.com/v1").fill("http://localhost:9888/v1");
-    await page.getByPlaceholder("API Key (Leave blank if not required)").fill("sk-custom-preflight");
+    await page
+      .getByPlaceholder("Endpoint Name (e.g. My Local Model)")
+      .fill("Preflight Endpoint");
+    await page
+      .getByPlaceholder(
+        "http://localhost:1234/v1 or https://api.example.com/v1",
+      )
+      .fill("http://localhost:1234/v1");
+    await page
+      .getByPlaceholder("API Key (Leave blank if not required)")
+      .fill("sk-custom-preflight");
     await page.getByRole("button", { name: "Add Endpoint" }).click();
   });
 
-  test("automations path: create dialog, required fields, templates", async ({ page }) => {
+  test("automations path: create dialog, required fields, templates", async ({
+    page,
+  }) => {
     await page.goto("/settings?tab=automations");
     await page.getByRole("button", { name: "New Automation" }).click();
 
-    await expect(page.getByRole("heading", { name: "New Automation" })).toBeVisible();
-    await page.getByPlaceholder(/Weekly Briefing/i).fill("Release note watcher");
-    await page.getByPlaceholder(/Brief description/i).fill("Watch for changed docs");
-    await page.getByPlaceholder(/Describe what this automation should do/i).fill("Summarize product docs every morning");
+    await expect(
+      page.getByRole("heading", { name: "New Automation" }),
+    ).toBeVisible();
+    await page
+      .getByPlaceholder(/Weekly Briefing/i)
+      .fill("Release note watcher");
+    await page
+      .getByPlaceholder(/Brief description/i)
+      .fill("Watch for changed docs");
+    await page
+      .getByPlaceholder(/Describe what this automation should do/i)
+      .fill("Summarize product docs every morning");
     await page.getByRole("button", { name: "Create" }).click();
 
-    await expect(page.getByRole("heading", { name: "New Automation" })).toBeHidden();
+    await expect(
+      page.getByRole("heading", { name: "New Automation" }),
+    ).toBeHidden();
     await page.getByRole("button", { name: "Templates" }).click();
     await expect(page.getByText("Daily Brief")).toBeVisible();
     await page.getByText("Daily Brief").click();
     await expect(page.getByRole("button", { name: "Active" })).toBeVisible();
   });
 
-  test("automations path: run now, history, edit, and delete confirmation", async ({ page }) => {
+  test("automations path: run now, history, edit, and delete confirmation", async ({
+    page,
+  }) => {
     await page.goto("/settings?tab=automations");
     await expect(page.getByText("Morning brief")).toBeVisible();
 
@@ -657,19 +857,32 @@ test.describe("OpenYak UI preflight", () => {
     await expect(page.getByText("Manual")).toBeVisible();
 
     await page.getByText("Morning brief").click();
-    await expect(page.getByRole("heading", { name: "Edit Automation" })).toBeVisible();
-    await page.locator('input[type="text"]').first().fill("Morning brief updated");
+    await expect(
+      page.getByRole("heading", { name: "Edit Automation" }),
+    ).toBeVisible();
+    await page
+      .locator('input[type="text"]')
+      .first()
+      .fill("Morning brief updated");
     await page.getByRole("button", { name: "Save" }).click();
-    await expect(page.getByRole("heading", { name: "Edit Automation" })).toBeHidden();
+    await expect(
+      page.getByRole("heading", { name: "Edit Automation" }),
+    ).toBeHidden();
 
-    const card = page.locator("div.rounded-lg").filter({ hasText: "Morning brief" }).filter({ hasText: "Summarize overnight" }).first();
+    const card = page
+      .locator("div.rounded-lg")
+      .filter({ hasText: "Morning brief" })
+      .filter({ hasText: "Summarize overnight" })
+      .first();
     await card.locator("button").nth(3).click();
     await expect(page.getByText("Delete this automation?")).toBeVisible();
     await page.getByRole("button", { name: "Cancel" }).click();
     await expect(page.getByText("Delete this automation?")).toBeHidden();
   });
 
-  test("plugins path: connector, plugin, skill tabs and add custom connector", async ({ page }) => {
+  test("plugins path: connector, plugin, skill tabs and add custom connector", async ({
+    page,
+  }) => {
     await page.goto("/settings?tab=plugins");
     await expect(page.getByText("GitHub")).toBeVisible();
 
@@ -678,26 +891,38 @@ test.describe("OpenYak UI preflight", () => {
 
     await page.getByRole("button", { name: "Add custom" }).click();
     await page.getByPlaceholder("Name").fill("Local MCP");
-    await page.getByPlaceholder("https://mcp.example.com/mcp").fill("http://localhost:9988/mcp");
+    await page
+      .getByPlaceholder("https://mcp.example.com/mcp")
+      .fill("http://localhost:9988/mcp");
     await page.getByRole("button", { name: /^Add$/ }).click();
 
-    await page.locator("#main-content").getByRole("button", { name: "Plugins" }).click();
+    await page
+      .locator("#main-content")
+      .getByRole("button", { name: "Plugins" })
+      .click();
     await expect(page.getByText("GitHub workflows")).toBeVisible();
 
-    await page.locator("#main-content").getByRole("button", { name: "Skills" }).click();
+    await page
+      .locator("#main-content")
+      .getByRole("button", { name: "Skills" })
+      .click();
     await expect(page.getByText("browser", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: /Browse skills/i }).click();
     await page.getByPlaceholder(/Search 900k\+ skills/i).fill("browser");
     await expect(page.getByText("Browser automation skill")).toBeVisible();
   });
 
-  test("remote access path: enable tunnel and expose mobile handoff controls", async ({ page }) => {
+  test("remote access path: enable tunnel and expose mobile handoff controls", async ({
+    page,
+  }) => {
     await page.goto("/settings?tab=remote");
     await expect(page.getByText("Remote Access Disabled")).toBeVisible();
 
     await page.getByRole("switch").click();
     await expect(page.getByText("Remote Access Active")).toBeVisible();
-    await expect(page.getByText("https://remote.openyak.test", { exact: true }).first()).toBeVisible();
+    await expect(
+      page.getByText("https://remote.openyak.test", { exact: true }).first(),
+    ).toBeVisible();
     await page.getByRole("button", { name: /Copy/i }).click();
     await page.getByRole("button", { name: /Rotate Token/i }).click();
   });
@@ -706,14 +931,22 @@ test.describe("OpenYak UI preflight", () => {
 test.describe("OpenYak mobile remote preflight", () => {
   test.use({ viewport: { width: 393, height: 852 }, isMobile: true });
 
-  test("mobile settings path: connection and provider selection", async ({ page }) => {
+  test("mobile settings path: connection and provider selection", async ({
+    page,
+  }) => {
     await page.goto("/m/settings?token=remote-token");
-    await expect(page.getByRole("heading", { name: "Connection" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Connection" }),
+    ).toBeVisible();
     await expect(page.getByText("Connected")).toBeVisible();
     await expect(page.getByText("Model Access")).toBeVisible();
     await expect(page.getByText("OpenRouter")).toBeVisible();
     await page.getByText("ChatGPT Subscription").click();
-    await expect(page.getByRole("button", { name: /ChatGPT Subscription 1 model available/i })).toBeVisible();
+    await expect(
+      page.getByRole("button", {
+        name: /ChatGPT Subscription 1 model available/i,
+      }),
+    ).toBeVisible();
   });
 
   test("mobile task path: task list, new task, submit", async ({ page }) => {
@@ -725,9 +958,11 @@ test.describe("OpenYak mobile remote preflight", () => {
     await expect(page.getByRole("heading", { name: "New Task" })).toBeVisible();
     await expect(page.locator("select")).toContainText("Claude Sonnet 4.5");
 
-    await page.getByPlaceholder("What should OpenYak do?").fill("Check the release notes from my phone");
-    const promptResponse = page.waitForResponse((res) =>
-      res.url().includes("/api/chat/prompt") && res.status() === 200,
+    await page
+      .getByPlaceholder("What should OpenYak do?")
+      .fill("Check the release notes from my phone");
+    const promptResponse = page.waitForResponse(
+      (res) => res.url().includes("/api/chat/prompt") && res.status() === 200,
     );
     await page.getByPlaceholder("What should OpenYak do?").press("Enter");
     await promptResponse;

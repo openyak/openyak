@@ -4,7 +4,6 @@ import {
   Timer,
   Plug,
   Wifi,
-  CreditCard,
   BarChart3,
   Brain,
   ShieldCheck,
@@ -24,7 +23,6 @@ export const SETTINGS_TABS = [
   { id: "automations", icon: Timer, labelKey: "tabAutomations" },
   { id: "plugins", icon: Plug, labelKey: "tabPlugins" },
   { id: "remote", icon: Wifi, labelKey: "tabRemote" },
-  { id: "billing", icon: CreditCard, labelKey: "tabBilling" },
   { id: "usage", icon: BarChart3, labelKey: "tabUsage" },
   { id: "memory", icon: Brain, labelKey: "tabMemory" },
 ] as const satisfies readonly SettingsTab[];

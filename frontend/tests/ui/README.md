@@ -25,12 +25,12 @@ cd frontend && npx playwright install chromium
 - Desktop shell: root redirect, sidebar/history, settings sidebar, mobile nav, panel gutters, route progress, onboarding gate.
 - Chat: new chat landing, provider/model selector, agent mode switch, workspace selector, file attachment entry, prompt submission, session route, persisted conversation render, long conversation pagination, multi-conversation switching, export, workspace side panel, streaming state, manual and automatic context compression.
 - Message and session controls: historical message edit/resend, stop generation, assistant activity/feedback, sidebar pin/rename/export/delete/undo.
-- Settings: general appearance/language/about, providers across OpenYak/BYOK/ChatGPT/Ollama/local/custom, automations, plugins/connectors/skills, remote access, billing, usage, workspace memory.
+- Settings: general appearance/language/about, providers across BYOK/ChatGPT/Rapid-MLX/Ollama/custom, automations, plugins/connectors/skills, remote access, usage, workspace memory.
 - Automations: active/all/template tabs, create/edit dialog, schedule/loop modes, run/delete/result links.
 - Plugins: connector status and auth actions, custom connector creation, plugin enable/detail, skill enable/install/search.
 - Remote: desktop tunnel enable/copy/QR/token/permission controls, mobile task list, mobile new task, remote provider/model sync.
-- Billing and usage: connected account state, balance/packs/transactions, usage overview, model/session/daily breakdown.
-- Edge states: checkout return, disconnected billing account, backend auth expiry, mobile needs-input, remote tunnel health failure, connector auth failure.
+- Usage: overview, model/session/daily breakdown, and cost/token trends.
+- Edge states: backend auth expiry, mobile needs-input, remote tunnel health failure, connector auth failure.
 - Workspace memory: list, expand, edit, export, delete confirmation.
 
 ## Current Preflight List
@@ -41,7 +41,7 @@ cd frontend && npx playwright install chromium
 - Artifact workflow: persisted artifact cards open the right panel for Markdown, HTML, CSV, SVG/Mermaid coverage cards, and submit-plan cards open the plan review panel.
 - Interactive workflow: permission request, agent question, and plan review prompts are emitted through mocked SSE and answered only by GUI controls.
 - Settings walkthrough: every settings tab is reachable through the real settings navigation and exposes its primary controls/data.
-- Provider settings workflow: OpenYak/BYOK/ChatGPT/local/custom provider modes render and accept their GUI configuration controls.
+- Provider settings workflow: BYOK/ChatGPT/local/custom provider modes render and accept their GUI configuration controls.
 - Workspace memory workflow: memory list expands, edit saves, export runs, delete confirmation opens and closes through the dialog.
 - Automations flow: create dialog accepts the core fields, closes after create, templates tab loads and can instantiate a template.
 - Automations management workflow: run-now, history expansion, edit dialog, and delete confirmation are exercised.
@@ -55,7 +55,7 @@ cd frontend && npx playwright install chromium
 `openyak-workflows.spec.ts` is the stricter user-journey layer on top of the broader smoke preflight. These tests preserve browser state across navigation and assert both visible GUI outcomes and the backend payloads the UI submits.
 
 - Chat task journey: open a workspace-scoped new chat, upload a file, attach a workspace file by `@mention`, send, land on the created session, reload persisted messages, search, and reopen the session.
-- Provider setup journey: configure BYOK through the provider GUI, verify the chat composer switches to the BYOK model, submit with that provider/model, then configure Local API and Custom Endpoint.
+- Provider setup journey: configure BYOK through the provider GUI, verify the chat composer switches to the BYOK model, submit with that provider/model, then configure a Custom Endpoint for local or remote OpenAI-compatible APIs.
 - Automation lifecycle journey: create an automation, run it manually, open run history, edit it, delete it, and verify the list reflects each lifecycle transition.
 - Remote mobile handoff journey: enable desktop remote access, rotate the token, open the mobile connection flow, switch mobile provider, and submit a mobile task with the selected provider/model.
 
@@ -66,7 +66,7 @@ cd frontend && npx playwright install chromium
 - Office artifact workflow: opens DOCX, XLSX, PDF, and PPTX file-preview artifacts from real binary fixture bytes through `/api/files/content-binary`.
 - Artifact error workflow: missing binary preview shows the backend `File not found` detail in the artifact panel instead of a runtime overlay.
 - Upload error workflow: failed file upload surfaces a toast and leaves the chat composer usable.
-- Billing error workflow: 429 quota and 402 balance errors open the correct upgrade dialog and can be dismissed.
+- Provider error workflow: 429 and 402 responses surface recoverable composer errors without opening an upgrade dialog.
 - Mobile remote error workflow: invalid remote token fails on `/m/settings` and does not enter the task flow.
 
 ## Conversation Scale And Compression Suite
@@ -91,10 +91,8 @@ cd frontend && npx playwright install chromium
 
 ## Edge-State Regression Suite
 
-`openyak-edge-regressions.spec.ts` covers recoverability and account/remote edge states.
+`openyak-edge-regressions.spec.ts` covers recoverability and remote edge states.
 
-- Billing return workflow: `/settings?tab=billing&checkout=success` refreshes billing data and cleans the return URL.
-- Billing disconnected workflow: signed-out accounts show the billing empty state and route back to Providers.
 - Auth expiry workflow: a backend 401 during prompt submission shows a recoverable error and leaves the composer usable.
 - Mobile needs-input workflow: the task list badge opens the detail page, receives the prompt over SSE, and responds from the GUI.
 - Mobile remote disconnect workflow: an unreachable desktop tunnel shows disconnected health while keeping tasks visible.

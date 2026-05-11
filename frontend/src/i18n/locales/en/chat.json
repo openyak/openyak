@@ -154,7 +154,7 @@
   "input": "Input",
   "output": "Output",
   "metrics": "Metrics",
-  "credits": "Credits",
+  "cost": "Cost",
   "tools": "Tools",
   "toolCallCount_one": "{{count}} tool call",
   "toolCallCount_other": "{{count}} tool calls",
@@ -182,6 +182,6 @@
 
   "loadingModel": "Loading model into memory...",
   "setupProvider": "Set up an AI provider to start chatting",
-  "setupProviderDesc": "Connect your OpenYak account, add an API key, or set up a local model.",
+  "setupProviderDesc": "Add an API key, connect a local endpoint, use Rapid-MLX or Ollama, or sign in with a ChatGPT subscription.",
   "configureSettings": "Configure"
 }

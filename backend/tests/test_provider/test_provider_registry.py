@@ -102,6 +102,23 @@ class TestRefreshModels:
         assert result["slow"] == []
         assert len(reg.all_models()) == 1
 
+    @pytest.mark.asyncio
+    async def test_effective_context_defaults_to_full_model_window(self):
+        reg = ProviderRegistry()
+        model = ModelInfo(
+            id="large-context",
+            name="Large Context",
+            provider_id="p1",
+            capabilities=ModelCapabilities(max_context=1_050_000),
+        )
+        reg.register(_make_provider("p1", [model]))
+
+        await reg.refresh_models()
+
+        refreshed = reg.resolve_model("large-context")
+        assert refreshed is not None
+        assert refreshed[1].metadata["effective_context_window"] == 1_050_000
+
 
 class TestResolveModel:
     @pytest.mark.asyncio

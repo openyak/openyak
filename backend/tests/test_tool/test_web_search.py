@@ -55,8 +55,8 @@ class TestFormatSerperResults:
             {"title": "Result 1", "link": "https://a.com", "snippet": "Snip 1"},
             {"title": "Result 2", "link": "https://b.com", "snippet": "Snip 2"},
         ]}
-        billing = {"charged": True, "credits_deducted": 1, "daily_searches_used": 5, "daily_search_limit": 100}
-        result = WebSearchTool._format_serper_results("test", 10, data, billing)
+        usage = {"hosted_search_used": True, "daily_searches_used": 5, "daily_search_limit": 100}
+        result = WebSearchTool._format_serper_results("test", 10, data, usage)
         assert result.success
         assert "Result 1" in result.output
         assert "Result 2" in result.output
@@ -67,23 +67,22 @@ class TestFormatSerperResults:
             "knowledgeGraph": {"title": "Python", "type": "Language", "description": "A programming language"},
             "organic": [{"title": "R1", "link": "https://a.com", "snippet": "S1"}],
         }
-        billing = {}
-        result = WebSearchTool._format_serper_results("test", 10, data, billing)
+        usage = {}
+        result = WebSearchTool._format_serper_results("test", 10, data, usage)
         assert "[Knowledge Graph] Python" in result.output
 
     def test_no_results(self):
         data = {"organic": []}
-        billing = {"charged": False, "credits_deducted": 0, "daily_searches_used": 0, "daily_search_limit": 100}
-        result = WebSearchTool._format_serper_results("test", 10, data, billing)
+        usage = {"hosted_search_used": False, "daily_searches_used": 0, "daily_search_limit": 100}
+        result = WebSearchTool._format_serper_results("test", 10, data, usage)
         assert result.output == "No results found."
-        assert "charged" in result.metadata
+        assert "hosted_search_used" in result.metadata
 
-    def test_billing_meta(self):
+    def test_hosted_search_usage_meta(self):
         data = {"organic": [{"title": "R1", "link": "https://a.com", "snippet": "S1"}]}
-        billing = {"charged": True, "credits_deducted": 2, "daily_searches_used": 10, "daily_search_limit": 50}
-        result = WebSearchTool._format_serper_results("test", 10, data, billing)
-        assert result.metadata["charged"] is True
-        assert result.metadata["credits_deducted"] == 2
+        usage = {"hosted_search_used": True, "daily_searches_used": 10, "daily_search_limit": 50}
+        result = WebSearchTool._format_serper_results("test", 10, data, usage)
+        assert result.metadata["hosted_search_used"] is True
         assert result.metadata["daily_searches_used"] == 10
 
     def test_respects_max_results_cap(self):
@@ -91,6 +90,6 @@ class TestFormatSerperResults:
             {"title": f"R{i}", "link": f"https://{i}.com", "snippet": f"S{i}"}
             for i in range(20)
         ]}
-        billing = {}
-        result = WebSearchTool._format_serper_results("test", 3, data, billing)
+        usage = {}
+        result = WebSearchTool._format_serper_results("test", 3, data, usage)
         assert result.metadata["count"] == 3

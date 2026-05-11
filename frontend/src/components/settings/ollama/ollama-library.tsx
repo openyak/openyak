@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api, apiFetch } from "@/lib/api";
 import { API } from "@/lib/constants";
+import { LOCAL_MODEL_RECOMMENDATIONS } from "@/lib/local-models";
 import { cn } from "@/lib/utils";
 import type { LibraryData, LibraryModel } from "./types";
 
@@ -249,6 +250,88 @@ export function ModelLibrary({
           )}
         </div>
       )}
+
+      <div className="mb-4 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <h4 className="text-xs font-medium text-[var(--text-primary)]">
+            Recommended local models
+          </h4>
+          <span className="text-ui-3xs text-[var(--text-tertiary)]">
+            Same list maps to Rapid-MLX on macOS
+          </span>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          {LOCAL_MODEL_RECOMMENDATIONS.map((model) => {
+            return (
+              <div
+                key={model.id}
+                className="rounded-lg border border-[var(--border-default)] p-3 text-left"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="truncate text-xs font-medium text-[var(--text-primary)]">
+                      {model.name}
+                    </div>
+                    <div className="mt-0.5 truncate font-mono text-ui-3xs text-[var(--text-tertiary)]">
+                      Default: {model.ollamaTag}
+                    </div>
+                  </div>
+                  <span className="shrink-0 rounded bg-[var(--surface-secondary)] px-1.5 py-0.5 text-ui-3xs text-[var(--text-tertiary)]">
+                    {model.memory}
+                  </span>
+                </div>
+                <p className="mt-2 line-clamp-2 text-ui-3xs text-[var(--text-secondary)]">
+                  {model.description}
+                </p>
+                <div className="mt-2 flex items-center gap-1.5">
+                  <span className="rounded bg-[var(--surface-tertiary)] px-1.5 py-0.5 text-ui-3xs capitalize text-[var(--text-tertiary)]">
+                    {model.category}
+                  </span>
+                  <span className="truncate rounded bg-[var(--surface-tertiary)] px-1.5 py-0.5 font-mono text-ui-3xs text-[var(--text-tertiary)]">
+                    MLX: {model.rapidMlxAlias ?? "none"}
+                  </span>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {model.variants.map((variant) => {
+                    const isInstalled = installedNames.has(variant.ollamaTag);
+                    return (
+                      <button
+                        key={`${model.id}-${variant.label}`}
+                        type="button"
+                        onClick={() =>
+                          !isInstalled &&
+                          pullingModel === null &&
+                          pullModel(variant.ollamaTag)
+                        }
+                        disabled={isInstalled || pullingModel !== null}
+                        className={cn(
+                          "rounded border px-1.5 py-0.5 text-ui-3xs transition-colors",
+                          isInstalled
+                            ? "border-[var(--color-success)]/30 bg-[var(--color-success)]/10 text-[var(--color-success)]"
+                            : "border-[var(--border-default)] text-[var(--text-secondary)] hover:border-[var(--brand-primary)] hover:text-[var(--brand-primary)]",
+                          pullingModel !== null &&
+                            !isInstalled &&
+                            "cursor-not-allowed opacity-50",
+                        )}
+                        title={
+                          isInstalled
+                            ? "Installed"
+                            : `Pull ${variant.ollamaTag}`
+                        }
+                      >
+                        {isInstalled && (
+                          <Check className="mr-0.5 inline h-2.5 w-2.5" />
+                        )}
+                        {variant.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
 
       {/* Search + sort + category tabs */}
       <div className="space-y-2 mb-3">
