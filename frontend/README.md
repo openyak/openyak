@@ -86,9 +86,10 @@ src/
 │   ├── settings/                 # Settings components
 │   │   ├── settings-layout.tsx   #   Tab layout
 │   │   ├── general-tab.tsx       #   General settings (appearance, language)
-│   │   ├── providers-tab.tsx     #   BYOK provider key management
+│   │   ├── providers-tab.tsx     #   Provider selection and BYOK key management
 │   │   ├── memory-tab.tsx        #   Memory settings & fact management
 │   │   ├── ollama-panel.tsx      #   Ollama management (setup, models, library, pull/delete)
+│   │   ├── rapid-mlx-panel.tsx   #   Rapid-MLX management (start/stop/switch/remove)
 │   │   └── usage-tab.tsx         #   Token usage statistics
 │   │
 │   ├── activity/                 # Activity tracking
