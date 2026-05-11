@@ -13,6 +13,13 @@ import {
   Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
 import { errorToMessage } from "@/lib/errors";
@@ -39,6 +46,10 @@ export function RapidMLXPanel() {
   const [modelInput, setModelInput] = useState("qwen3.5-4b");
   const [portInput, setPortInput] = useState("18080");
   const [removingAlias, setRemovingAlias] = useState<string | null>(null);
+  const [pendingRemoval, setPendingRemoval] = useState<{
+    alias: string;
+    name: string;
+  } | null>(null);
   const rapidAliases = useMemo(
     () =>
       Array.from(
@@ -120,6 +131,7 @@ export function RapidMLXPanel() {
     },
     onSuccess: () => {
       setRemovingAlias(null);
+      setPendingRemoval(null);
       qc.invalidateQueries({ queryKey: ["rapidMlxCached"] });
     },
     onError: () => setRemovingAlias(null),
@@ -339,7 +351,12 @@ export function RapidMLXPanel() {
                       variant="ghost"
                       size="sm"
                       className="h-9"
-                      onClick={() => removeMutation.mutate(modelInput)}
+                      onClick={() =>
+                        setPendingRemoval({
+                          alias: modelInput,
+                          name: selectedModel.name,
+                        })
+                      }
                       disabled={removeMutation.isPending}
                       title="Remove downloaded Rapid-MLX model"
                     >
@@ -434,7 +451,10 @@ export function RapidMLXPanel() {
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            removeMutation.mutate(removableAlias);
+                            setPendingRemoval({
+                              alias: removableAlias,
+                              name: model.name,
+                            });
                           }}
                           disabled={removeMutation.isPending}
                           className="rounded p-1 text-[var(--text-tertiary)] transition-colors hover:bg-[var(--surface-secondary)] hover:text-[var(--color-destructive)] disabled:opacity-60"
@@ -486,6 +506,58 @@ export function RapidMLXPanel() {
           )}
         </div>
       )}
+
+      <Dialog
+        open={!!pendingRemoval}
+        onOpenChange={(open) => {
+          if (!open && !removeMutation.isPending) setPendingRemoval(null);
+        }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Remove local model?</DialogTitle>
+            <DialogDescription>
+              This deletes the downloaded Rapid-MLX model from the HuggingFace
+              cache. You can download it again by starting the model later.
+            </DialogDescription>
+          </DialogHeader>
+          {pendingRemoval && (
+            <div className="space-y-3">
+              <div className="rounded-md border border-[var(--border-default)] bg-[var(--surface-secondary)] px-3 py-2">
+                <div className="text-xs font-medium text-[var(--text-primary)]">
+                  {pendingRemoval.name}
+                </div>
+                <div className="mt-1 truncate font-mono text-ui-3xs text-[var(--text-tertiary)]">
+                  {pendingRemoval.alias}
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setPendingRemoval(null)}
+                  disabled={removeMutation.isPending}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => removeMutation.mutate(pendingRemoval.alias)}
+                  disabled={removeMutation.isPending}
+                >
+                  {removingAlias === pendingRemoval.alias ? (
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                  )}
+                  Remove
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

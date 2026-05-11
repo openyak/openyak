@@ -25,20 +25,20 @@ _ALIAS_REPOS: dict[str, str] = {
     "deepseek-r1-32b": "mlx-community/DeepSeek-R1-Distill-Qwen-32B-4bit",
     "deepseek-r1-8b": "mlx-community/DeepSeek-R1-0528-Qwen3-8B-4bit",
     "devstral-v2-24b": "mlx-community/Devstral-Small-2-24B-Instruct-2512-4bit",
-    "gemma-4-26b": "google/gemma-4-26B-A4B-it",
-    "gemma-4-31b": "google/gemma-4-31B-it",
+    "gemma-4-26b": "mlx-community/gemma-4-26b-a4b-it-4bit",
+    "gemma-4-31b": "mlx-community/gemma-4-31b-it-4bit",
     "gpt-oss-20b": "mlx-community/GPT-OSS-20B-4bit",
     "mistral-24b": "mlx-community/Mistral-Small-3.1-24B-Instruct-2503-4bit",
     "nemotron-30b": "lmstudio-community/NVIDIA-Nemotron-3-Nano-30B-A3B-MLX-4bit",
-    "qwen3-coder": "mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit",
+    "qwen3-coder": "lmstudio-community/Qwen3-Coder-Next-MLX-4bit",
     "qwen3-coder-30b": "mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit",
     "qwen3-vl-30b": "mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit",
     "qwen3-vl-4b": "mlx-community/Qwen3-VL-4B-Instruct-MLX-4bit",
     "qwen3-vl-8b": "mlx-community/Qwen3-VL-8B-Instruct-4bit",
-    "qwen3.5-122b": "mlx-community/Qwen3.5-122B-A10B-4bit",
+    "qwen3.5-122b": "nightmedia/Qwen3.5-122B-A10B-Text-mxfp4-mlx",
     "qwen3.5-122b-8bit": "mlx-community/Qwen3.5-122B-A10B-8bit",
-    "qwen3.5-27b": "mlx-community/Qwen3.5-27B-MLX-4bit",
-    "qwen3.5-35b": "mlx-community/Qwen3.5-35B-A3B-4bit",
+    "qwen3.5-27b": "mlx-community/Qwen3.5-27B-4bit",
+    "qwen3.5-35b": "mlx-community/Qwen3.5-35B-A3B-8bit",
     "qwen3.5-4b": "mlx-community/Qwen3.5-4B-MLX-4bit",
     "qwen3.5-9b": "mlx-community/Qwen3.5-9B-4bit",
     "qwen3.6-27b": "mlx-community/Qwen3.6-27B-4bit",
@@ -146,13 +146,17 @@ class RapidMLXManager:
         model = alias_or_repo.strip()
         if not model:
             raise RuntimeError("Rapid-MLX model alias is required.")
-        if self.is_managed_process_alive and model == self._model:
+        resolved_model = _ALIAS_REPOS.get(model, model)
+        resolved_running_model = _ALIAS_REPOS.get(self._model, self._model)
+        if self.is_managed_process_alive and (
+            model == self._model or resolved_model == resolved_running_model
+        ):
             raise RuntimeError("Stop Rapid-MLX before removing the running model.")
 
         proc = await asyncio.create_subprocess_exec(
             executable,
             "rm",
-            model,
+            resolved_model,
             cwd=str(self.data_dir),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

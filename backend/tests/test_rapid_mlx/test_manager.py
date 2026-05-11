@@ -76,7 +76,18 @@ async def test_rapid_mlx_remove_model_invokes_cli(monkeypatch, tmp_path: Path):
     mgr = RapidMLXManager(tmp_path)
     await mgr.remove_model("qwen3.5-4b")
 
-    assert calls == [("/bin/rapid-mlx", "rm", "qwen3.5-4b")]
+    assert calls == [("/bin/rapid-mlx", "rm", "mlx-community/Qwen3.5-4B-MLX-4bit")]
+
+
+def test_rapid_mlx_gemma_alias_matches_rapid_mlx_cli_cache_mapping():
+    assert (
+        manager_module._ALIAS_REPOS["gemma-4-26b"]
+        == "mlx-community/gemma-4-26b-a4b-it-4bit"
+    )
+    assert (
+        manager_module._ALIAS_REPOS["gemma-4-31b"]
+        == "mlx-community/gemma-4-31b-it-4bit"
+    )
 
 
 @pytest.mark.asyncio
