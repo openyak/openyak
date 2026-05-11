@@ -197,7 +197,9 @@ class RapidMLXManager:
                 await _terminate_pid(pid)
 
         if self.is_managed_process_alive:
-            return base_url
+            if self._model == next_model and self._port == port:
+                return base_url
+            await self.stop()
 
         self._port = port
         self._model = next_model

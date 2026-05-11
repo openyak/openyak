@@ -116,3 +116,65 @@ async def test_rapid_mlx_remove_model_rejects_running_model(monkeypatch, tmp_pat
 
     with pytest.raises(RuntimeError, match="Stop Rapid-MLX"):
         await mgr.remove_model("qwen3.5-4b")
+
+
+@pytest.mark.asyncio
+async def test_rapid_mlx_start_replaces_managed_process_on_new_port(
+    monkeypatch,
+    tmp_path: Path,
+):
+    calls: list[tuple[str, ...]] = []
+
+    class FakeRunningProcess:
+        returncode = None
+        terminated = False
+
+        def terminate(self):
+            self.terminated = True
+            self.returncode = 0
+
+        async def wait(self):
+            return self.returncode
+
+    class FakeStartedProcess:
+        returncode = None
+
+    async def fake_create_subprocess_exec(*args, **_kwargs):
+        calls.append(tuple(args))
+        return FakeStartedProcess()
+
+    async def fake_rapid_mlx_running(_base_url: str) -> bool:
+        return False
+
+    monkeypatch.setattr(manager_module, "_platform_supported", lambda: True)
+    monkeypatch.setattr(manager_module.shutil, "which", lambda _name: "/bin/rapid-mlx")
+    monkeypatch.setattr(manager_module, "_rapid_mlx_running", fake_rapid_mlx_running)
+    monkeypatch.setattr(
+        manager_module.asyncio,
+        "create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+
+    old_process = FakeRunningProcess()
+    mgr = RapidMLXManager(tmp_path)
+    mgr._process = old_process  # type: ignore[assignment]
+    mgr._model = "qwen3.5-4b"
+    mgr._port = 18080
+
+    base_url = await mgr.start(model="qwen3.5-9b", port=19000)
+
+    assert base_url == "http://localhost:19000/v1"
+    assert old_process.terminated is True
+    assert mgr._model == "qwen3.5-9b"
+    assert mgr._port == 19000
+    assert calls == [
+        (
+            "/bin/rapid-mlx",
+            "serve",
+            "qwen3.5-9b",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "19000",
+        )
+    ]

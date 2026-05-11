@@ -40,6 +40,8 @@ interface RapidMLXRuntimeStatus {
   install_commands: string[];
 }
 
+const normalizeModelValue = (value: string) => value.trim().toLowerCase();
+
 export function RapidMLXPanel() {
   const qc = useQueryClient();
   const { setActiveProvider } = useSettingsStore();
@@ -141,9 +143,21 @@ export function RapidMLXPanel() {
     !!alias && !!cachedModels?.cached?.[alias];
   const selectedAliasCached = isAliasCached(modelInput);
   const isStarting = status?.process_running && !status.running;
-  const primaryActionLabel = status?.running ? "Switch" : "Start";
+  const selectedPort = Number(portInput) || 18080;
+  const isRunningModelAlias = (alias: string | undefined) =>
+    !!alias &&
+    !!status?.running &&
+    normalizeModelValue(status.current_model) === normalizeModelValue(alias);
+  const selectedModelIsRunning =
+    isRunningModelAlias(modelInput) && status?.port === selectedPort;
+  const primaryActionLabel = selectedModelIsRunning
+    ? "Running"
+    : status?.running
+      ? "Switch"
+      : "Start";
   const primaryActionDisabled =
     startMutation.isPending ||
+    selectedModelIsRunning ||
     !!isStarting ||
     rapidVariants.length === 0 ||
     !modelInput.trim();
@@ -317,6 +331,8 @@ export function RapidMLXPanel() {
                 >
                   {startMutation.isPending || isStarting ? (
                     <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  ) : selectedModelIsRunning ? (
+                    <Check className="mr-1.5 h-3.5 w-3.5" />
                   ) : (
                     <Play className="mr-1.5 h-3.5 w-3.5" />
                   )}
@@ -347,11 +363,17 @@ export function RapidMLXPanel() {
                       name: selectedModel.name,
                     })
                   }
-                  disabled={removeMutation.isPending || !selectedAliasCached}
+                  disabled={
+                    removeMutation.isPending ||
+                    !selectedAliasCached ||
+                    selectedModelIsRunning
+                  }
                   title={
-                    selectedAliasCached
-                      ? "Remove downloaded Rapid-MLX model"
-                      : "Selected model is not downloaded"
+                    selectedModelIsRunning
+                      ? "Stop Rapid-MLX before removing the running model"
+                      : selectedAliasCached
+                        ? "Remove downloaded Rapid-MLX model"
+                        : "Selected model is not downloaded"
                   }
                 >
                   {removingAlias === modelInput ? (
@@ -366,7 +388,9 @@ export function RapidMLXPanel() {
             <p className="mt-2 text-ui-3xs text-[var(--text-tertiary)]">
               {isStarting
                 ? "Rapid-MLX is starting. Stop is available if you need to cancel."
-                : status.running
+                : selectedModelIsRunning
+                  ? "Selected model is running."
+                  : status.running
                   ? "Switch restarts Rapid-MLX on the selected model."
                   : selectedAliasCached
                     ? "Selected model is already downloaded."
@@ -396,6 +420,8 @@ export function RapidMLXPanel() {
                   installedVariants.length === 1
                     ? installedVariants[0].rapidMlxAlias
                     : undefined;
+                const removableAliasIsRunning =
+                  isRunningModelAlias(removableAlias);
                 const selected = model.id === selectedModel.id;
                 return (
                   <div
@@ -440,9 +466,15 @@ export function RapidMLXPanel() {
                               name: model.name,
                             });
                           }}
-                          disabled={removeMutation.isPending}
+                          disabled={
+                            removeMutation.isPending || removableAliasIsRunning
+                          }
                           className="rounded p-1 text-[var(--text-tertiary)] transition-colors hover:bg-[var(--surface-secondary)] hover:text-[var(--color-destructive)] disabled:opacity-60"
-                          title={`Remove ${removableAlias}`}
+                          title={
+                            removableAliasIsRunning
+                              ? "Stop Rapid-MLX before removing the running model"
+                              : `Remove ${removableAlias}`
+                          }
                         >
                           {removingAlias === removableAlias ? (
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
