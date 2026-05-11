@@ -163,39 +163,23 @@ export function NotRunningPanel({
             Start Ollama to pull
           </span>
         </div>
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-1 gap-1 md:grid-cols-2">
           {LOCAL_MODEL_RECOMMENDATIONS.map((model) => (
             <div
               key={model.id}
-              className="rounded-lg border border-[var(--border-default)] p-3 opacity-75"
+              className="flex min-h-12 items-center justify-between gap-3 rounded-md border border-[var(--border-default)] px-3 py-2 opacity-75"
             >
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="truncate text-xs font-medium text-[var(--text-primary)]">
-                    {model.name}
-                  </div>
-                  <div className="mt-0.5 truncate font-mono text-ui-3xs text-[var(--text-tertiary)]">
-                    Default: {model.ollamaTag}
-                  </div>
+              <div className="min-w-0">
+                <div className="truncate text-xs font-medium text-[var(--text-primary)]">
+                  {model.name}
                 </div>
-                <span className="shrink-0 rounded bg-[var(--surface-secondary)] px-1.5 py-0.5 text-ui-3xs text-[var(--text-tertiary)]">
-                  {model.memory}
-                </span>
+                <div className="truncate font-mono text-ui-3xs text-[var(--text-tertiary)]">
+                  {model.ollamaTag}
+                </div>
               </div>
-              <div className="mt-2 truncate rounded bg-[var(--surface-tertiary)] px-1.5 py-0.5 font-mono text-ui-3xs text-[var(--text-tertiary)]">
-                MLX: {model.rapidMlxAlias ?? "none"}
-              </div>
-              <div className="mt-2 flex flex-wrap gap-1">
-                {model.variants.map((variant) => (
-                  <span
-                    key={`${model.id}-${variant.label}`}
-                    className="rounded border border-[var(--border-default)] px-1.5 py-0.5 text-ui-3xs text-[var(--text-tertiary)]"
-                    title={variant.ollamaTag}
-                  >
-                    {variant.label}
-                  </span>
-                ))}
-              </div>
+              <span className="shrink-0 rounded bg-[var(--surface-secondary)] px-1.5 py-0.5 text-ui-3xs text-[var(--text-tertiary)]">
+                {model.memory}
+              </span>
             </div>
           ))}
         </div>

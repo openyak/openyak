@@ -44,6 +44,12 @@ export function ModelLibrary({
   const [pullingModel, setPullingModel] = useState<string | null>(null);
   const [pullProgress, setPullProgress] = useState<PullProgress | null>(null);
   const [customModel, setCustomModel] = useState("");
+  const [recommendedModelId, setRecommendedModelId] = useState(
+    LOCAL_MODEL_RECOMMENDATIONS[0]?.id ?? "",
+  );
+  const [recommendedTag, setRecommendedTag] = useState(
+    LOCAL_MODEL_RECOMMENDATIONS[0]?.ollamaTag ?? "",
+  );
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   // Infinite scroll state
@@ -215,6 +221,15 @@ export function ModelLibrary({
     { key: "name", label: t("sortName", "Name") },
     { key: "provider", label: t("sortProvider", "Provider") },
   ];
+  const recommendedModel =
+    LOCAL_MODEL_RECOMMENDATIONS.find((model) => model.id === recommendedModelId) ??
+    LOCAL_MODEL_RECOMMENDATIONS[0];
+  const recommendedVariant =
+    recommendedModel.variants.find((variant) => variant.ollamaTag === recommendedTag) ??
+    recommendedModel.variants[0];
+  const recommendedInstalled = installedNames.has(
+    recommendedVariant?.ollamaTag ?? "",
+  );
 
   return (
     <div>
@@ -251,85 +266,103 @@ export function ModelLibrary({
         </div>
       )}
 
-      <div className="mb-4 space-y-2">
-        <div className="flex items-center justify-between gap-2">
-          <h4 className="text-xs font-medium text-[var(--text-primary)]">
-            Recommended local models
-          </h4>
-          <span className="text-ui-3xs text-[var(--text-tertiary)]">
-            Same list maps to Rapid-MLX on macOS
-          </span>
+      <div className="mb-4 space-y-3">
+        <div className="rounded-lg border border-[var(--border-default)] p-3">
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-[1.2fr_1fr_auto]">
+            <select
+              value={recommendedModel.id}
+              onChange={(e) => {
+                const next = LOCAL_MODEL_RECOMMENDATIONS.find(
+                  (model) => model.id === e.target.value,
+                );
+                setRecommendedModelId(e.target.value);
+                setRecommendedTag(next?.ollamaTag ?? "");
+              }}
+              className="h-9 rounded-md border border-[var(--border-default)] bg-[var(--surface-primary)] px-2 text-xs text-[var(--text-primary)]"
+            >
+              {LOCAL_MODEL_RECOMMENDATIONS.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.name} - {model.memory}
+                </option>
+              ))}
+            </select>
+            <select
+              value={recommendedVariant?.ollamaTag ?? ""}
+              onChange={(e) => setRecommendedTag(e.target.value)}
+              className="h-9 rounded-md border border-[var(--border-default)] bg-[var(--surface-primary)] px-2 text-xs text-[var(--text-primary)]"
+            >
+              {recommendedModel.variants.map((variant) => (
+                <option
+                  key={`${recommendedModel.id}-${variant.label}`}
+                  value={variant.ollamaTag}
+                >
+                  {variant.label} ({variant.precision})
+                </option>
+              ))}
+            </select>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9"
+              onClick={() => pullModel(recommendedVariant.ollamaTag)}
+              disabled={
+                !recommendedVariant ||
+                recommendedInstalled ||
+                pullingModel !== null
+              }
+            >
+              {recommendedInstalled ? (
+                <Check className="mr-1.5 h-3.5 w-3.5" />
+              ) : pullingModel ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : null}
+              {recommendedInstalled ? "Installed" : "Pull"}
+            </Button>
+          </div>
+          <div className="mt-2 truncate font-mono text-ui-3xs text-[var(--text-tertiary)]">
+            {recommendedVariant?.ollamaTag}
+          </div>
         </div>
-        <div className="grid grid-cols-2 gap-2">
-          {LOCAL_MODEL_RECOMMENDATIONS.map((model) => {
-            return (
-              <div
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <h4 className="text-xs font-medium text-[var(--text-primary)]">
+              Recommended local models
+            </h4>
+            <span className="text-ui-3xs text-[var(--text-tertiary)]">
+              Pick above to install
+            </span>
+          </div>
+          <div className="grid grid-cols-1 gap-1 md:grid-cols-2">
+            {LOCAL_MODEL_RECOMMENDATIONS.map((model) => (
+              <button
                 key={model.id}
-                className="rounded-lg border border-[var(--border-default)] p-3 text-left"
+                type="button"
+                onClick={() => {
+                  setRecommendedModelId(model.id);
+                  setRecommendedTag(model.ollamaTag);
+                }}
+                className={`flex min-h-12 items-center justify-between gap-3 rounded-md border px-3 py-2 text-left transition-colors ${
+                  model.id === recommendedModel.id
+                    ? "border-[var(--brand-primary)] bg-[var(--brand-primary)]/5"
+                    : "border-[var(--border-default)] hover:bg-[var(--surface-secondary)]"
+                }`}
               >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="truncate text-xs font-medium text-[var(--text-primary)]">
-                      {model.name}
-                    </div>
-                    <div className="mt-0.5 truncate font-mono text-ui-3xs text-[var(--text-tertiary)]">
-                      Default: {model.ollamaTag}
-                    </div>
+                <div className="min-w-0">
+                  <div className="truncate text-xs font-medium text-[var(--text-primary)]">
+                    {model.name}
                   </div>
-                  <span className="shrink-0 rounded bg-[var(--surface-secondary)] px-1.5 py-0.5 text-ui-3xs text-[var(--text-tertiary)]">
-                    {model.memory}
-                  </span>
+                  <div className="truncate text-ui-3xs text-[var(--text-tertiary)]">
+                    {model.variants.length} precision option
+                    {model.variants.length === 1 ? "" : "s"}
+                  </div>
                 </div>
-                <p className="mt-2 line-clamp-2 text-ui-3xs text-[var(--text-secondary)]">
-                  {model.description}
-                </p>
-                <div className="mt-2 flex items-center gap-1.5">
-                  <span className="rounded bg-[var(--surface-tertiary)] px-1.5 py-0.5 text-ui-3xs capitalize text-[var(--text-tertiary)]">
-                    {model.category}
-                  </span>
-                  <span className="truncate rounded bg-[var(--surface-tertiary)] px-1.5 py-0.5 font-mono text-ui-3xs text-[var(--text-tertiary)]">
-                    MLX: {model.rapidMlxAlias ?? "none"}
-                  </span>
-                </div>
-                <div className="mt-2 flex flex-wrap gap-1">
-                  {model.variants.map((variant) => {
-                    const isInstalled = installedNames.has(variant.ollamaTag);
-                    return (
-                      <button
-                        key={`${model.id}-${variant.label}`}
-                        type="button"
-                        onClick={() =>
-                          !isInstalled &&
-                          pullingModel === null &&
-                          pullModel(variant.ollamaTag)
-                        }
-                        disabled={isInstalled || pullingModel !== null}
-                        className={cn(
-                          "rounded border px-1.5 py-0.5 text-ui-3xs transition-colors",
-                          isInstalled
-                            ? "border-[var(--color-success)]/30 bg-[var(--color-success)]/10 text-[var(--color-success)]"
-                            : "border-[var(--border-default)] text-[var(--text-secondary)] hover:border-[var(--brand-primary)] hover:text-[var(--brand-primary)]",
-                          pullingModel !== null &&
-                            !isInstalled &&
-                            "cursor-not-allowed opacity-50",
-                        )}
-                        title={
-                          isInstalled
-                            ? "Installed"
-                            : `Pull ${variant.ollamaTag}`
-                        }
-                      >
-                        {isInstalled && (
-                          <Check className="mr-0.5 inline h-2.5 w-2.5" />
-                        )}
-                        {variant.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })}
+                <span className="shrink-0 rounded bg-[var(--surface-secondary)] px-1.5 py-0.5 text-ui-3xs text-[var(--text-tertiary)]">
+                  {model.memory}
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
