@@ -37,6 +37,19 @@ export function RapidMLXPanel() {
   const { setActiveProvider } = useSettingsStore();
   const [modelInput, setModelInput] = useState("qwen3.5-4b");
   const [portInput, setPortInput] = useState("18080");
+  const rapidAliases = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          LOCAL_MODEL_RECOMMENDATIONS.flatMap((model) =>
+            model.variants
+              .map((variant) => variant.rapidMlxAlias)
+              .filter((alias): alias is string => !!alias),
+          ),
+        ),
+      ),
+    [],
+  );
 
   const selectedModel = useMemo(
     () =>
@@ -62,6 +75,16 @@ export function RapidMLXPanel() {
     refetchInterval: 5_000,
     retry: false,
   });
+  const { data: cachedModels } = useQuery({
+    queryKey: ["rapidMlxCached", rapidAliases],
+    queryFn: () =>
+      api.post<{ cached: Record<string, boolean> }>(API.RAPID_MLX.CACHED, {
+        aliases: rapidAliases,
+      }),
+    enabled: !!status?.binary_installed,
+    refetchInterval: 10_000,
+    retry: false,
+  });
 
   const startMutation = useMutation({
     mutationFn: () =>
@@ -84,6 +107,9 @@ export function RapidMLXPanel() {
       setActiveProvider(null);
     },
   });
+
+  const isAliasCached = (alias: string | undefined) =>
+    !!alias && !!cachedModels?.cached?.[alias];
 
   if (isError) {
     return (
@@ -180,36 +206,42 @@ export function RapidMLXPanel() {
           </div>
 
           {status.running ? (
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setActiveProvider("rapid-mlx");
-                  qc.invalidateQueries({ queryKey: queryKeys.models });
-                }}
-              >
-                <Check className="mr-1.5 h-3.5 w-3.5" />
-                Use Rapid-MLX
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => stopMutation.mutate()}
-                disabled={stopMutation.isPending || !status.process_running}
-                title={
-                  status.process_running
-                    ? "Stop Rapid-MLX"
-                    : "This Rapid-MLX server was started outside OpenYak."
-                }
-              >
-                {stopMutation.isPending ? (
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Square className="mr-1.5 h-3.5 w-3.5" />
-                )}
-                Stop
-              </Button>
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setActiveProvider("rapid-mlx");
+                    qc.invalidateQueries({ queryKey: queryKeys.models });
+                  }}
+                >
+                  <Check className="mr-1.5 h-3.5 w-3.5" />
+                  Use Rapid-MLX
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => stopMutation.mutate()}
+                  disabled={stopMutation.isPending || !status.process_running}
+                  title={
+                    status.process_running
+                      ? "Stop Rapid-MLX"
+                      : "This Rapid-MLX server was started outside OpenYak."
+                  }
+                >
+                  {stopMutation.isPending ? (
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Square className="mr-1.5 h-3.5 w-3.5" />
+                  )}
+                  Stop
+                </Button>
+              </div>
+              <p className="text-ui-3xs text-[var(--text-tertiary)]">
+                Running model is available locally. Stop Rapid-MLX to switch or
+                download a different model.
+              </p>
             </div>
           ) : status.process_running ? (
             <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
@@ -257,7 +289,10 @@ export function RapidMLXPanel() {
                         key={`${selectedModel.id}-${variant.label}`}
                         value={variant.rapidMlxAlias}
                       >
-                        {variant.label} ({variant.precision})
+                        {variant.label} ({variant.precision}) -{" "}
+                        {isAliasCached(variant.rapidMlxAlias)
+                          ? "installed"
+                          : "not installed"}
                       </option>
                     ))}
                   </select>
@@ -295,60 +330,72 @@ export function RapidMLXPanel() {
                   </span>
                 </div>
                 <p className="mt-2 text-ui-3xs text-[var(--text-tertiary)]">
-                  Start is always available here; first launch may download the
-                  selected model.
+                  {isAliasCached(modelInput)
+                    ? "Selected model is already downloaded."
+                    : "Selected model is not downloaded yet; first launch will download it."}
                 </p>
-              </div>
-
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xs font-medium text-[var(--text-primary)]">
-                    Recommended local models
-                  </h3>
-                  <span className="text-ui-3xs text-[var(--text-tertiary)]">
-                    MLX variants only
-                  </span>
-                </div>
-                <div className="grid grid-cols-1 gap-1 md:grid-cols-2">
-                  {LOCAL_MODEL_RECOMMENDATIONS.map((model) => {
-                    const aliases = model.variants
-                      .filter((variant) => variant.rapidMlxAlias)
-                      .map((variant) => variant.label);
-                    const selected = model.id === selectedModel.id;
-                    return (
-                      <button
-                        key={model.id}
-                        type="button"
-                        onClick={() => {
-                          const firstAlias = model.variants.find(
-                            (variant) => variant.rapidMlxAlias,
-                          )?.rapidMlxAlias;
-                          if (firstAlias) setModelInput(firstAlias);
-                        }}
-                        className={`flex min-h-12 items-center justify-between gap-3 rounded-md border px-3 py-2 text-left transition-colors ${
-                          selected
-                            ? "border-[var(--brand-primary)] bg-[var(--brand-primary)]/5"
-                            : "border-[var(--border-default)] hover:bg-[var(--surface-secondary)]"
-                        }`}
-                      >
-                        <div className="min-w-0">
-                          <div className="truncate text-xs font-medium text-[var(--text-primary)]">
-                            {model.name}
-                          </div>
-                          <div className="truncate text-ui-3xs text-[var(--text-tertiary)]">
-                            {aliases.length} MLX option{aliases.length === 1 ? "" : "s"}
-                          </div>
-                        </div>
-                        <span className="shrink-0 rounded bg-[var(--surface-secondary)] px-1.5 py-0.5 text-ui-3xs text-[var(--text-tertiary)]">
-                          {model.memory}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
               </div>
             </div>
           )}
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-medium text-[var(--text-primary)]">
+                Recommended local models
+              </h3>
+              <span className="text-ui-3xs text-[var(--text-tertiary)]">
+                Download status
+              </span>
+            </div>
+            <div className="grid grid-cols-1 gap-1 md:grid-cols-2">
+              {LOCAL_MODEL_RECOMMENDATIONS.map((model) => {
+                const aliases = model.variants
+                  .filter((variant) => variant.rapidMlxAlias)
+                  .map((variant) => variant.label);
+                const installedCount = model.variants.filter((variant) =>
+                  isAliasCached(variant.rapidMlxAlias),
+                ).length;
+                const selected = model.id === selectedModel.id;
+                return (
+                  <button
+                    key={model.id}
+                    type="button"
+                    onClick={() => {
+                      if (status.running) return;
+                      const firstAlias = model.variants.find(
+                        (variant) => variant.rapidMlxAlias,
+                      )?.rapidMlxAlias;
+                      if (firstAlias) setModelInput(firstAlias);
+                    }}
+                    disabled={status.running}
+                    className={`flex min-h-12 items-center justify-between gap-3 rounded-md border px-3 py-2 text-left transition-colors ${
+                      selected
+                        ? "border-[var(--brand-primary)] bg-[var(--brand-primary)]/5"
+                        : "border-[var(--border-default)] hover:bg-[var(--surface-secondary)]"
+                    } ${status.running ? "cursor-default opacity-80" : ""}`}
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-medium text-[var(--text-primary)]">
+                        {model.name}
+                      </div>
+                      <div className="truncate text-ui-3xs text-[var(--text-tertiary)]">
+                        {installedCount}/{aliases.length} installed
+                      </div>
+                    </div>
+                    <span
+                      className={`shrink-0 rounded px-1.5 py-0.5 text-ui-3xs ${
+                        installedCount > 0
+                          ? "bg-[var(--color-success)]/10 text-[var(--color-success)]"
+                          : "bg-[var(--surface-secondary)] text-[var(--text-tertiary)]"
+                      }`}
+                    >
+                      {installedCount > 0 ? "Installed" : "Not installed"}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
           {startMutation.isError && (
             <div className="flex items-center gap-1.5 text-xs text-[var(--color-destructive)]">

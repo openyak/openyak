@@ -353,12 +353,23 @@ export function ModelLibrary({
                     {model.name}
                   </div>
                   <div className="truncate text-ui-3xs text-[var(--text-tertiary)]">
-                    {model.variants.length} precision option
+                  {model.variants.length} precision option
                     {model.variants.length === 1 ? "" : "s"}
+                    {" · "}
+                    {
+                      model.variants.filter((variant) =>
+                        installedNames.has(variant.ollamaTag),
+                      ).length
+                    }
+                    /{model.variants.length} installed
                   </div>
                 </div>
                 <span className="shrink-0 rounded bg-[var(--surface-secondary)] px-1.5 py-0.5 text-ui-3xs text-[var(--text-tertiary)]">
-                  {model.memory}
+                  {model.variants.some((variant) =>
+                    installedNames.has(variant.ollamaTag),
+                  )
+                    ? "Installed"
+                    : model.memory}
                 </span>
               </button>
             ))}

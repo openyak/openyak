@@ -33,6 +33,14 @@ class RapidMLXStartRequest(BaseModel):
     port: int = Field(DEFAULT_PORT, ge=1024, le=65535)
 
 
+class RapidMLXCachedRequest(BaseModel):
+    aliases: list[str] = Field(default_factory=list)
+
+
+class RapidMLXCachedResponse(BaseModel):
+    cached: dict[str, bool] = Field(default_factory=dict)
+
+
 def _get_manager(request: Request):
     mgr = getattr(request.app.state, "rapid_mlx_manager", None)
     if mgr is None:
@@ -58,6 +66,15 @@ async def get_status(
             settings,
         )
     return RapidMLXRuntimeStatus(**data)
+
+
+@router.post("/rapid-mlx/cached", response_model=RapidMLXCachedResponse)
+async def get_cached_rapid_mlx_models(
+    request: Request,
+    body: RapidMLXCachedRequest,
+) -> RapidMLXCachedResponse:
+    mgr = _get_manager(request)
+    return RapidMLXCachedResponse(cached=mgr.cached_models(body.aliases))
 
 
 @router.post("/rapid-mlx/start", response_model=RapidMLXRuntimeStatus)

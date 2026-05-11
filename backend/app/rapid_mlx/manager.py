@@ -21,6 +21,32 @@ _COMMON_BINARY_PATHS = (
     "/usr/local/bin/rapid-mlx",
 )
 
+_ALIAS_REPOS: dict[str, str] = {
+    "deepseek-r1-32b": "mlx-community/DeepSeek-R1-Distill-Qwen-32B-4bit",
+    "deepseek-r1-8b": "mlx-community/DeepSeek-R1-0528-Qwen3-8B-4bit",
+    "devstral-v2-24b": "mlx-community/Devstral-Small-2-24B-Instruct-2512-4bit",
+    "gemma-4-26b": "google/gemma-4-26B-A4B-it",
+    "gemma-4-31b": "google/gemma-4-31B-it",
+    "gpt-oss-20b": "mlx-community/GPT-OSS-20B-4bit",
+    "mistral-24b": "mlx-community/Mistral-Small-3.1-24B-Instruct-2503-4bit",
+    "nemotron-30b": "lmstudio-community/NVIDIA-Nemotron-3-Nano-30B-A3B-MLX-4bit",
+    "qwen3-coder": "mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit",
+    "qwen3-coder-30b": "mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit",
+    "qwen3-vl-30b": "mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit",
+    "qwen3-vl-4b": "mlx-community/Qwen3-VL-4B-Instruct-MLX-4bit",
+    "qwen3-vl-8b": "mlx-community/Qwen3-VL-8B-Instruct-4bit",
+    "qwen3.5-122b": "mlx-community/Qwen3.5-122B-A10B-4bit",
+    "qwen3.5-122b-8bit": "mlx-community/Qwen3.5-122B-A10B-8bit",
+    "qwen3.5-27b": "mlx-community/Qwen3.5-27B-MLX-4bit",
+    "qwen3.5-35b": "mlx-community/Qwen3.5-35B-A3B-4bit",
+    "qwen3.5-4b": "mlx-community/Qwen3.5-4B-MLX-4bit",
+    "qwen3.5-9b": "mlx-community/Qwen3.5-9B-4bit",
+    "qwen3.6-27b": "mlx-community/Qwen3.6-27B-4bit",
+    "qwen3.6-27b-8bit": "unsloth/Qwen3.6-27B-MLX-8bit",
+    "qwen3.6-35b": "mlx-community/Qwen3.6-35B-A3B-4bit",
+    "qwen3.6-35b-6bit": "mlx-community/Qwen3.6-35B-A3B-6bit",
+}
+
 
 def _platform_supported() -> bool:
     return sys.platform == "darwin" and platform.machine().lower() in {
@@ -94,6 +120,21 @@ class RapidMLXManager:
                 "pip install rapid-mlx",
             ],
         }
+
+    def cached_models(self, aliases: list[str]) -> dict[str, bool]:
+        return {alias: self.is_model_cached(alias) for alias in aliases}
+
+    def is_model_cached(self, alias_or_repo: str) -> bool:
+        repo = _ALIAS_REPOS.get(alias_or_repo, alias_or_repo)
+        if "/" not in repo:
+            return False
+        cache_dir = _huggingface_cache_dir() / f"models--{repo.replace('/', '--')}"
+        if not cache_dir.exists():
+            return False
+        snapshot_dir = cache_dir / "snapshots"
+        if not snapshot_dir.exists():
+            return True
+        return any(child.is_dir() for child in snapshot_dir.iterdir())
 
     async def start(self, *, model: str = DEFAULT_MODEL, port: int = DEFAULT_PORT) -> str:
         if not self.platform_supported:
@@ -181,3 +222,13 @@ def _port_from_base_url(base_url: str) -> int | None:
 def server_root_from_base_url(base_url: str) -> str:
     port = _port_from_base_url(base_url) or DEFAULT_PORT
     return _server_root_for_port(port)
+
+
+def _huggingface_cache_dir() -> Path:
+    if os.environ.get("HF_HUB_CACHE"):
+        return Path(os.environ["HF_HUB_CACHE"]).expanduser()
+    if os.environ.get("HF_HOME"):
+        return Path(os.environ["HF_HOME"]).expanduser() / "hub"
+    if os.environ.get("XDG_CACHE_HOME"):
+        return Path(os.environ["XDG_CACHE_HOME"]).expanduser() / "huggingface" / "hub"
+    return Path.home() / ".cache" / "huggingface" / "hub"

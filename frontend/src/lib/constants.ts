@@ -294,6 +294,7 @@ export const API = {
   },
   RAPID_MLX: {
     STATUS: "/api/rapid-mlx/status",
+    CACHED: "/api/rapid-mlx/cached",
     START: "/api/rapid-mlx/start",
     STOP: "/api/rapid-mlx/stop",
   },
