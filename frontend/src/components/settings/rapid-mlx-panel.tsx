@@ -10,6 +10,7 @@ import {
   Play,
   Square,
   Terminal,
+  Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,6 +38,7 @@ export function RapidMLXPanel() {
   const { setActiveProvider } = useSettingsStore();
   const [modelInput, setModelInput] = useState("qwen3.5-4b");
   const [portInput, setPortInput] = useState("18080");
+  const [removingAlias, setRemovingAlias] = useState<string | null>(null);
   const rapidAliases = useMemo(
     () =>
       Array.from(
@@ -106,6 +108,21 @@ export function RapidMLXPanel() {
       qc.invalidateQueries({ queryKey: queryKeys.models });
       setActiveProvider(null);
     },
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: async (alias: string) => {
+      setRemovingAlias(alias);
+      return api.post<{ cached: Record<string, boolean> }>(
+        API.RAPID_MLX.REMOVE,
+        { alias },
+      );
+    },
+    onSuccess: () => {
+      setRemovingAlias(null);
+      qc.invalidateQueries({ queryKey: ["rapidMlxCached"] });
+    },
+    onError: () => setRemovingAlias(null),
   });
 
   const isAliasCached = (alias: string | undefined) =>
@@ -239,8 +256,8 @@ export function RapidMLXPanel() {
                 </Button>
               </div>
               <p className="text-ui-3xs text-[var(--text-tertiary)]">
-                Running model is available locally. Stop Rapid-MLX to switch or
-                download a different model.
+                Running model is available locally. Stop Rapid-MLX to switch
+                models; installed models can be removed from the list below.
               </p>
             </div>
           ) : status.process_running ? (
@@ -254,7 +271,7 @@ export function RapidMLXPanel() {
           ) : (
             <div className="space-y-3">
               <div className="rounded-lg border border-[var(--border-default)] p-3">
-                <div className="grid grid-cols-1 gap-2 md:grid-cols-[1.2fr_1fr_88px_auto]">
+                <div className="grid grid-cols-1 gap-2 md:grid-cols-[1.2fr_1fr_88px_auto_auto]">
                   <select
                     value={selectedModel.id}
                     onChange={(e) => {
@@ -317,6 +334,23 @@ export function RapidMLXPanel() {
                     )}
                     Start
                   </Button>
+                  {isAliasCached(modelInput) && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-9"
+                      onClick={() => removeMutation.mutate(modelInput)}
+                      disabled={removeMutation.isPending}
+                      title="Remove downloaded Rapid-MLX model"
+                    >
+                      {removingAlias === modelInput ? (
+                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                      )}
+                      Remove
+                    </Button>
+                  )}
                 </div>
                 <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-[1fr_96px]">
                   <Input
@@ -349,17 +383,21 @@ export function RapidMLXPanel() {
             </div>
             <div className="grid grid-cols-1 gap-1 md:grid-cols-2">
               {LOCAL_MODEL_RECOMMENDATIONS.map((model) => {
-                const aliases = model.variants
-                  .filter((variant) => variant.rapidMlxAlias)
-                  .map((variant) => variant.label);
-                const installedCount = model.variants.filter((variant) =>
+                const variants = model.variants.filter(
+                  (variant) => variant.rapidMlxAlias,
+                );
+                const installedVariants = variants.filter((variant) =>
                   isAliasCached(variant.rapidMlxAlias),
-                ).length;
+                );
+                const installedCount = installedVariants.length;
+                const removableAlias =
+                  installedVariants.length === 1
+                    ? installedVariants[0].rapidMlxAlias
+                    : undefined;
                 const selected = model.id === selectedModel.id;
                 return (
-                  <button
+                  <div
                     key={model.id}
-                    type="button"
                     onClick={() => {
                       if (status.running) return;
                       const firstAlias = model.variants.find(
@@ -367,31 +405,50 @@ export function RapidMLXPanel() {
                       )?.rapidMlxAlias;
                       if (firstAlias) setModelInput(firstAlias);
                     }}
-                    disabled={status.running}
                     className={`flex min-h-12 items-center justify-between gap-3 rounded-md border px-3 py-2 text-left transition-colors ${
                       selected
                         ? "border-[var(--brand-primary)] bg-[var(--brand-primary)]/5"
                         : "border-[var(--border-default)] hover:bg-[var(--surface-secondary)]"
-                    } ${status.running ? "cursor-default opacity-80" : ""}`}
+                    } ${status.running ? "cursor-default opacity-80" : "cursor-pointer"}`}
                   >
                     <div className="min-w-0">
                       <div className="truncate text-xs font-medium text-[var(--text-primary)]">
                         {model.name}
                       </div>
                       <div className="truncate text-ui-3xs text-[var(--text-tertiary)]">
-                        {installedCount}/{aliases.length} installed
+                        {installedCount}/{variants.length} installed
                       </div>
                     </div>
-                    <span
-                      className={`shrink-0 rounded px-1.5 py-0.5 text-ui-3xs ${
-                        installedCount > 0
-                          ? "bg-[var(--color-success)]/10 text-[var(--color-success)]"
-                          : "bg-[var(--surface-secondary)] text-[var(--text-tertiary)]"
-                      }`}
-                    >
-                      {installedCount > 0 ? "Installed" : "Not installed"}
-                    </span>
-                  </button>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <span
+                        className={`rounded px-1.5 py-0.5 text-ui-3xs ${
+                          installedCount > 0
+                            ? "bg-[var(--color-success)]/10 text-[var(--color-success)]"
+                            : "bg-[var(--surface-secondary)] text-[var(--text-tertiary)]"
+                        }`}
+                      >
+                        {installedCount > 0 ? "Installed" : "Not installed"}
+                      </span>
+                      {removableAlias && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeMutation.mutate(removableAlias);
+                          }}
+                          disabled={removeMutation.isPending}
+                          className="rounded p-1 text-[var(--text-tertiary)] transition-colors hover:bg-[var(--surface-secondary)] hover:text-[var(--color-destructive)] disabled:opacity-60"
+                          title={`Remove ${removableAlias}`}
+                        >
+                          {removingAlias === removableAlias ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-3.5 w-3.5" />
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 );
               })}
             </div>
@@ -413,6 +470,17 @@ export function RapidMLXPanel() {
               <AlertCircle className="h-3.5 w-3.5 shrink-0" />
               <span>
                 {errorToMessage(stopMutation.error, "Failed to stop Rapid-MLX")}
+              </span>
+            </div>
+          )}
+          {removeMutation.isError && (
+            <div className="flex items-center gap-1.5 text-xs text-[var(--color-destructive)]">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+              <span>
+                {errorToMessage(
+                  removeMutation.error,
+                  "Failed to remove Rapid-MLX model",
+                )}
               </span>
             </div>
           )}

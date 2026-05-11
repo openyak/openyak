@@ -136,6 +136,37 @@ class RapidMLXManager:
             return True
         return any(child.is_dir() for child in snapshot_dir.iterdir())
 
+    async def remove_model(self, alias_or_repo: str) -> None:
+        if not self.platform_supported:
+            raise RuntimeError("Rapid-MLX is supported only on Apple Silicon macOS.")
+        executable = self.executable_path
+        if not executable:
+            raise RuntimeError("rapid-mlx is not installed.")
+
+        model = alias_or_repo.strip()
+        if not model:
+            raise RuntimeError("Rapid-MLX model alias is required.")
+        if self.is_managed_process_alive and model == self._model:
+            raise RuntimeError("Stop Rapid-MLX before removing the running model.")
+
+        proc = await asyncio.create_subprocess_exec(
+            executable,
+            "rm",
+            model,
+            cwd=str(self.data_dir),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        except TimeoutError:
+            proc.kill()
+            await proc.wait()
+            raise RuntimeError("Timed out while removing Rapid-MLX model.")
+        if proc.returncode != 0:
+            message = (stderr or stdout).decode("utf-8", errors="ignore").strip()
+            raise RuntimeError(message or "Failed to remove Rapid-MLX model.")
+
     async def start(self, *, model: str = DEFAULT_MODEL, port: int = DEFAULT_PORT) -> str:
         if not self.platform_supported:
             raise RuntimeError("Rapid-MLX is supported only on Apple Silicon macOS.")

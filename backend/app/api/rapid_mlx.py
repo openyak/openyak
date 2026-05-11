@@ -41,6 +41,10 @@ class RapidMLXCachedResponse(BaseModel):
     cached: dict[str, bool] = Field(default_factory=dict)
 
 
+class RapidMLXRemoveRequest(BaseModel):
+    alias: str = Field(..., min_length=1, max_length=200)
+
+
 def _get_manager(request: Request):
     mgr = getattr(request.app.state, "rapid_mlx_manager", None)
     if mgr is None:
@@ -75,6 +79,19 @@ async def get_cached_rapid_mlx_models(
 ) -> RapidMLXCachedResponse:
     mgr = _get_manager(request)
     return RapidMLXCachedResponse(cached=mgr.cached_models(body.aliases))
+
+
+@router.post("/rapid-mlx/remove", response_model=RapidMLXCachedResponse)
+async def remove_rapid_mlx_model(
+    request: Request,
+    body: RapidMLXRemoveRequest,
+) -> RapidMLXCachedResponse:
+    mgr = _get_manager(request)
+    try:
+        await mgr.remove_model(body.alias)
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+    return RapidMLXCachedResponse(cached=mgr.cached_models([body.alias]))
 
 
 @router.post("/rapid-mlx/start", response_model=RapidMLXRuntimeStatus)
