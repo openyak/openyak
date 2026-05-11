@@ -194,7 +194,6 @@ export const useChatStore = create<ChatStore>((set) => ({
     }),
 
   startGeneration: (streamId, sessionId) => {
-    console.log("[chatStore] startGeneration called:", { streamId, sessionId });
     set({
       streamId,
       sessionId,
