@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { SSEClient } from "@/lib/sse";
-import { API, IS_DESKTOP, getBackendUrl, queryKeys } from "@/lib/constants";
+import { API, IS_DESKTOP, getBackendToken, getBackendUrl, queryKeys } from "@/lib/constants";
 import { isRemoteMode } from "@/lib/remote-connection";
 import { desktopAPI } from "@/lib/tauri-api";
 import { SSE_EVENTS } from "@/types/streaming";
@@ -99,7 +99,7 @@ export function useSSE(streamId: string | null) {
 
     const start = async () => {
       if (IS_DESKTOP) {
-        await getBackendUrl();
+        await Promise.all([getBackendUrl(), getBackendToken()]);
       }
       if (cancelled) return;
 

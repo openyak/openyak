@@ -218,6 +218,9 @@ export const API = {
       // Remote mode: use tunnel URL instead of localhost
       const rc = getRemoteConfig();
       if (rc) return `${rc.url}/api/chat/stream/${streamId}`;
+      if (!IS_DESKTOP && !WEB_DEV_BACKEND_TOKEN) {
+        return `/api/chat/stream/${streamId}`;
+      }
       return `${getBackendUrlSync()}/api/chat/stream/${streamId}`;
     },
     ABORT: "/api/chat/abort",
