@@ -102,7 +102,6 @@ class TestRefreshModels:
         assert result["slow"] == []
         assert len(reg.all_models()) == 1
 
-
 class TestResolveModel:
     @pytest.mark.asyncio
     async def test_existing(self):

@@ -154,7 +154,7 @@
   "input": "输入",
   "output": "输出",
   "metrics": "指标",
-  "credits": "积分",
+  "cost": "成本",
   "tools": "工具",
   "toolCallCount_one": "{{count}} 次工具调用",
   "toolCallCount_other": "{{count}} 次工具调用",
@@ -182,6 +182,6 @@
 
   "loadingModel": "正在加载模型到内存...",
   "setupProvider": "请先配置 AI 服务商以开始对话",
-  "setupProviderDesc": "连接 OpenYak 账号、添加 API 密钥，或配置本地模型。",
+  "setupProviderDesc": "添加 API 密钥、连接本地端点、使用 Rapid-MLX 或 Ollama，或登录 ChatGPT 订阅。",
   "configureSettings": "前往配置"
 }

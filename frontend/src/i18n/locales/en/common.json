@@ -45,8 +45,6 @@
   "cancel": "Cancel",
   "deleteConversation": "Delete conversation?",
   "deleteConversationDesc": "This will delete \"{{title}}\". This action cannot be undone.",
-  "reconnecting": "Reconnecting to server...",
-  "connectionLost": "Connection lost. Please check that the server is running.",
   "today": "Today",
   "yesterday": "Yesterday",
   "previous7Days": "Previous 7 Days",

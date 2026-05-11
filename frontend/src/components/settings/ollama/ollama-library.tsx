@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api, apiFetch } from "@/lib/api";
 import { API } from "@/lib/constants";
+import { LOCAL_MODEL_RECOMMENDATIONS } from "@/lib/local-models";
 import { cn } from "@/lib/utils";
 import type { LibraryData, LibraryModel } from "./types";
 
@@ -43,6 +44,12 @@ export function ModelLibrary({
   const [pullingModel, setPullingModel] = useState<string | null>(null);
   const [pullProgress, setPullProgress] = useState<PullProgress | null>(null);
   const [customModel, setCustomModel] = useState("");
+  const [recommendedModelId, setRecommendedModelId] = useState(
+    LOCAL_MODEL_RECOMMENDATIONS[0]?.id ?? "",
+  );
+  const [recommendedTag, setRecommendedTag] = useState(
+    LOCAL_MODEL_RECOMMENDATIONS[0]?.ollamaTag ?? "",
+  );
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   // Infinite scroll state
@@ -214,6 +221,15 @@ export function ModelLibrary({
     { key: "name", label: t("sortName", "Name") },
     { key: "provider", label: t("sortProvider", "Provider") },
   ];
+  const recommendedModel =
+    LOCAL_MODEL_RECOMMENDATIONS.find((model) => model.id === recommendedModelId) ??
+    LOCAL_MODEL_RECOMMENDATIONS[0];
+  const recommendedVariant =
+    recommendedModel.variants.find((variant) => variant.ollamaTag === recommendedTag) ??
+    recommendedModel.variants[0];
+  const recommendedInstalled = installedNames.has(
+    recommendedVariant?.ollamaTag ?? "",
+  );
 
   return (
     <div>
@@ -249,6 +265,117 @@ export function ModelLibrary({
           )}
         </div>
       )}
+
+      <div className="mb-4 space-y-3">
+        <div className="rounded-lg border border-[var(--border-default)] p-3">
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-[1.2fr_1fr_auto]">
+            <select
+              value={recommendedModel.id}
+              onChange={(e) => {
+                const next = LOCAL_MODEL_RECOMMENDATIONS.find(
+                  (model) => model.id === e.target.value,
+                );
+                setRecommendedModelId(e.target.value);
+                setRecommendedTag(next?.ollamaTag ?? "");
+              }}
+              className="h-9 rounded-md border border-[var(--border-default)] bg-[var(--surface-primary)] px-2 text-xs text-[var(--text-primary)]"
+            >
+              {LOCAL_MODEL_RECOMMENDATIONS.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.name} - {model.memory}
+                </option>
+              ))}
+            </select>
+            <select
+              value={recommendedVariant?.ollamaTag ?? ""}
+              onChange={(e) => setRecommendedTag(e.target.value)}
+              className="h-9 rounded-md border border-[var(--border-default)] bg-[var(--surface-primary)] px-2 text-xs text-[var(--text-primary)]"
+            >
+              {recommendedModel.variants.map((variant) => (
+                <option
+                  key={`${recommendedModel.id}-${variant.label}`}
+                  value={variant.ollamaTag}
+                >
+                  {variant.label} ({variant.precision})
+                </option>
+              ))}
+            </select>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9"
+              onClick={() => pullModel(recommendedVariant.ollamaTag)}
+              disabled={
+                !recommendedVariant ||
+                recommendedInstalled ||
+                pullingModel !== null
+              }
+            >
+              {recommendedInstalled ? (
+                <Check className="mr-1.5 h-3.5 w-3.5" />
+              ) : pullingModel ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : null}
+              {recommendedInstalled ? "Installed" : "Pull"}
+            </Button>
+          </div>
+          <div className="mt-2 truncate font-mono text-ui-3xs text-[var(--text-tertiary)]">
+            {recommendedVariant?.ollamaTag}
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <h4 className="text-xs font-medium text-[var(--text-primary)]">
+              Recommended local models
+            </h4>
+            <span className="text-ui-3xs text-[var(--text-tertiary)]">
+              Pick above to install
+            </span>
+          </div>
+          <div className="grid grid-cols-1 gap-1 md:grid-cols-2">
+            {LOCAL_MODEL_RECOMMENDATIONS.map((model) => (
+              <button
+                key={model.id}
+                type="button"
+                onClick={() => {
+                  setRecommendedModelId(model.id);
+                  setRecommendedTag(model.ollamaTag);
+                }}
+                className={`flex min-h-12 items-center justify-between gap-3 rounded-md border px-3 py-2 text-left transition-colors ${
+                  model.id === recommendedModel.id
+                    ? "border-[var(--brand-primary)] bg-[var(--brand-primary)]/5"
+                    : "border-[var(--border-default)] hover:bg-[var(--surface-secondary)]"
+                }`}
+              >
+                <div className="min-w-0">
+                  <div className="truncate text-xs font-medium text-[var(--text-primary)]">
+                    {model.name}
+                  </div>
+                  <div className="truncate text-ui-3xs text-[var(--text-tertiary)]">
+                  {model.variants.length} precision option
+                    {model.variants.length === 1 ? "" : "s"}
+                    {" · "}
+                    {
+                      model.variants.filter((variant) =>
+                        installedNames.has(variant.ollamaTag),
+                      ).length
+                    }
+                    /{model.variants.length} installed
+                  </div>
+                </div>
+                <span className="shrink-0 rounded bg-[var(--surface-secondary)] px-1.5 py-0.5 text-ui-3xs text-[var(--text-tertiary)]">
+                  {model.variants.some((variant) =>
+                    installedNames.has(variant.ollamaTag),
+                  )
+                    ? "Installed"
+                    : model.memory}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
 
       {/* Search + sort + category tabs */}
       <div className="space-y-2 mb-3">

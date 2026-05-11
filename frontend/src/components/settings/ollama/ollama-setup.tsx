@@ -6,6 +6,7 @@ import { Loader2, AlertCircle, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api";
 import { API } from "@/lib/constants";
+import { LOCAL_MODEL_RECOMMENDATIONS } from "@/lib/local-models";
 
 const SETUP_STREAM_IDLE_TIMEOUT_MS = 120_000;
 
@@ -143,6 +144,37 @@ export function SetupFlow({ onComplete }: { onComplete: () => void }) {
           <span>{error}</span>
         </div>
       )}
+
+      <div className="space-y-2 pt-2">
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-xs font-medium text-[var(--text-primary)]">
+            Recommended local models
+          </h3>
+          <span className="text-ui-3xs text-[var(--text-tertiary)]">
+            Same list maps to Rapid-MLX on macOS
+          </span>
+        </div>
+        <div className="grid grid-cols-1 gap-1 md:grid-cols-2">
+          {LOCAL_MODEL_RECOMMENDATIONS.map((model) => (
+            <div
+              key={model.id}
+              className="flex min-h-12 items-center justify-between gap-3 rounded-md border border-[var(--border-default)] px-3 py-2 opacity-75"
+            >
+              <div className="min-w-0">
+                <div className="truncate text-xs font-medium text-[var(--text-primary)]">
+                  {model.name}
+                </div>
+                <div className="truncate font-mono text-ui-3xs text-[var(--text-tertiary)]">
+                  {model.ollamaTag}
+                </div>
+              </div>
+              <span className="shrink-0 rounded bg-[var(--surface-secondary)] px-1.5 py-0.5 text-ui-3xs text-[var(--text-tertiary)]">
+                {model.memory}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

@@ -20,7 +20,7 @@ import { useChatStore } from "@/stores/chat-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useProviderModels } from "@/hooks/use-provider-models";
 import { useIndexStatus } from "@/hooks/use-index-status";
-import { formatCreditsPerM, usdToCreditsPerM } from "@/lib/pricing";
+import { formatUsdPerM, usdToCentsPerM } from "@/lib/pricing";
 import { IS_DESKTOP } from "@/lib/constants";
 
 interface ChatFormProps {
@@ -578,8 +578,8 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onStop, c
 
     const inputTokens = estimateTextTokens(input);
     const inputCost = inputTokens * inputPrice / 1_000_000;
-    const inRate = formatCreditsPerM(usdToCreditsPerM(inputPrice));
-    const outRate = formatCreditsPerM(usdToCreditsPerM(outputPrice));
+    const inRate = formatUsdPerM(usdToCentsPerM(inputPrice));
+    const outRate = formatUsdPerM(usdToCentsPerM(outputPrice));
 
     if (inputTokens > 0) {
       return `Est. input ${formatEstimatedUsd(inputCost)} · out ${outRate}`;

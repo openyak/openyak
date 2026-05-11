@@ -3,19 +3,22 @@
 import { useMemo } from "react";
 import { useModels } from "@/hooks/use-models";
 import { useSettingsStore } from "@/stores/settings-store";
-import type { ActiveProvider } from "@/stores/settings-store";
 
-/** Provider IDs that are NOT user-managed BYOK providers. */
-const NON_BYOK_PROVIDERS = new Set(["openai-subscription", "ollama", "openyak-proxy"]);
+function isByokProviderId(providerId: string | undefined): boolean {
+  if (!providerId) return false;
+  if (
+    providerId === "openai-subscription" ||
+    providerId === "ollama" ||
+    providerId === "rapid-mlx" ||
+    providerId === "local"
+  )
+    return false;
+  return !providerId.startsWith("custom_");
+}
 
-const PROVIDER_ID_MAP: Record<NonNullable<ActiveProvider>, string | null> = {
-  openyak: "openyak-proxy",
-  byok: null, // Special: show models from ALL BYOK providers
-  chatgpt: "openai-subscription",
-  ollama: "ollama",
-  local: "local",
-  custom: "custom_", // Prefix match: show models from custom_* providers only
-};
+function isCustomEndpointProviderId(providerId: string | undefined): boolean {
+  return providerId === "local" || !!providerId?.startsWith("custom_");
+}
 
 export function useProviderModels() {
   const { data: allModels, isLoading, isError, error } = useModels();
@@ -25,20 +28,29 @@ export function useProviderModels() {
     if (!allModels) return [];
     if (!activeProvider) return [];
 
-    const providerId = PROVIDER_ID_MAP[activeProvider];
-
-    if (providerId === null) {
+    if (activeProvider === "byok") {
       // "byok" mode: show models from all BYOK providers
-      // (everything except subscription, ollama, and openyak proxy)
-      return allModels.filter((m) => !NON_BYOK_PROVIDERS.has(m.provider_id));
+      // (everything except subscription, Ollama, and custom/local endpoints)
+      return allModels.filter((m) => isByokProviderId(m.provider_id));
     }
 
-    if (providerId.endsWith("_")) {
-      // Prefix match (e.g. "custom_" → custom_abc, custom_xyz, …)
-      return allModels.filter((m) => m.provider_id?.startsWith(providerId));
+    if (activeProvider === "custom") {
+      return allModels.filter((m) => isCustomEndpointProviderId(m.provider_id));
     }
 
-    return allModels.filter((m) => m.provider_id === providerId);
+    if (activeProvider === "chatgpt") {
+      return allModels.filter((m) => m.provider_id === "openai-subscription");
+    }
+
+    if (activeProvider === "ollama") {
+      return allModels.filter((m) => m.provider_id === "ollama");
+    }
+
+    if (activeProvider === "rapid-mlx") {
+      return allModels.filter((m) => m.provider_id === "rapid-mlx");
+    }
+
+    return [];
   }, [allModels, activeProvider]);
 
   return { data, allModels, isLoading, isError, error, activeProvider };

@@ -218,6 +218,9 @@ export const API = {
       // Remote mode: use tunnel URL instead of localhost
       const rc = getRemoteConfig();
       if (rc) return `${rc.url}/api/chat/stream/${streamId}`;
+      if (!IS_DESKTOP && !WEB_DEV_BACKEND_TOKEN) {
+        return `/api/chat/stream/${streamId}`;
+      }
       return `${getBackendUrlSync()}/api/chat/stream/${streamId}`;
     },
     ABORT: "/api/chat/abort",
@@ -226,7 +229,8 @@ export const API = {
   },
   SESSIONS: {
     BASE: "/api/sessions",
-    LIST: (limit = 50, offset = 0) => `/api/sessions?limit=${limit}&offset=${offset}`,
+    LIST: (limit = 50, offset = 0) =>
+      `/api/sessions?limit=${limit}&offset=${offset}`,
     SEARCH: (q: string, limit = 20, offset = 0) =>
       `/api/sessions/search?q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}`,
     DETAIL: (id: string) => `/api/sessions/${id}`,
@@ -260,13 +264,14 @@ export const API = {
     API_KEY: "/api/config/api-key",
     PROVIDERS: "/api/config/providers",
     PROVIDER_KEY: (id: string) => `/api/config/providers/${id}/key` as const,
-    PROVIDER_TOGGLE: (id: string) => `/api/config/providers/${id}/toggle` as const,
+    PROVIDER_TOGGLE: (id: string) =>
+      `/api/config/providers/${id}/toggle` as const,
     CUSTOM_ENDPOINT: "/api/config/custom",
     CUSTOM_ENDPOINT_ITEM: (id: string) => `/api/config/custom/${id}` as const,
-    OPENYAK_ACCOUNT: "/api/config/openyak-account",
     OPENAI_SUBSCRIPTION: "/api/config/openai-subscription",
     OPENAI_SUBSCRIPTION_LOGIN: "/api/config/openai-subscription/login",
-    OPENAI_SUBSCRIPTION_MANUAL_CALLBACK: "/api/config/openai-subscription/manual-callback",
+    OPENAI_SUBSCRIPTION_MANUAL_CALLBACK:
+      "/api/config/openai-subscription/manual-callback",
     OLLAMA: "/api/config/ollama",
     LOCAL_PROVIDER: "/api/config/local",
   },
@@ -284,9 +289,18 @@ export const API = {
     UNINSTALL: (deleteModels: boolean) =>
       `/api/ollama/uninstall?delete_models=${deleteModels}` as const,
     PULL: "/api/ollama/models/pull",
-    DELETE: (name: string) => `/api/ollama/models/${encodeURIComponent(name)}` as const,
-    INFO: (name: string) => `/api/ollama/models/${encodeURIComponent(name)}/info` as const,
+    DELETE: (name: string) =>
+      `/api/ollama/models/${encodeURIComponent(name)}` as const,
+    INFO: (name: string) =>
+      `/api/ollama/models/${encodeURIComponent(name)}/info` as const,
     WARMUP: "/api/ollama/warmup",
+  },
+  RAPID_MLX: {
+    STATUS: "/api/rapid-mlx/status",
+    CACHED: "/api/rapid-mlx/cached",
+    REMOVE: "/api/rapid-mlx/remove",
+    START: "/api/rapid-mlx/start",
+    STOP: "/api/rapid-mlx/stop",
   },
   AGENTS: "/api/agents",
   MODELS: "/api/models",
@@ -380,11 +394,11 @@ export const queryKeys = {
   agents: ["agents"] as const,
   tools: ["tools"] as const,
   skills: ["skills"] as const,
-  skillStore: (q: string, sort: string, page: number) => ["skillStore", q, sort, page] as const,
+  skillStore: (q: string, sort: string, page: number) =>
+    ["skillStore", q, sort, page] as const,
   usage: (days: number) => ["usage", days] as const,
   apiKeyStatus: ["apiKeyStatus"] as const,
   providers: ["providers"] as const,
-  openyakAccount: ["openyakAccount"] as const,
   openaiSubscription: ["openaiSubscription"] as const,
   localProvider: ["localProvider"] as const,
   ollamaStatus: ["ollamaStatus"] as const,

@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { SSEClient } from "@/lib/sse";
-import { API, IS_DESKTOP, getBackendUrl, queryKeys } from "@/lib/constants";
+import { API, IS_DESKTOP, getBackendToken, getBackendUrl, queryKeys } from "@/lib/constants";
 import { isRemoteMode } from "@/lib/remote-connection";
 import { desktopAPI } from "@/lib/tauri-api";
 import { SSE_EVENTS } from "@/types/streaming";
@@ -12,9 +12,7 @@ import { useChatStore } from "@/stores/chat-store";
 import { useConnectionStore } from "@/stores/connection-store";
 import { useArtifactStore } from "@/stores/artifact-store";
 import { useWorkspaceStore, type WorkspaceTodo, type WorkspaceFile } from "@/stores/workspace-store";
-import { useAuthStore } from "@/stores/auth-store";
 import { useSettingsStore } from "@/stores/settings-store";
-import { proxyApi } from "@/lib/proxy-api";
 import { api } from "@/lib/api";
 import type { SessionResponse } from "@/types/session";
 import type { ArtifactType } from "@/types/artifact";
@@ -31,31 +29,23 @@ let currentStreamId: string | null = null;
 let lastEventTimestamp = 0;
 
 /**
- * Progressive text buffer — simulates streaming when provider sends
- * large chunks at once (common with reasoning tokens).
- *
- * Small chunks (< threshold) pass through immediately.
- * Large chunks are progressively revealed via requestAnimationFrame.
+ * Batches high-frequency streaming deltas before touching React/Zustand.
+ * Some local OpenAI-compatible servers emit thousands of tiny reasoning chunks;
+ * applying every chunk immediately can make Chromium and WindowServer stutter.
  */
-/** Min ms between buffer ticks to avoid burning CPU (was 60fps → ~17fps now). */
 const PROGRESSIVE_BUFFER_INTERVAL_MS = 60;
 
 class ProgressiveBuffer {
   private pending = "";
   private timerId: ReturnType<typeof setTimeout> | null = null;
-  // Characters revealed per tick; larger + throttled interval = smoother and less CPU
-  private charsPerFrame = 12;
-  private threshold = 40;
 
   constructor(private appendFn: (text: string) => void) {}
 
   push(text: string) {
-    if (text.length < this.threshold && !this.pending) {
-      this.appendFn(text);
-      return;
-    }
     this.pending += text;
-    if (!this.timerId) this.tick();
+    if (!this.timerId) {
+      this.timerId = setTimeout(this.flushPending, PROGRESSIVE_BUFFER_INTERVAL_MS);
+    }
   }
 
   flush() {
@@ -77,15 +67,15 @@ class ProgressiveBuffer {
     this.pending = "";
   }
 
-  private tick = () => {
+  private flushPending = () => {
     if (!this.pending) {
       this.timerId = null;
       return;
     }
-    const chunk = this.pending.slice(0, this.charsPerFrame);
-    this.pending = this.pending.slice(this.charsPerFrame);
+    const chunk = this.pending;
+    this.pending = "";
+    this.timerId = null;
     this.appendFn(chunk);
-    this.timerId = setTimeout(this.tick, PROGRESSIVE_BUFFER_INTERVAL_MS);
   };
 }
 
@@ -95,6 +85,7 @@ class ProgressiveBuffer {
  */
 export function useSSE(streamId: string | null) {
   const clientRef = useRef<SSEClient | null>(null);
+  const textBufferRef = useRef<ProgressiveBuffer | null>(null);
   const reasoningBufferRef = useRef<ProgressiveBuffer | null>(null);
   const queryClient = useQueryClient();
   const store = useChatStore;
@@ -108,7 +99,7 @@ export function useSSE(streamId: string | null) {
 
     const start = async () => {
       if (IS_DESKTOP) {
-        await getBackendUrl();
+        await Promise.all([getBackendUrl(), getBackendToken()]);
       }
       if (cancelled) return;
 
@@ -125,9 +116,13 @@ export function useSSE(streamId: string | null) {
       // exhaustion instead of checking persisted DB state promptly.
       lastEventTimestamp = Date.now();
 
+      const textBuffer = new ProgressiveBuffer((text) => {
+        store.getState().appendTextDelta(text);
+      });
       const reasoningBuffer = new ProgressiveBuffer((text) => {
         store.getState().appendReasoningDelta(text);
       });
+      textBufferRef.current = textBuffer;
       reasoningBufferRef.current = reasoningBuffer;
 
       const waitForNextPaint = () =>
@@ -161,6 +156,7 @@ export function useSSE(streamId: string | null) {
       };
 
       const finishFromDatabase = async (sessionId: string) => {
+        textBuffer.flush();
         reasoningBuffer.flush();
         await queryClient.invalidateQueries({
           queryKey: queryKeys.messages.list(sessionId),
@@ -229,8 +225,6 @@ export function useSSE(streamId: string | null) {
         return true;
       };
 
-      console.log("[SSE] Creating SSEClient for stream:", streamId, "lastEventId:", persistedLastEventId);
-
       const client = new SSEClient({
         url: API.CHAT.STREAM(streamId),
         // Re-resolve URL on each reconnect so port changes (backend restart) are picked up
@@ -238,10 +232,8 @@ export function useSSE(streamId: string | null) {
         initialLastEventId: persistedLastEventId,
         onEvent: () => {
           lastEventTimestamp = Date.now();
-          console.log("[SSE] Event received at", Date.now());
         },
         onStatusChange: (status) => {
-          console.log("[SSE] Status changed:", status);
           connectionStore.getState().setStatus(status);
           if (status === "disconnected") {
             // Connection permanently lost — clean up streaming state.
@@ -288,7 +280,7 @@ export function useSSE(streamId: string | null) {
       persistedLastEventId = id;
       cancelPendingStepFinish();
       if (store.getState().isModelLoading) store.getState().setModelLoading(false);
-      if (data.text) store.getState().appendTextDelta(data.text);
+      if (data.text) textBuffer.push(data.text);
     });
 
     client.on(SSE_EVENTS.REASONING_DELTA, (data, id) => {
@@ -536,14 +528,12 @@ export function useSSE(streamId: string | null) {
     // Interactive: Question
     client.on(SSE_EVENTS.QUESTION, (data, id) => {
       persistedLastEventId = id;
-      console.log("[SSE] QUESTION event received:", { call_id: data.call_id, id, hasArgs: !!data.arguments });
       if (data.call_id) {
         store.getState().setQuestion({
           callId: data.call_id,
           tool: data.tool ?? "question",
           arguments: data.arguments ?? { question: data.question, options: data.options, questions: data.questions },
         });
-        console.log("[SSE] pendingQuestion set:", store.getState().pendingQuestion?.callId);
       }
     });
 
@@ -639,6 +629,7 @@ export function useSSE(streamId: string | null) {
     client.on(SSE_EVENTS.DONE, async (_data, id) => {
       persistedLastEventId = id;
       cancelPendingStepFinish();
+      textBuffer.flush();
       reasoningBuffer.flush();
       const sessionId = store.getState().sessionId;
 
@@ -673,31 +664,6 @@ export function useSSE(streamId: string | null) {
         queryClient.invalidateQueries({ queryKey: queryKeys.sessions.detail(_sid) });
       }
 
-      // Refresh billing balance from OpenYak proxy after each generation
-      const auth = useAuthStore.getState();
-      if (auth.isConnected) {
-        proxyApi
-          .get<{ credits: number; daily_free_tokens_used: number; daily_free_token_limit: number }>(
-            "/api/billing/balance",
-          )
-          .then((balance) => {
-            const currentUser = useAuthStore.getState().user;
-            if (currentUser) {
-              useAuthStore.getState().updateUser({
-                ...currentUser,
-                billing_mode:
-                  balance.credits > 0 ? "credits" : currentUser.billing_mode,
-                credit_balance: balance.credits,
-                daily_free_tokens_used: balance.daily_free_tokens_used,
-                daily_free_token_limit: balance.daily_free_token_limit,
-              });
-            }
-          })
-          .catch(() => {
-            // Silently ignore balance refresh failures
-          });
-      }
-
       client.close();
     });
 
@@ -713,6 +679,7 @@ export function useSSE(streamId: string | null) {
       }
       // Keep this as warn to avoid Next.js dev error overlay for expected business errors.
       console.warn("SSE agent error:", message);
+      textBuffer.flush();
       reasoningBuffer.flush();
       const sessionId = store.getState().sessionId;
       // Wait for DB messages (backend now persists partial text on error)
@@ -825,12 +792,15 @@ export function useSSE(streamId: string | null) {
           clearTimeout(stepFinishTimer);
           stepFinishTimer = null;
         }
-        // Flush any pending reasoning text to the store before disposing,
+        // Flush pending deltas to the store before disposing,
         // so buffered content isn't lost during navigation.
         if (store.getState().isGenerating) {
+          textBuffer.flush();
           reasoningBuffer.flush();
         }
+        textBuffer.dispose();
         reasoningBuffer.dispose();
+        textBufferRef.current = null;
         reasoningBufferRef.current = null;
         client.close();
         clientRef.current = null;

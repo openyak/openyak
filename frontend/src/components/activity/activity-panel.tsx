@@ -446,9 +446,9 @@ function ActivityPanelContent() {
               )}
               {totalCost > 0 && (
                 <div className="flex justify-between rounded-lg bg-[var(--surface-secondary)] px-3 py-2 col-span-2">
-                  <span className="text-[var(--text-tertiary)]">{t("credits")}</span>
+                  <span className="text-[var(--text-tertiary)]">{t("cost")}</span>
                   <span className="text-[var(--text-secondary)] font-mono">
-                    {(totalCost * 100).toFixed(2)} cr
+                    ${totalCost.toFixed(totalCost < 0.01 ? 4 : 2)}
                   </span>
                 </div>
               )}

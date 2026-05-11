@@ -59,7 +59,7 @@ src/
 │   │   ├── automations/page.tsx  #     Automation management
 │   │   ├── plugins/page.tsx      #     Plugin management
 │   │   ├── remote/page.tsx       #     Remote access (tunnel, QR, permissions)
-│   │   └── settings/page.tsx     #     Settings (7 tabs: general, providers, memory, ollama, billing, usage)
+│   │   └── settings/page.tsx     #     Settings (general, providers, permissions, automations, plugins, remote, usage, memory)
 │   └── (mobile)/                  #   Route group: mobile web UI
 │       ├── layout.tsx
 │       └── m/
@@ -83,13 +83,12 @@ src/
 │   │   ├── sidebar-footer.tsx    #   User info + settings gear
 │   │   └── mobile-nav.tsx        #   Mobile drawer navigation (Sheet)
 │   │
-│   ├── settings/                 # Settings components (7 tabs)
+│   ├── settings/                 # Settings components
 │   │   ├── settings-layout.tsx   #   Tab layout
 │   │   ├── general-tab.tsx       #   General settings (appearance, language)
 │   │   ├── providers-tab.tsx     #   BYOK provider key management
 │   │   ├── memory-tab.tsx        #   Memory settings & fact management
 │   │   ├── ollama-panel.tsx      #   Ollama management (setup, models, library, pull/delete)
-│   │   ├── billing-tab.tsx       #   Billing & subscription
 │   │   └── usage-tab.tsx         #   Token usage statistics
 │   │
 │   ├── activity/                 # Activity tracking
@@ -103,7 +102,6 @@ src/
 │   │   └── renderers/            #   13 specialized renderers (code, html, markdown, mermaid,
 │   │                             #   svg, react, csv, xlsx, pdf, docx, pptx, file-preview)
 │   │
-│   ├── billing/                  # Billing & upgrade prompts
 │   ├── desktop/                  # Desktop-specific (native title bar)
 │   ├── icons/                    # Platform icons (IM channel icons)
 │   ├── mobile/                   # Mobile-specific components
@@ -183,19 +181,17 @@ src/
 │   ├── use-remote-generation-sync.ts # Remote generation sync
 │   └── use-remote-health.ts      #   Remote tunnel health check
 │
-├── stores/                       # Zustand state management (10 stores)
+├── stores/                       # Zustand state management (8 stores)
 │   ├── chat-store.ts             #   Streaming generation state (real-time parts assembly)
 │   ├── sidebar-store.ts          #   Sidebar visibility + search
 │   ├── settings-store.ts         #   User preferences (model, agent, persisted to localStorage)
 │   ├── activity-store.ts         #   Activity panel state
 │   ├── artifact-store.ts         #   Artifact panel state
-│   ├── auth-store.ts             #   Authentication state
-│   ├── billing-store.ts          #   Billing/subscription state
 │   ├── connection-store.ts       #   IM connection state
 │   ├── plan-review-store.ts      #   Plan review state
 │   └── workspace-store.ts        #   Workspace panel state
 │
-├── lib/                          # Utilities (12 modules)
+├── lib/                          # Utilities (11 modules)
 │   ├── api.ts                    #   Typed fetch wrapper (type-safe, error handling)
 │   ├── sse.ts                    #   SSE client (reconnection, heartbeat timeout)
 │   ├── utils.ts                  #   cn(), formatRelativeTime(), truncate()
@@ -203,7 +199,6 @@ src/
 │   ├── routes.ts                 #   Route definitions
 │   ├── artifacts.ts              #   Artifact utilities
 │   ├── pricing.ts                #   Model pricing calculations
-│   ├── proxy-api.ts              #   Cloud proxy API client
 │   ├── remote-connection.ts      #   Remote tunnel connection
 │   ├── sources.ts                #   Data source utilities
 │   ├── tauri-api.ts              #   Tauri desktop API bridge
@@ -275,15 +270,13 @@ src/
 │  sessions, messages, models, agents,     │
 │  channels, memory, automations, plugins  │
 ├──────────────────────────────────────────┤
-│         Zustand (10 stores)              │
+│         Zustand (8 stores)               │
 │         Client state (reactive)          │
 │  chatStore: streaming state, parts       │
 │  sidebarStore: sidebar toggle, search    │
 │  settingsStore: model, agent prefs       │
 │  activityStore: activity panel state     │
 │  artifactStore: artifact panel state     │
-│  authStore: authentication state         │
-│  billingStore: billing/subscription      │
 │  connectionStore: IM connection state    │
 │  planReviewStore: plan review state      │
 │  workspaceStore: workspace panel state   │

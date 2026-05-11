@@ -49,10 +49,10 @@ class Settings(BaseSettings):
     # Disabled providers are not registered even if their API key is set.
     disabled_providers: str = ""  # OPENYAK_DISABLED_PROVIDERS
 
-    # --- OpenYak Cloud Proxy (billing mode) ---
-    proxy_url: str = ""  # e.g. "https://api.openyak.app" — when set, LLM calls go through proxy
-    proxy_token: str = ""  # JWT from OpenYak account login
-    proxy_refresh_token: str = ""  # Refresh token for auto-renewal
+    # --- Optional hosted proxy for managed tools such as web search ---
+    proxy_url: str = ""
+    proxy_token: str = ""
+    proxy_refresh_token: str = ""
 
     # --- Database ---
     database_url: str = "sqlite+aiosqlite:///./data/openyak.db"
@@ -100,6 +100,11 @@ class Settings(BaseSettings):
     ollama_base_url: str = ""  # e.g. "http://localhost:11434" — empty = not configured
     ollama_auto_start: bool = True  # Auto-start managed Ollama binary on app launch
     ollama_last_model: str = ""  # Last-used model name for startup pre-warming
+
+    # --- Rapid-MLX (Apple Silicon local LLM) ---
+    rapid_mlx_base_url: str = ""  # e.g. "http://localhost:8000/v1" — empty = not configured
+    rapid_mlx_auto_start: bool = True
+    rapid_mlx_model: str = "qwen3.5-4b"
 
     # --- Local OpenAI-compatible endpoint ---
     local_base_url: str = ""  # OPENYAK_LOCAL_BASE_URL

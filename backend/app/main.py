@@ -38,7 +38,6 @@ from app.dependencies import (
 )
 from app.models.base import Base
 from app.agent.agent import AgentRegistry
-from app.provider.openrouter import OpenRouterProvider
 from app.provider.local import create_local_provider
 from app.provider.registry import ProviderRegistry
 from app.skill.registry import SkillRegistry
@@ -121,27 +120,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Provider registry
     registry = ProviderRegistry()
 
-    # If OpenYak proxy is configured, register it as "openyak-proxy" (billing mode).
-    # This is separate from the user's own OpenRouter key.
-    if settings.proxy_url and settings.proxy_token:
-        proxy_provider = OpenRouterProvider(
-            settings.proxy_token,
-            base_url=settings.proxy_url + "/v1",
-            provider_id="openyak-proxy",
-        )
-        registry.register(proxy_provider)
-        try:
-            await registry.refresh_models()
-        except Exception as e:
-            logger.warning("Failed to load models from proxy on startup: %s", e)
-            if settings.proxy_refresh_token:
-                from app.provider.proxy_auth import refresh_proxy_token
-                if await refresh_proxy_token(settings, registry):
-                    try:
-                        await registry.refresh_models()
-                    except Exception as e2:
-                        logger.warning("Still failed after token refresh: %s", e2)
-
     # Register OpenAI subscription provider if configured
     if settings.openai_oauth_access_token and settings.openai_oauth_account_id:
         from app.provider.openai_subscription import OpenAISubscriptionProvider
@@ -213,6 +191,38 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     logger.debug("Ollama warmup skipped for %s: %s", model, exc)
 
             asyncio.create_task(_warmup_model(ollama_provider._base_url, last_model))
+
+    # Rapid-MLX runtime manager (Apple Silicon macOS, user-installed via brew/pip)
+    from app.rapid_mlx.manager import RapidMLXManager
+
+    rapid_mlx_manager = RapidMLXManager(data_dir=data_dir)
+    app.state.rapid_mlx_manager = rapid_mlx_manager
+
+    if settings.rapid_mlx_base_url:
+        from app.provider.rapid_mlx import RapidMLXProvider
+
+        if (
+            rapid_mlx_manager.platform_supported
+            and rapid_mlx_manager.is_binary_installed
+            and settings.rapid_mlx_auto_start
+        ):
+            try:
+                from app.rapid_mlx.manager import DEFAULT_PORT, _port_from_base_url
+
+                port = _port_from_base_url(settings.rapid_mlx_base_url) or DEFAULT_PORT
+                settings.rapid_mlx_base_url = await rapid_mlx_manager.start(
+                    model=settings.rapid_mlx_model,
+                    port=port,
+                )
+            except Exception as e:
+                logger.warning("Failed to auto-start Rapid-MLX: %s — trying configured URL", e)
+
+        rapid_mlx_provider = RapidMLXProvider(base_url=settings.rapid_mlx_base_url)
+        registry.register(rapid_mlx_provider)
+        try:
+            await registry.refresh_models()
+        except Exception as e:
+            logger.warning("Rapid-MLX connection failed on startup: %s — will retry on status check", e)
 
     # Pre-fetch models.dev catalog (remote model metadata: pricing, capabilities)
     from app.provider.models_dev import models_dev

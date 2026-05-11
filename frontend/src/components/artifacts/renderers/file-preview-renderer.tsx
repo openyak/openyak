@@ -54,11 +54,9 @@ export function FilePreviewRenderer({ filePath, content: initialContent, languag
     setLoading(true);
     setError(null);
 
-    console.log("[FilePreview] Fetching:", { filePath, workspace });
     api
       .post<{ content: string }>(API.FILES.CONTENT, { path: filePath, workspace })
       .then((res) => {
-        console.log("[FilePreview] Loaded:", res.content?.length, "chars");
         setContent(res.content);
       })
       .catch((err) => {

@@ -66,7 +66,6 @@ app/
 │   ├── factory.py       #   Provider factory (creates providers from catalog)
 │   ├── openai_oauth.py  #   ChatGPT subscription OAuth
 │   ├── openai_subscription.py # ChatGPT subscription provider
-│   ├── proxy_auth.py    #   OpenYak Cloud proxy auth
 │   ├── registry.py      #   ProviderRegistry
 │   └── tool_calling/    #   Tool calling adapters (native FC detection + prompt-based fallback)
 │
@@ -332,7 +331,7 @@ curl http://localhost:8000/api/agents
 | `OPENYAK_OLLAMA_LAST_MODEL` | Last-used model for startup pre-warming | `` |
 | `OPENYAK_OPENCLAW_ENABLED` | Enable OpenClaw IM bridge | `false` |
 | `OPENYAK_OPENCLAW_URL` | OpenClaw WebSocket URL | `ws://127.0.0.1:18789` |
-| `OPENYAK_PROXY_URL` | OpenYak Cloud proxy URL (billing mode) | `` |
+| `OPENYAK_PROXY_URL` | Optional hosted proxy URL for managed tools | `` |
 | `OPENYAK_PROXY_TOKEN` | JWT for proxy authentication | `` |
 | `OPENYAK_BRAVE_SEARCH_API_KEY` | Brave Search API key (enhanced web search) | `` |
 | `OPENYAK_REMOTE_ACCESS_ENABLED` | Enable remote tunnel access | `false` |

@@ -4,7 +4,7 @@ These tests require a valid OPENYAK_OPENROUTER_API_KEY in .env.
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 from app.provider.openrouter import OpenRouterProvider, _architecture_supports_vision
 from app.provider.registry import ProviderRegistry
@@ -100,46 +100,6 @@ class TestOpenRouterConnection:
         tool_call = next(c for c in chunks if c.type == "tool-call")
         assert tool_call.data["name"] == "read"
         assert "file_path" in tool_call.data["arguments"]
-
-
-class TestOpenYakProxyModels:
-    @pytest.mark.asyncio
-    async def test_does_not_duplicate_platform_free_model_when_proxy_returns_it(self):
-        provider = OpenRouterProvider("test-token", provider_id="openyak-proxy")
-        response = MagicMock()
-        response.raise_for_status.return_value = None
-        response.json.return_value = {
-            "data": [
-                {
-                    "id": "openrouter/free",
-                    "name": "OpenRouter Free",
-                    "pricing": {"prompt": "0", "completion": "0"},
-                    "context_length": 128000,
-                    "top_provider": {},
-                    "architecture": {"modality": "text->text"},
-                    "supported_parameters": ["tools"],
-                },
-                {
-                    "id": "openyak/best-free",
-                    "name": "Yak Free",
-                    "pricing": {"prompt": "0", "completion": "0"},
-                    "context_length": 128000,
-                    "top_provider": {},
-                    "architecture": {"modality": "text->text"},
-                    "supported_parameters": ["tools"],
-                },
-            ],
-        }
-
-        client = MagicMock()
-        client.get = AsyncMock(return_value=response)
-
-        with patch("app.provider.openrouter.httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__ = AsyncMock(return_value=client)
-            mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
-            models = await provider.list_models()
-
-        assert [m.id for m in models].count("openyak/best-free") == 1
 
 
 class TestProviderRegistry:

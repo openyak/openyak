@@ -1,0 +1,330 @@
+"""Process lifecycle helpers for Rapid-MLX on Apple Silicon Macs."""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import platform
+import signal
+import shutil
+import sys
+from pathlib import Path
+from typing import Any
+
+import httpx
+
+from app.provider.rapid_mlx import DEFAULT_BASE_URL, DEFAULT_MODEL
+from app.rapid_mlx.catalog import (
+    RAPID_MLX_ALIAS_REPOS,
+    canonical_rapid_mlx_model,
+    resolve_rapid_mlx_repo,
+)
+
+DEFAULT_PORT = 18080
+
+_COMMON_BINARY_PATHS = (
+    "/opt/homebrew/bin/rapid-mlx",
+    "/usr/local/bin/rapid-mlx",
+)
+
+_ALIAS_REPOS = RAPID_MLX_ALIAS_REPOS
+
+
+def _platform_supported() -> bool:
+    return sys.platform == "darwin" and platform.machine().lower() in {
+        "arm64",
+        "aarch64",
+    }
+
+
+def _base_url_for_port(port: int) -> str:
+    return f"http://localhost:{port}/v1"
+
+
+def _server_root_for_port(port: int) -> str:
+    return f"http://localhost:{port}"
+
+
+class RapidMLXManager:
+    """Start, stop, and inspect a local ``rapid-mlx serve`` process."""
+
+    def __init__(self, data_dir: Path):
+        self.data_dir = data_dir
+        self._process: asyncio.subprocess.Process | None = None
+        self._port = DEFAULT_PORT
+        self._model = DEFAULT_MODEL
+
+    @property
+    def executable_path(self) -> str | None:
+        found = shutil.which("rapid-mlx")
+        if found:
+            return found
+        for candidate in _COMMON_BINARY_PATHS:
+            if Path(candidate).exists():
+                return candidate
+        return None
+
+    @property
+    def platform_supported(self) -> bool:
+        return _platform_supported()
+
+    @property
+    def is_binary_installed(self) -> bool:
+        return self.executable_path is not None
+
+    @property
+    def is_managed_process_alive(self) -> bool:
+        return self._process is not None and self._process.returncode is None
+
+    async def status(
+        self,
+        *,
+        configured_base_url: str = "",
+        configured_model: str = "",
+    ) -> dict[str, Any]:
+        base_url = configured_base_url or _base_url_for_port(self._port)
+        port = _port_from_base_url(base_url) or self._port
+        self._port = port
+        running = await _rapid_mlx_running(base_url)
+        version = await self._version() if self.is_binary_installed else None
+        model = configured_model or self._model or DEFAULT_MODEL
+        return {
+            "platform_supported": self.platform_supported,
+            "binary_installed": self.is_binary_installed,
+            "running": running,
+            "process_running": self.is_managed_process_alive,
+            "port": port,
+            "base_url": base_url if running or configured_base_url else None,
+            "version": version,
+            "current_model": model,
+            "executable_path": self.executable_path,
+            "install_commands": [
+                "brew install raullenchai/rapid-mlx/rapid-mlx",
+                "pip install rapid-mlx",
+            ],
+        }
+
+    def cached_models(self, aliases: list[str]) -> dict[str, bool]:
+        return {alias: self.is_model_cached(alias) for alias in aliases}
+
+    def is_model_cached(self, alias_or_repo: str) -> bool:
+        repo = resolve_rapid_mlx_repo(alias_or_repo)
+        if "/" not in repo:
+            return False
+        cache_dir = _huggingface_cache_dir() / f"models--{repo.replace('/', '--')}"
+        if not cache_dir.exists():
+            return False
+        snapshot_dir = cache_dir / "snapshots"
+        if not snapshot_dir.exists():
+            return True
+        return any(child.is_dir() for child in snapshot_dir.iterdir())
+
+    async def remove_model(self, alias_or_repo: str) -> None:
+        if not self.platform_supported:
+            raise RuntimeError("Rapid-MLX is supported only on Apple Silicon macOS.")
+        executable = self.executable_path
+        if not executable:
+            raise RuntimeError("rapid-mlx is not installed.")
+
+        model = alias_or_repo.strip()
+        if not model:
+            raise RuntimeError("Rapid-MLX model alias is required.")
+        resolved_model = canonical_rapid_mlx_model(model)
+        resolved_running_model = canonical_rapid_mlx_model(self._model)
+        if self.is_managed_process_alive and (
+            model == self._model or resolved_model == resolved_running_model
+        ):
+            raise RuntimeError("Stop Rapid-MLX before removing the running model.")
+
+        proc = await asyncio.create_subprocess_exec(
+            executable,
+            "rm",
+            resolve_rapid_mlx_repo(model),
+            cwd=str(self.data_dir),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        except TimeoutError:
+            proc.kill()
+            await proc.wait()
+            raise RuntimeError("Timed out while removing Rapid-MLX model.")
+        if proc.returncode != 0:
+            message = (stderr or stdout).decode("utf-8", errors="ignore").strip()
+            raise RuntimeError(message or "Failed to remove Rapid-MLX model.")
+
+    async def start(self, *, model: str = DEFAULT_MODEL, port: int = DEFAULT_PORT) -> str:
+        if not self.platform_supported:
+            raise RuntimeError("Rapid-MLX is supported only on Apple Silicon macOS.")
+        executable = self.executable_path
+        if not executable:
+            raise RuntimeError("rapid-mlx is not installed.")
+
+        next_model = model.strip() or DEFAULT_MODEL
+        next_identity = canonical_rapid_mlx_model(next_model)
+        base_url = _base_url_for_port(port)
+        if await _rapid_mlx_running(base_url):
+            if self.is_managed_process_alive:
+                if canonical_rapid_mlx_model(self._model) == next_identity and self._port == port:
+                    return base_url
+                await self.stop()
+            else:
+                pid = await _find_rapid_mlx_server_pid(port)
+                if pid is None:
+                    raise RuntimeError(
+                        "Rapid-MLX is already running on this port, but OpenYak "
+                        "could not identify its process. Stop it first, then switch models."
+                    )
+                await _terminate_pid(pid)
+
+        if self.is_managed_process_alive:
+            if canonical_rapid_mlx_model(self._model) == next_identity and self._port == port:
+                return base_url
+            await self.stop()
+
+        self._port = port
+        self._model = next_model
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+        self._process = await asyncio.create_subprocess_exec(
+            executable,
+            "serve",
+            self._model,
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            cwd=str(self.data_dir),
+            env=env,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        return base_url
+
+    async def stop(self) -> None:
+        if self.is_managed_process_alive and self._process is not None:
+            self._process.terminate()
+            try:
+                await asyncio.wait_for(self._process.wait(), timeout=8)
+            except TimeoutError:
+                self._process.kill()
+                await self._process.wait()
+            return
+
+        pid = await _find_rapid_mlx_server_pid(self._port)
+        if pid is None:
+            raise RuntimeError("Rapid-MLX was not started by OpenYak in this session.")
+        await _terminate_pid(pid)
+
+    async def _version(self) -> str | None:
+        executable = self.executable_path
+        if not executable:
+            return None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                executable,
+                "--version",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=3)
+            text = (stdout or stderr).decode("utf-8", errors="ignore").strip()
+            return text or None
+        except Exception:
+            return None
+
+
+async def _rapid_mlx_running(base_url: str) -> bool:
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.get(f"{base_url.rstrip('/')}/models")
+            if resp.status_code != 200:
+                return False
+            data = resp.json()
+            return isinstance(data.get("data"), list)
+    except Exception:
+        return False
+
+
+async def _find_rapid_mlx_server_pid(port: int) -> int | None:
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ps",
+            "-axo",
+            "pid=,command=",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _stderr = await asyncio.wait_for(proc.communicate(), timeout=3)
+    except Exception:
+        return None
+    if proc.returncode != 0:
+        return None
+    return _parse_rapid_mlx_server_pid(stdout.decode("utf-8", errors="ignore"), port)
+
+
+def _parse_rapid_mlx_server_pid(ps_output: str, port: int) -> int | None:
+    port_text = str(port)
+    for line in ps_output.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            pid_text, command = stripped.split(maxsplit=1)
+            pid = int(pid_text)
+        except ValueError:
+            continue
+        if "rapid-mlx" not in command or " serve " not in f" {command} ":
+            continue
+        if f"--port {port_text}" in command or f"--port={port_text}" in command:
+            return pid
+    return None
+
+
+async def _terminate_pid(pid: int) -> None:
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    except PermissionError:
+        raise RuntimeError("OpenYak does not have permission to stop Rapid-MLX.")
+
+    for _ in range(40):
+        await asyncio.sleep(0.2)
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    except PermissionError:
+        raise RuntimeError("OpenYak does not have permission to force stop Rapid-MLX.")
+
+
+def _port_from_base_url(base_url: str) -> int | None:
+    try:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(base_url)
+        return parsed.port
+    except Exception:
+        return None
+
+
+def server_root_from_base_url(base_url: str) -> str:
+    port = _port_from_base_url(base_url) or DEFAULT_PORT
+    return _server_root_for_port(port)
+
+
+def _huggingface_cache_dir() -> Path:
+    if os.environ.get("HF_HUB_CACHE"):
+        return Path(os.environ["HF_HUB_CACHE"]).expanduser()
+    if os.environ.get("HF_HOME"):
+        return Path(os.environ["HF_HOME"]).expanduser() / "hub"
+    if os.environ.get("XDG_CACHE_HOME"):
+        return Path(os.environ["XDG_CACHE_HOME"]).expanduser() / "huggingface" / "hub"
+    return Path.home() / ".cache" / "huggingface" / "hub"

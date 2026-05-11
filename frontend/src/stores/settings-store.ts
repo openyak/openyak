@@ -16,7 +16,13 @@ export interface SavedPermissionRule {
   timestamp: number;
 }
 
-export type ActiveProvider = "openyak" | "byok" | "chatgpt" | "ollama" | "local" | "custom" | null;
+export type ActiveProvider =
+  | "byok"
+  | "chatgpt"
+  | "ollama"
+  | "rapid-mlx"
+  | "custom"
+  | null;
 
 /**
  * Unified work mode — maps to agent + permission presets:
@@ -101,17 +107,30 @@ export const useSettingsStore = create<SettingsStore>()(
       hasSeenHints: false,
       language: "auto",
       activeProvider: null,
-      setSelectedModel: (model, providerId) => set({ selectedModel: model, selectedProviderId: providerId ?? null }),
+      setSelectedModel: (model, providerId) =>
+        set({ selectedModel: model, selectedProviderId: providerId ?? null }),
       setSelectedAgent: (agent) => {
         const isPlan = agent === "plan";
         const currentPresets = get().permissionPresets;
-        const mode: WorkMode = isPlan ? "plan" : (currentPresets.fileChanges ? "auto" : "ask");
+        const mode: WorkMode = isPlan
+          ? "plan"
+          : currentPresets.fileChanges
+            ? "auto"
+            : "ask";
         set({ selectedAgent: agent, safeMode: isPlan, workMode: mode });
       },
       setSafeMode: (enabled) => {
         const currentPresets = get().permissionPresets;
-        const mode: WorkMode = enabled ? "plan" : (currentPresets.fileChanges ? "auto" : "ask");
-        set({ safeMode: enabled, selectedAgent: enabled ? "plan" : "build", workMode: mode });
+        const mode: WorkMode = enabled
+          ? "plan"
+          : currentPresets.fileChanges
+            ? "auto"
+            : "ask";
+        set({
+          safeMode: enabled,
+          selectedAgent: enabled ? "plan" : "build",
+          workMode: mode,
+        });
       },
       setWorkMode: (mode) => {
         switch (mode) {
@@ -144,11 +163,17 @@ export const useSettingsStore = create<SettingsStore>()(
       setReasoningEnabled: (enabled) => set({ reasoningEnabled: enabled }),
       togglePermissionPreset: (key) =>
         set((s) => {
-          const next = { ...s.permissionPresets, [key]: !s.permissionPresets[key] };
+          const next = {
+            ...s.permissionPresets,
+            [key]: !s.permissionPresets[key],
+          };
           // Sync workMode (only if currently in build agent)
-          const workMode: WorkMode = s.selectedAgent === "plan"
-            ? "plan"
-            : (next.fileChanges ? "auto" : "ask");
+          const workMode: WorkMode =
+            s.selectedAgent === "plan"
+              ? "plan"
+              : next.fileChanges
+                ? "auto"
+                : "ask";
           return { permissionPresets: next, workMode };
         }),
       savePermissionRule: (tool, allow) =>
@@ -180,6 +205,25 @@ export const useSettingsStore = create<SettingsStore>()(
     }),
     {
       name: "openyak-settings",
+      version: 3,
+      migrate: (persistedState) => {
+        if (
+          persistedState &&
+          typeof persistedState === "object" &&
+          "activeProvider" in persistedState
+        ) {
+          if (persistedState.activeProvider === "openyak") {
+            return { ...persistedState, activeProvider: null } as SettingsStore;
+          }
+          if (persistedState.activeProvider === "local") {
+            return {
+              ...persistedState,
+              activeProvider: "custom",
+            } as SettingsStore;
+          }
+        }
+        return persistedState as SettingsStore;
+      },
     },
   ),
 );
@@ -195,7 +239,9 @@ const useSettingsHasHydrated = () => {
     if (useSettingsStore.persist.hasHydrated()) {
       setHydrated(true);
     }
-    const unsub = useSettingsStore.persist.onFinishHydration(() => setHydrated(true));
+    const unsub = useSettingsStore.persist.onFinishHydration(() =>
+      setHydrated(true),
+    );
     return () => {
       unsub();
     };

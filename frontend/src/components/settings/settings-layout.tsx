@@ -10,7 +10,6 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { GeneralTab } from "@/components/settings/general-tab";
 import { ProvidersTab } from "@/components/settings/providers-tab";
-import { BillingTab } from "@/components/settings/billing-tab";
 import { UsageSkeleton } from "@/components/settings/usage-tab";
 import { MemoryTab } from "@/components/settings/memory-tab";
 import { PermissionsTab } from "@/components/settings/permissions-tab";
@@ -35,7 +34,7 @@ function toSettingsTabId(value: string | null | undefined): SettingsTabId {
 }
 
 export default function SettingsPageClient({ initialTab }: SettingsPageClientProps) {
-  const { t } = useTranslation(["settings", "billing", "usage"]);
+  const { t } = useTranslation(["settings", "usage"]);
   const router = useRouter();
   const searchParams = useSearchParams();
   const selectedTab = initialTab ?? toSettingsTabId(searchParams.get("tab"));
@@ -94,12 +93,11 @@ export default function SettingsPageClient({ initialTab }: SettingsPageClientPro
         {/* Tab content */}
         <div className="min-w-0">
           {activeTab === "general" && <GeneralTab />}
-          {activeTab === "providers" && <ProvidersTab onNavigateTab={navigateTab} />}
+          {activeTab === "providers" && <ProvidersTab />}
           {activeTab === "permissions" && <PermissionsTab />}
           {activeTab === "automations" && <AutomationsTabContent />}
           {activeTab === "plugins" && <PluginsTabContent />}
           {activeTab === "remote" && <RemoteTabContent />}
-          {activeTab === "billing" && <BillingTab onNavigateTab={navigateTab} />}
           {activeTab === "usage" && <UsageTab />}
           {activeTab === "memory" && <MemoryTab />}
         </div>

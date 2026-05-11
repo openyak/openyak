@@ -44,8 +44,6 @@
   "cancel": "取消",
   "deleteConversation": "删除对话？",
   "deleteConversationDesc": "将删除「{{title}}」，此操作无法撤销。",
-  "reconnecting": "正在重新连接服务器...",
-  "connectionLost": "连接已断开，请检查服务器是否正在运行。",
   "today": "今天",
   "yesterday": "昨天",
   "previous7Days": "最近 7 天",

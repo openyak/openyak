@@ -66,7 +66,6 @@ app/
 │   ├── factory.py       #   提供者工厂（从目录创建提供者）
 │   ├── openai_oauth.py  #   ChatGPT 订阅 OAuth
 │   ├── openai_subscription.py # ChatGPT 订阅提供者
-│   ├── proxy_auth.py    #   OpenYak Cloud 代理认证
 │   ├── registry.py      #   ProviderRegistry
 │   └── tool_calling/    #   工具调用适配（原生 FC 检测 + prompt-based 回退）
 │
@@ -328,7 +327,7 @@ curl http://localhost:8000/api/agents
 | `OPENYAK_OLLAMA_LAST_MODEL` | 上次使用的模型（用于启动预热） | `` |
 | `OPENYAK_OPENCLAW_ENABLED` | 启用 OpenClaw IM 桥接 | `false` |
 | `OPENYAK_OPENCLAW_URL` | OpenClaw WebSocket 地址 | `ws://127.0.0.1:18789` |
-| `OPENYAK_PROXY_URL` | OpenYak Cloud 代理地址（计费模式） | `` |
+| `OPENYAK_PROXY_URL` | 托管工具代理地址（可选） | `` |
 | `OPENYAK_PROXY_TOKEN` | 代理认证 JWT | `` |
 | `OPENYAK_BRAVE_SEARCH_API_KEY` | Brave Search API 密钥（增强网页搜索） | `` |
 | `OPENYAK_REMOTE_ACCESS_ENABLED` | 启用远程隧道访问 | `false` |
