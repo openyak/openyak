@@ -28,6 +28,18 @@ def test_rapid_mlx_port_parsing():
     assert manager_module._port_from_base_url("https://example.test/v1") is None
 
 
+def test_rapid_mlx_process_parser_finds_server_on_port():
+    output = """
+      123 /usr/bin/python /opt/homebrew/bin/rapid-mlx serve qwen3.5-4b --host 127.0.0.1 --port 18080
+      456 /usr/bin/python /opt/homebrew/bin/rapid-mlx serve qwen3.5-9b --port=19000
+      789 /bin/zsh -c rapid-mlx ps
+    """
+
+    assert manager_module._parse_rapid_mlx_server_pid(output, 18080) == 123
+    assert manager_module._parse_rapid_mlx_server_pid(output, 19000) == 456
+    assert manager_module._parse_rapid_mlx_server_pid(output, 19999) is None
+
+
 def test_rapid_mlx_cached_model_detection_uses_huggingface_cache(
     monkeypatch,
     tmp_path: Path,

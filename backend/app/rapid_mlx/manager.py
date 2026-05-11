@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import platform
+import signal
 import shutil
 import sys
 from pathlib import Path
@@ -102,6 +103,7 @@ class RapidMLXManager:
     ) -> dict[str, Any]:
         base_url = configured_base_url or _base_url_for_port(self._port)
         port = _port_from_base_url(base_url) or self._port
+        self._port = port
         running = await _rapid_mlx_running(base_url)
         version = await self._version() if self.is_binary_installed else None
         model = configured_model or self._model or DEFAULT_MODEL
@@ -178,15 +180,27 @@ class RapidMLXManager:
         if not executable:
             raise RuntimeError("rapid-mlx is not installed.")
 
-        self._port = port
-        self._model = model.strip() or DEFAULT_MODEL
+        next_model = model.strip() or DEFAULT_MODEL
         base_url = _base_url_for_port(port)
         if await _rapid_mlx_running(base_url):
-            return base_url
+            if self.is_managed_process_alive:
+                if self._model == next_model and self._port == port:
+                    return base_url
+                await self.stop()
+            else:
+                pid = await _find_rapid_mlx_server_pid(port)
+                if pid is None:
+                    raise RuntimeError(
+                        "Rapid-MLX is already running on this port, but OpenYak "
+                        "could not identify its process. Stop it first, then switch models."
+                    )
+                await _terminate_pid(pid)
 
         if self.is_managed_process_alive:
             return base_url
 
+        self._port = port
+        self._model = next_model
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
         self._process = await asyncio.create_subprocess_exec(
@@ -205,14 +219,19 @@ class RapidMLXManager:
         return base_url
 
     async def stop(self) -> None:
-        if not self.is_managed_process_alive or self._process is None:
+        if self.is_managed_process_alive and self._process is not None:
+            self._process.terminate()
+            try:
+                await asyncio.wait_for(self._process.wait(), timeout=8)
+            except TimeoutError:
+                self._process.kill()
+                await self._process.wait()
+            return
+
+        pid = await _find_rapid_mlx_server_pid(self._port)
+        if pid is None:
             raise RuntimeError("Rapid-MLX was not started by OpenYak in this session.")
-        self._process.terminate()
-        try:
-            await asyncio.wait_for(self._process.wait(), timeout=8)
-        except TimeoutError:
-            self._process.kill()
-            await self._process.wait()
+        await _terminate_pid(pid)
 
     async def _version(self) -> str | None:
         executable = self.executable_path
@@ -242,6 +261,64 @@ async def _rapid_mlx_running(base_url: str) -> bool:
             return isinstance(data.get("data"), list)
     except Exception:
         return False
+
+
+async def _find_rapid_mlx_server_pid(port: int) -> int | None:
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ps",
+            "-axo",
+            "pid=,command=",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _stderr = await asyncio.wait_for(proc.communicate(), timeout=3)
+    except Exception:
+        return None
+    if proc.returncode != 0:
+        return None
+    return _parse_rapid_mlx_server_pid(stdout.decode("utf-8", errors="ignore"), port)
+
+
+def _parse_rapid_mlx_server_pid(ps_output: str, port: int) -> int | None:
+    port_text = str(port)
+    for line in ps_output.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            pid_text, command = stripped.split(maxsplit=1)
+            pid = int(pid_text)
+        except ValueError:
+            continue
+        if "rapid-mlx" not in command or " serve " not in f" {command} ":
+            continue
+        if f"--port {port_text}" in command or f"--port={port_text}" in command:
+            return pid
+    return None
+
+
+async def _terminate_pid(pid: int) -> None:
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    except PermissionError:
+        raise RuntimeError("OpenYak does not have permission to stop Rapid-MLX.")
+
+    for _ in range(40):
+        await asyncio.sleep(0.2)
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    except PermissionError:
+        raise RuntimeError("OpenYak does not have permission to force stop Rapid-MLX.")
 
 
 def _port_from_base_url(base_url: str) -> int | None:

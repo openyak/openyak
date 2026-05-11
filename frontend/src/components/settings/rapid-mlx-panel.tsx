@@ -252,12 +252,8 @@ export function RapidMLXPanel() {
                   variant="ghost"
                   size="sm"
                   onClick={() => stopMutation.mutate()}
-                  disabled={stopMutation.isPending || !status.process_running}
-                  title={
-                    status.process_running
-                      ? "Stop Rapid-MLX"
-                      : "This Rapid-MLX server was started outside OpenYak."
-                  }
+                  disabled={stopMutation.isPending}
+                  title="Stop Rapid-MLX"
                 >
                   {stopMutation.isPending ? (
                     <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
@@ -267,9 +263,86 @@ export function RapidMLXPanel() {
                   Stop
                 </Button>
               </div>
+              <div className="rounded-lg border border-[var(--border-default)] p-3">
+                <div className="grid grid-cols-1 gap-2 md:grid-cols-[1.2fr_1fr_88px_auto]">
+                  <select
+                    value={selectedModel.id}
+                    onChange={(e) => {
+                      const next = LOCAL_MODEL_RECOMMENDATIONS.find(
+                        (model) => model.id === e.target.value,
+                      );
+                      const firstAlias = next?.variants.find(
+                        (variant) => variant.rapidMlxAlias,
+                      )?.rapidMlxAlias;
+                      if (firstAlias) setModelInput(firstAlias);
+                    }}
+                    className="h-9 rounded-md border border-[var(--border-default)] bg-[var(--surface-primary)] px-2 text-xs text-[var(--text-primary)]"
+                  >
+                    {LOCAL_MODEL_RECOMMENDATIONS.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.name} - {model.memory}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={
+                      rapidVariants.find(
+                        (variant) => variant.rapidMlxAlias === modelInput,
+                      )?.rapidMlxAlias ?? ""
+                    }
+                    onChange={(e) => setModelInput(e.target.value)}
+                    disabled={rapidVariants.length === 0}
+                    className="h-9 rounded-md border border-[var(--border-default)] bg-[var(--surface-primary)] px-2 text-xs text-[var(--text-primary)]"
+                  >
+                    {rapidVariants.map((variant) => (
+                      <option
+                        key={`${selectedModel.id}-${variant.label}`}
+                        value={variant.rapidMlxAlias}
+                      >
+                        {variant.label} ({variant.precision}) -{" "}
+                        {isAliasCached(variant.rapidMlxAlias)
+                          ? "installed"
+                          : "not installed"}
+                      </option>
+                    ))}
+                  </select>
+                  <Input
+                    value={portInput}
+                    onChange={(e) => setPortInput(e.target.value)}
+                    placeholder="18080"
+                    inputMode="numeric"
+                    className="h-9 font-mono text-xs"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-9"
+                    onClick={() => startMutation.mutate()}
+                    disabled={startMutation.isPending || rapidVariants.length === 0}
+                  >
+                    {startMutation.isPending ? (
+                      <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Play className="mr-1.5 h-3.5 w-3.5" />
+                    )}
+                    Switch
+                  </Button>
+                </div>
+                <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-[1fr_96px]">
+                  <Input
+                    value={modelInput}
+                    onChange={(e) => setModelInput(e.target.value)}
+                    placeholder="qwen3.5-4b"
+                    className="h-8 font-mono text-xs"
+                  />
+                  <span className="flex h-8 items-center rounded-md bg-[var(--surface-secondary)] px-2 text-ui-3xs text-[var(--text-tertiary)]">
+                    manual alias
+                  </span>
+                </div>
+              </div>
               <p className="text-ui-3xs text-[var(--text-tertiary)]">
-                Running model is available locally. Stop Rapid-MLX to switch
-                models; installed models can be removed from the list below.
+                Switch restarts Rapid-MLX on the selected model. Installed
+                models can be removed from the list below.
               </p>
             </div>
           ) : status.process_running ? (
@@ -416,7 +489,6 @@ export function RapidMLXPanel() {
                   <div
                     key={model.id}
                     onClick={() => {
-                      if (status.running) return;
                       const firstAlias = model.variants.find(
                         (variant) => variant.rapidMlxAlias,
                       )?.rapidMlxAlias;
@@ -426,7 +498,7 @@ export function RapidMLXPanel() {
                       selected
                         ? "border-[var(--brand-primary)] bg-[var(--brand-primary)]/5"
                         : "border-[var(--border-default)] hover:bg-[var(--surface-secondary)]"
-                    } ${status.running ? "cursor-default opacity-80" : "cursor-pointer"}`}
+                    } cursor-pointer`}
                   >
                     <div className="min-w-0">
                       <div className="truncate text-xs font-medium text-[var(--text-primary)]">
