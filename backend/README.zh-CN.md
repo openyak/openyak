@@ -54,11 +54,12 @@ app/
 │   ├── retry.py         #   指数退避重试
 │   └── title.py         #   自动生成会话标题
 │
-├── provider/            # LLM 提供者（21 个 BYOK + Ollama + ChatGPT 订阅）
+├── provider/            # LLM 提供者（21 个 BYOK + Rapid-MLX + Ollama + ChatGPT 订阅）
 │   ├── base.py          #   BaseProvider ABC
 │   ├── openai_compat.py #   OpenAI 兼容基类
 │   ├── openrouter.py    #   OpenRouter（主要提供者，支持 reasoning）
 │   ├── ollama.py        #   Ollama 本地大模型（继承 OpenAI 兼容基类）
+│   ├── rapid_mlx.py     #   Rapid-MLX 本地大模型（Apple Silicon，OpenAI 兼容）
 │   ├── anthropic_provider.py # 原生 Anthropic SDK 提供者
 │   ├── gemini_provider.py #  原生 Google Gemini SDK 提供者
 │   ├── generic_openai.py #   通用 OpenAI 兼容提供者（BYOK）
@@ -72,6 +73,10 @@ app/
 ├── ollama/              # Ollama 运行时管理
 │   ├── manager.py       #   二进制下载、进程生命周期（启动/停止/健康检查）
 │   └── library.py       #   模型库（从 ollama.com 实时搜索 + 离线回退）
+│
+├── rapid_mlx/           # Rapid-MLX 运行时管理
+│   ├── catalog.py       #   精选 MLX alias 与 vision 能力元数据
+│   └── manager.py       #   进程生命周期、缓存检测、删除/启动/停止
 │
 ├── streaming/           # 可恢复 SSE 流
 │   ├── events.py        #   SSEEvent 类型 + 编码
@@ -179,6 +184,11 @@ app/
 | POST | `/api/ollama/models/pull` | 下载模型（SSE 进度流） |
 | DELETE | `/api/ollama/models/{name}` | 删除本地模型 |
 | DELETE | `/api/ollama/uninstall` | 移除 Ollama 二进制 + 可选删除模型 |
+| GET | `/api/rapid-mlx/status` | Rapid-MLX 运行状态（仅 macOS Apple Silicon） |
+| POST | `/api/rapid-mlx/start` | 使用所选模型/端口启动 Rapid-MLX |
+| POST | `/api/rapid-mlx/stop` | 停止 Rapid-MLX |
+| POST | `/api/rapid-mlx/cached` | 检查精选 MLX alias 是否已下载 |
+| POST | `/api/rapid-mlx/remove` | 从缓存中移除已下载的 Rapid-MLX 模型 |
 | | **频道（OpenClaw）** | |
 | GET | `/api/channels/openclaw/status` | OpenClaw 运行状态 |
 | POST | `/api/channels/openclaw/setup` | 安装 OpenClaw 二进制（SSE 进度流） |
@@ -242,11 +252,12 @@ app/
 
 ## LLM 提供者
 
-21 个 BYOK 提供者 + Ollama 本地 + ChatGPT 订阅：
+21 个 BYOK 提供者 + Rapid-MLX/Ollama 本地 + ChatGPT 订阅：
 
 | 提供者 | 类型 | 说明 |
 |--------|------|------|
 | OpenRouter | 聚合器 | 主要提供者，100+ 模型，支持 reasoning token |
+| Rapid-MLX | 本地 | Apple Silicon MLX runtime，精选模型 alias，OpenAI-compatible API |
 | Ollama | 本地 | 托管二进制生命周期，自动下载，启动预热 |
 | ChatGPT 订阅 | OAuth | 接入现有 ChatGPT Plus/Team 订阅 |
 | OpenAI | BYOK | 直接 API 密钥 |
@@ -325,6 +336,8 @@ curl http://localhost:8000/api/agents
 | `OPENYAK_OLLAMA_BASE_URL` | Ollama 服务地址（setup 自动设置） | `` |
 | `OPENYAK_OLLAMA_AUTO_START` | 启动时自动启动托管的 Ollama | `true` |
 | `OPENYAK_OLLAMA_LAST_MODEL` | 上次使用的模型（用于启动预热） | `` |
+| `OPENYAK_RAPID_MLX_BASE_URL` | Rapid-MLX OpenAI-compatible endpoint | `` |
+| `OPENYAK_RAPID_MLX_MODEL` | 上次选择的 Rapid-MLX 模型 alias | `` |
 | `OPENYAK_OPENCLAW_ENABLED` | 启用 OpenClaw IM 桥接 | `false` |
 | `OPENYAK_OPENCLAW_URL` | OpenClaw WebSocket 地址 | `ws://127.0.0.1:18789` |
 | `OPENYAK_PROXY_URL` | 托管工具代理地址（可选） | `` |

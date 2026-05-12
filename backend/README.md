@@ -54,11 +54,12 @@ app/
 │   ├── retry.py         #   Exponential backoff retry
 │   └── title.py         #   Auto-generate session titles
 │
-├── provider/            # LLM providers (21 BYOK + Ollama + ChatGPT subscription)
+├── provider/            # LLM providers (21 BYOK + Rapid-MLX + Ollama + ChatGPT subscription)
 │   ├── base.py          #   BaseProvider ABC
 │   ├── openai_compat.py #   OpenAI-compatible base class
 │   ├── openrouter.py    #   OpenRouter (primary provider, reasoning model support)
 │   ├── ollama.py        #   Ollama local LLM (extends OpenAI-compat)
+│   ├── rapid_mlx.py     #   Rapid-MLX local LLM (Apple Silicon, OpenAI-compatible)
 │   ├── anthropic_provider.py # Native Anthropic SDK provider
 │   ├── gemini_provider.py #  Native Google Gemini SDK provider
 │   ├── generic_openai.py #   Generic OpenAI-compatible provider (BYOK)
@@ -72,6 +73,10 @@ app/
 ├── ollama/              # Ollama runtime management
 │   ├── manager.py       #   Binary download, process lifecycle (start/stop/health)
 │   └── library.py       #   Model library (live search from ollama.com + local fallback)
+│
+├── rapid_mlx/           # Rapid-MLX runtime management
+│   ├── catalog.py       #   Curated MLX aliases and vision capability metadata
+│   └── manager.py       #   Process lifecycle, cache detection, remove/start/stop
 │
 ├── streaming/           # Resumable SSE streams
 │   ├── events.py        #   SSEEvent types + encoding
@@ -179,6 +184,11 @@ app/
 | POST | `/api/ollama/models/pull` | Download a model (SSE progress) |
 | DELETE | `/api/ollama/models/{name}` | Delete a local model |
 | DELETE | `/api/ollama/uninstall` | Remove Ollama binary + optional models |
+| GET | `/api/rapid-mlx/status` | Rapid-MLX runtime status (macOS Apple Silicon only) |
+| POST | `/api/rapid-mlx/start` | Start Rapid-MLX with the selected model/port |
+| POST | `/api/rapid-mlx/stop` | Stop Rapid-MLX |
+| POST | `/api/rapid-mlx/cached` | Check whether curated MLX aliases are downloaded |
+| POST | `/api/rapid-mlx/remove` | Remove a downloaded Rapid-MLX model from cache |
 | | **Channels (OpenClaw)** | |
 | GET | `/api/channels/openclaw/status` | OpenClaw runtime status |
 | POST | `/api/channels/openclaw/setup` | Install OpenClaw binary (SSE progress) |
@@ -246,11 +256,12 @@ Each tool can be set to `allow`, `deny`, or `ask` (prompts user in UI).
 
 ## LLM Providers
 
-21 BYOK providers + Ollama local + ChatGPT subscription:
+21 BYOK providers + Rapid-MLX/Ollama local + ChatGPT subscription:
 
 | Provider | Type | Notes |
 |----------|------|-------|
 | OpenRouter | Aggregator | Primary provider, 100+ models, reasoning token support |
+| Rapid-MLX | Local | Apple Silicon MLX runtime, curated model aliases, OpenAI-compatible API |
 | Ollama | Local | Managed binary lifecycle, auto-download, pre-warming |
 | ChatGPT Subscription | OAuth | Connect existing ChatGPT Plus/Team subscription |
 | OpenAI | BYOK | Direct API key |
@@ -329,6 +340,8 @@ curl http://localhost:8000/api/agents
 | `OPENYAK_OLLAMA_BASE_URL` | Ollama server URL (auto-set by setup) | `` |
 | `OPENYAK_OLLAMA_AUTO_START` | Auto-start managed Ollama on launch | `true` |
 | `OPENYAK_OLLAMA_LAST_MODEL` | Last-used model for startup pre-warming | `` |
+| `OPENYAK_RAPID_MLX_BASE_URL` | Rapid-MLX OpenAI-compatible endpoint | `` |
+| `OPENYAK_RAPID_MLX_MODEL` | Last selected Rapid-MLX model alias | `` |
 | `OPENYAK_OPENCLAW_ENABLED` | Enable OpenClaw IM bridge | `false` |
 | `OPENYAK_OPENCLAW_URL` | OpenClaw WebSocket URL | `ws://127.0.0.1:18789` |
 | `OPENYAK_PROXY_URL` | Optional hosted proxy URL for managed tools | `` |

@@ -86,9 +86,10 @@ src/
 │   ├── settings/                 # 设置组件
 │   │   ├── settings-layout.tsx   #   标签布局
 │   │   ├── general-tab.tsx       #   通用设置（外观、语言）
-│   │   ├── providers-tab.tsx     #   BYOK 提供商密钥管理
+│   │   ├── providers-tab.tsx     #   Provider 选择和 BYOK 提供商密钥管理
 │   │   ├── memory-tab.tsx        #   记忆设置 & 事实管理
 │   │   ├── ollama-panel.tsx      #   Ollama 管理（安装、模型库、下载/删除）
+│   │   ├── rapid-mlx-panel.tsx   #   Rapid-MLX 管理（启动/停止/切换/删除）
 │   │   └── usage-tab.tsx         #   Token 用量统计
 │   │
 │   ├── activity/                 # 活动追踪
