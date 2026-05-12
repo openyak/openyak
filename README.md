@@ -85,14 +85,6 @@ Real office work rarely fits in one message. OpenYak is designed for follow-ups,
   <img src="docs/readme/openyak-long-context.png" width="900" alt="OpenYak long thread with preserved context" />
 </p>
 
-### Error Recovery
-
-Professional workflows include failure states. Upload errors and missing inputs should keep the composer usable and tell the user what to do next.
-
-<p align="center">
-  <img src="docs/readme/openyak-error-recovery.png" width="900" alt="OpenYak upload error recovery state" />
-</p>
-
 ## Download
 
 | Platform | Architecture | Formats |

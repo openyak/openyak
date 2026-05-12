@@ -22,7 +22,7 @@ cd frontend && npx playwright install chromium
 
 ## Feature Inventory
 
-- Desktop shell: root redirect, sidebar/history, settings sidebar, mobile nav, panel gutters, route progress, onboarding gate.
+- Desktop shell: root redirect, sidebar/history, settings sidebar, mobile nav, panel gutters, onboarding gate.
 - Chat: new chat landing, provider/model selector, agent mode switch, workspace selector, file attachment entry, prompt submission, session route, persisted conversation render, long conversation pagination, multi-conversation switching, export, workspace side panel, streaming state, manual and automatic context compression.
 - Message and session controls: historical message edit/resend, stop generation, assistant activity/feedback, sidebar pin/rename/export/delete/undo.
 - Settings: general appearance/language/about, providers across BYOK/ChatGPT/Rapid-MLX/Ollama/custom, automations, plugins/connectors/skills, remote access, usage, workspace memory.

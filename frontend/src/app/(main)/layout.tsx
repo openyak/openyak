@@ -13,7 +13,6 @@ import { ArtifactPanel } from "@/components/artifacts/artifact-panel";
 import { PlanReviewPanel } from "@/components/plan-review/plan-review-panel";
 import { WorkspacePanel } from "@/components/workspace/workspace-panel";
 import { usePlanReviewStore } from "@/stores/plan-review-store";
-import { RouteProgressBar } from "@/components/layout/route-progress-bar";
 import { SplashScreen } from "@/components/layout/splash-screen";
 import { TitleBar } from "@/components/desktop/title-bar";
 import { WindowTopIcons } from "@/components/layout/window-top-icons";
@@ -199,9 +198,6 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
 
       {/* Onboarding flow for first-run users */}
       {needsOnboarding && <OnboardingScreen />}
-
-      {/* Top progress bar for route transitions */}
-      <RouteProgressBar />
 
       {/* Desktop title bar (Electron only) */}
       <TitleBar />

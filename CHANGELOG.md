@@ -6,6 +6,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/), and this project
 
 ## [Unreleased]
 
+## [1.1.10] - 2026-05-12
+
+### Changed
+
+- **product:** OpenYak is now positioned around local-first, privacy-first use. The account billing path has been removed from the public product story so users are guided toward their own API keys, ChatGPT subscription access, or local models through Ollama and Rapid-MLX.
+- **docs:** Refreshed README media for the file-to-deliverable workflows, artifact panel, spreadsheet analysis, memo review, long-context continuation, and auto-compress flows.
+
 ### Fixed
 
 - **backend (context window):** Removed the artificial ChatGPT subscription effective context cap so models use their advertised context window by default, with proactive compaction now starting at 85% while still preserving output and safety reserves.

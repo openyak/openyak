@@ -85,14 +85,6 @@ OpenYak 可以在同一个线程里综合多份文件，并在右侧 artifact pa
   <img src="docs/readme/openyak-long-context.png" width="900" alt="OpenYak 长对话保留上下文界面" />
 </p>
 
-### 错误恢复
-
-专业产品不能只展示成功路径。上传失败、输入缺失、文件解析失败时，界面应该保留 composer 可用，并告诉用户下一步怎么恢复。
-
-<p align="center">
-  <img src="docs/readme/openyak-error-recovery.png" width="900" alt="OpenYak 上传错误恢复状态" />
-</p>
-
 ## 下载
 
 | 平台 | 架构 | 格式 |
