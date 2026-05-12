@@ -334,7 +334,7 @@ async function startRecorder(page: Page, name: string) {
   let index = 0;
   let active = true;
   let paused = false;
-  let chain = Promise.resolve();
+  let chain: Promise<void> = Promise.resolve();
 
   const capture = () => {
     if (!active) return;
@@ -345,7 +345,9 @@ async function startRecorder(page: Page, name: string) {
     const filename = `${String(index).padStart(5, "0")}.png`;
     index += 1;
     chain = chain
-      .then(() => page.screenshot({ path: path.join(dir, filename), fullPage: false }))
+      .then(async () => {
+        await page.screenshot({ path: path.join(dir, filename), fullPage: false });
+      })
       .catch(() => undefined);
     setTimeout(capture, 120);
   };
