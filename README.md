@@ -30,6 +30,7 @@ OpenYak is built for real work, not just one-off chat prompts.
 - **Keep the workflow in one thread.** Start with analysis, continue into a RACI, ask for a follow-up email, and preserve context across long conversations.
 - **Choose your model path.** Bring your own API key, connect a ChatGPT subscription, or run local models through [Rapid-MLX](https://github.com/raullenchai/Rapid-MLX) on Apple Silicon or [Ollama](https://ollama.com).
 - **Stay local by default.** Files, conversations, memory, and generated artifacts are stored on your device. Cloud model calls go directly to the model provider you choose.
+- **Redact before cloud calls.** When a non-local provider is selected, OpenYak scans prompt context for common secrets and PII, redacts matches before sending, and asks for confirmation with a count/type summary.
 - **Use it from another device.** Remote access lets you scan a QR code and send tasks to your desktop through a secure tunnel.
 
 ## What It Feels Like
@@ -103,15 +104,14 @@ Real office work rarely fits in one message. OpenYak is designed for follow-ups,
 2. **Connect a model** using free cloud models, your own API key, ChatGPT subscription, Rapid-MLX, or local Ollama.
 3. **Start a new conversation** and attach a real file.
 4. **Ask for a deliverable**, not just a summary: brief, action plan, RACI, email, table, or artifact.
-5. **Review the result** in the chat and artifact panel, then continue in the same thread.
+5. **Review redactions when using cloud models.** If OpenYak detects secrets or PII in prompt context, confirm the redacted payload before it is sent.
+6. **Review the result** in the chat and artifact panel, then continue in the same thread.
 
 Example prompt:
 
-```text
 Please read the files I uploaded and turn them into a concise team brief.
 Start with three key takeaways, then list risks, owners, and next actions.
 Finally, write a follow-up email I can send to the team directly.
-```
 
 ## Supported Providers
 
@@ -146,7 +146,29 @@ Finally, write a follow-up email I can send to the team directly.
 - **Long-context work:** continue from analysis to planning to follow-up without starting over.
 - **Remote access:** connect from mobile through QR code and Cloudflare Tunnel.
 - **Automations:** schedule recurring cleanup, reporting, and file workflows.
-- **Privacy controls:** local storage, BYOK options, and local model support.
+- **Privacy controls:** local storage, BYOK options, local model support, and cloud-call redaction for common secrets and PII.
+
+## Cloud Redaction Gate
+
+Before sending prompt context to a non-local model provider, OpenYak applies a local preprocessing gate. The gate redacts common secrets and PII from uploaded file content, extracted document text, conversation context, and generated prompt context.
+
+Redacted types:
+
+- API keys, including OpenAI-style `sk-...` keys and AWS `AKIA...` access key IDs.
+- Email addresses.
+- Phone numbers.
+- US Social Security numbers.
+- JSON Web Tokens.
+- PEM private keys.
+
+Provider behavior:
+
+const promptContext =
+  provider.kind === "local"
+    ? rawContext
+    : redactForCloud(rawContext).output;
+
+When redactions occur, OpenYak shows a confirmation dialog before sending the request to OpenAI, Anthropic, Google, OpenRouter, or any other non-local provider. The dialog includes a count by redaction type so the user can cancel, revise the prompt, use a local model, or continue with the redacted context.
 
 ## For Developers
 
@@ -154,17 +176,45 @@ Finally, write a follow-up email I can send to the team directly.
 
 **Monorepo Structure:**
 
-```text
 desktop-tauri/    Rust desktop shell and system integration
 frontend/         Next.js chat UI, settings, artifacts, and SSE streaming
 backend/          FastAPI agent engine, tool execution, LLM streaming, storage
-```
+
+**Redaction Utility:**
+
+type RedactionHit = {
+  type: "api_key" | "email" | "phone" | "ssn" | "jwt" | "private_key";
+  value: string;
+  start: number;
+  end: number;
+};
+
+const patterns: Record<RedactionHit["type"], RegExp> = {
+  api_key: /\b(sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16})\b/g,
+  email: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
+  phone: /\b(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b/g,
+  ssn: /\b\d{3}-\d{2}-\d{4}\b/g,
+  jwt: /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g,
+  private_key: /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\s\S]+?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/g,
+};
+
+export function redactForCloud(input: string) {
+  const hits: RedactionHit[] = [];
+  let output = input;
+
+  for (const [type, re] of Object.entries(patterns) as [RedactionHit["type"], RegExp][]) {
+    output = output.replace(re, (value, offset) => {
+      hits.push({ type, value, start: offset, end: offset + value.length });
+      return `[REDACTED:${type}]`;
+    });
+  }
+
+  return { output, hits };
+}
 
 **Quick Start:**
 
-```bash
 npm run dev:all
-```
 
 This starts the backend on port `8000` and the frontend on port `3000`. For deeper setup notes, see [frontend/README.md](frontend/README.md) and [backend/README.md](backend/README.md).
 
@@ -173,7 +223,19 @@ This starts the backend on port `8000` and the frontend on port `3000`. For deep
 <details>
 <summary>Does my data leave my machine?</summary>
 
-Files, conversations, memory, and generated artifacts are stored locally. If you use a cloud model, the prompt and relevant context are sent directly to the model provider you selected. You can also use local Rapid-MLX or Ollama models for offline work.
+Files, conversations, memory, and generated artifacts are stored locally. If you use a cloud model, the prompt and relevant context are sent directly to the model provider you selected. Before any non-local provider call, OpenYak locally redacts common secrets and PII from prompt context and asks for confirmation when redactions are detected. You can also use local Rapid-MLX or Ollama models for offline work.
+</details>
+
+<details>
+<summary>Do cloud redactions apply to local models?</summary>
+
+No. Redaction is applied only when the selected provider is non-local. Local Rapid-MLX and Ollama requests stay on your machine and receive the raw local context.
+</details>
+
+<details>
+<summary>What happens when OpenYak detects secrets or PII?</summary>
+
+OpenYak replaces each detected value with a marker such as `[REDACTED:email]` or `[REDACTED:private_key]`, shows a count/type summary, and waits for confirmation before sending the request to the selected cloud provider.
 </details>
 
 <details>
