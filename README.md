@@ -28,7 +28,7 @@ OpenYak is built for real work, not just one-off chat prompts.
 
 - **Work from your actual files.** Upload DOCX, XLSX, PPTX, PDFs, CSVs, and local project context, then ask for briefs, tables, follow-ups, plans, and reusable artifacts.
 - **Keep the workflow in one thread.** Start with analysis, continue into a RACI, ask for a follow-up email, and preserve context across long conversations.
-- **Choose your model path.** Use free models, bring your own API key, connect a ChatGPT subscription, or run local models through [Rapid-MLX](https://github.com/raullenchai/Rapid-MLX) on Apple Silicon or [Ollama](https://ollama.com).
+- **Choose your model path.** Bring your own API key, connect a ChatGPT subscription, or run local models through [Rapid-MLX](https://github.com/raullenchai/Rapid-MLX) on Apple Silicon or [Ollama](https://ollama.com).
 - **Stay local by default.** Files, conversations, memory, and generated artifacts are stored on your device. Cloud model calls go directly to the model provider you choose.
 - **Use it from another device.** Remote access lets you scan a QR code and send tasks to your desktop through a secure tunnel.
 
@@ -119,7 +119,7 @@ Finally, write a follow-up email I can send to the team directly.
 
 | Provider | Access | Notes |
 |----------|--------|-------|
-| OpenRouter | Built-in | Free models and premium models |
+| OpenRouter | BYOK | Bring your own OpenRouter API key |
 | OpenAI | BYOK | Bring your own API key |
 | Anthropic | BYOK | Bring your own API key |
 | Google | BYOK | Gemini models |
@@ -179,7 +179,7 @@ Files, conversations, memory, and generated artifacts are stored locally. If you
 <details>
 <summary>Do I need an OpenYak account?</summary>
 
-No. OpenYak does not require an OpenYak account, login, billing profile, or recharge flow. You can use free models, bring provider keys, connect a ChatGPT subscription, or run local models depending on your setup.
+No. OpenYak does not require an OpenYak account, login, billing profile, or recharge flow. OpenYak also does not provide built-in model provider accounts; OpenRouter and other cloud providers require your own API key. You can connect a ChatGPT subscription or run local models depending on your setup.
 </details>
 
 <details>

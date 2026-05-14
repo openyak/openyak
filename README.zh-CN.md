@@ -28,7 +28,7 @@ OpenYak 不是只用来问一句话的聊天框，而是为真实办公动线设
 
 - **直接处理真实文件。** 上传 DOCX、XLSX、PPTX、PDF、CSV 和本地项目上下文，生成 brief、表格、follow-up、计划和可复用 artifact。
 - **同一个线程走完整流程。** 先分析文件，再继续生成 RACI、follow-up 邮件、会议 agenda，不需要反复重讲背景。
-- **自由选择模型。** 使用免费模型、自带 API Key、接入 ChatGPT 订阅，或在 Apple Silicon 上通过 [Rapid-MLX](https://github.com/raullenchai/Rapid-MLX)、在各平台通过 [Ollama](https://ollama.com) 本地运行。
+- **自由选择模型。** 自带 API Key、接入 ChatGPT 订阅，或在 Apple Silicon 上通过 [Rapid-MLX](https://github.com/raullenchai/Rapid-MLX)、在各平台通过 [Ollama](https://ollama.com) 本地运行。
 - **默认本地优先。** 文件、对话、记忆和生成结果都存储在本机。使用云端模型时，只会直接请求你选择的模型提供商。
 - **可以从手机访问桌面 AI。** 开启远程访问后扫码连接，通过安全 tunnel 把任务发给桌面端执行。
 
@@ -119,7 +119,7 @@ OpenYak 可以在同一个线程里综合多份文件，并在右侧 artifact pa
 
 | 提供商 | 接入方式 | 说明 |
 |--------|----------|------|
-| OpenRouter | 内置 | 免费模型和高级模型 |
+| OpenRouter | BYOK | 使用自己的 OpenRouter API Key |
 | OpenAI | BYOK | 使用自己的 API Key |
 | Anthropic | BYOK | 使用自己的 API Key |
 | Google | BYOK | Gemini 模型 |
@@ -179,7 +179,7 @@ npm run dev:all
 <details>
 <summary>需要 OpenYak 账号吗？</summary>
 
-不需要。OpenYak 不再需要 OpenYak 账号、登录、账单资料或充值流程。你可以使用免费模型、自带 provider key、连接 ChatGPT 订阅，或使用本地模型。
+不需要。OpenYak 不再需要 OpenYak 账号、登录、账单资料或充值流程。OpenYak 也不再提供内置模型提供商账号；OpenRouter 和其他云端提供商都需要使用你自己的 API Key。你可以连接 ChatGPT 订阅，或根据需要使用本地模型。
 </details>
 
 <details>
