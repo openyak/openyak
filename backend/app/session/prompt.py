@@ -28,6 +28,7 @@ from app.agent.permission import (
 from app.models.message import Message, Part
 from app.provider.registry import ProviderRegistry
 from app.schemas.chat import PromptRequest
+from app.session.context_window import ContextWindow
 from app.session.manager import (
     create_message,
     create_part,
@@ -64,6 +65,41 @@ logger = logging.getLogger(__name__)
 
 def _cfg():
     return get_settings()
+
+
+def _estimate_message_tokens(messages: list[dict[str, Any]], _scheduled_tools: Any = None) -> int:
+    """Cheap token estimate over a message list.
+
+    Used as the ``token_counter`` callback for :class:`ContextWindow`;
+    only feeds ``FitOutcome.tokens_saved`` for telemetry, never gates
+    control flow.
+    """
+    from app.utils.token import estimate_tokens
+
+    total = 0
+    for m in messages:
+        content = m.get("content", "")
+        if isinstance(content, str):
+            total += estimate_tokens(content)
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict):
+                    total += estimate_tokens(
+                        str(part.get("text", "") or part.get("content", "") or "")
+                    )
+    return total
+
+
+async def _unreachable_summarize() -> dict[str, Any] | None:
+    """Sentinel passed to ``ContextWindow.fit`` on the preflight path.
+
+    Layers 3+4 only fire when ``recovery_needed=True``; preflight
+    leaves the default ``False``. If this ever runs, the gating
+    contract has drifted and the assertion surfaces immediately.
+    """
+    raise AssertionError(
+        "preflight ContextWindow.fit must not invoke on_summarize"
+    )
 
 
 class SessionPrompt:
@@ -151,7 +187,10 @@ class SessionPrompt:
         self.current_todos: list[dict[str, Any]] = []
         self.continuation_attempts: int = 0
         self._length_continuations: int = 0
-        self._context_collapse_exhausted: bool = False
+        # Per-Session compaction funnel (microcompact → tool-budget →
+        # collapse → summarize). Holds the exhaustion flag and the
+        # consecutive-failure counter that used to live on this class.
+        self.context_window: ContextWindow = ContextWindow()
         self.finish_reason: str = "stop"
         self.assistant_msg_id: str | None = None
 
@@ -390,13 +429,9 @@ class SessionPrompt:
             get_effective_context_window as _get_effective_context_window,
             sanitize_llm_messages_for_request as _sanitize_llm_messages_for_request,
         )
-        from app.session.compaction import run_compaction, should_compact
         from app.session.manager import create_message as _create_message, get_message_history_for_llm
-        from app.session.microcompact import microcompact_messages, apply_tool_result_budget, context_collapse
 
         _hard_cap_final_done = False
-        _consecutive_compact_failures = 0
-        _MAX_CONSECUTIVE_COMPACT_FAILURES = 3
         _has_any_text = False  # Track if any step produced visible text
         _empty_response_nudged = False  # Prevent infinite nudge loop
 
@@ -461,11 +496,19 @@ class SessionPrompt:
                 ),
             )
 
-            # --- Zero-cost context compression (inspired by Claude Code) ---
-            # Layer 1: Replace old tool outputs from specific tools with stubs
-            llm_messages = microcompact_messages(llm_messages)
-            # Layer 2: Enforce aggregate tool result size budget
-            llm_messages = apply_tool_result_budget(llm_messages)
+            # --- Zero-cost preflight via ContextWindow (layers 1+2) ---
+            # microcompact + tool-result budget. Recovery layers (3+4)
+            # only fire when the LLM signals overflow; see the
+            # `result == "compact"` branch below.
+            preflight = await self.context_window.fit(
+                llm_messages,
+                token_counter=_estimate_message_tokens,
+                # on_summarize is unused on the preflight path but the
+                # interface requires it for type-completeness; pass a
+                # no-op that asserts it isn't reached.
+                on_summarize=_unreachable_summarize,
+            )
+            llm_messages = preflight.messages
 
             # Run middleware before_llm_call hook
             from app.session.middleware import MiddlewareContext
@@ -527,96 +570,50 @@ class SessionPrompt:
 
             # Handle processor result
             if result == "compact":
-                # --- Layer 3: Try context collapse first (zero LLM cost) ---
-                # Drop the oldest 1/3 of messages. If that frees enough
-                # tokens, skip the expensive LLM-based full compaction.
-                _skip_full_compaction = False
-                if not self._context_collapse_exhausted:
-                    try:
-                        async with self.session_factory() as db:
-                            async with db.begin():
-                                _collapse_msgs = await get_message_history_for_llm(
-                                    db, self.job.session_id
-                                )
-                        collapsed, tokens_saved = context_collapse(_collapse_msgs)
-                        if tokens_saved > 0:
-                            # Persist the collapsed messages by deleting old ones
-                            await _persist_context_collapse(
-                                self.job.session_id,
-                                collapsed,
-                                session_factory=self.session_factory,
-                            )
-                            logger.info(
-                                "Context collapse freed ~%d tokens, "
-                                "skipping full compaction",
-                                tokens_saved,
-                            )
-                            _skip_full_compaction = True
-                        else:
-                            # Nothing to collapse — mark exhausted so we
-                            # go straight to full compaction next time
-                            self._context_collapse_exhausted = True
-                    except Exception:
-                        logger.debug(
-                            "Context collapse failed, falling back to full compaction",
-                            exc_info=True,
+                # Recovery via ContextWindow (layers 3+4): collapse if
+                # not exhausted, else summarize. Persistence for the
+                # collapse path is the caller's job; summarize persists
+                # internally inside ``_run_full_compaction``.
+                async with self.session_factory() as db:
+                    async with db.begin():
+                        _recovery_msgs = await get_message_history_for_llm(
+                            db, self.job.session_id
                         )
-                        self._context_collapse_exhausted = True
+                outcome = await self.context_window.fit(
+                    _recovery_msgs,
+                    token_counter=_estimate_message_tokens,
+                    on_summarize=self._run_full_compaction,
+                    recovery_needed=True,
+                )
 
-                if not _skip_full_compaction:
-                    # --- Layer 4: Full LLM-based compaction ---
-                    # Queue workspace memory BEFORE compaction so important info
-                    # from messages about to be pruned is preserved in memory.
-                    if self.workspace and self.workspace != ".":
-                        try:
-                            from app.memory.workspace_memory_queue import get_workspace_memory_queue
-
-                            _ws_mq = get_workspace_memory_queue()
-                            if _ws_mq is not None:
-                                async with self.session_factory() as db:
-                                    async with db.begin():
-                                        _pre_msgs = await get_message_history_for_llm(
-                                            db, self.job.session_id
-                                        )
-                                _ws_mq.add(
-                                    self.job.session_id,
-                                    self.workspace,
-                                    _pre_msgs,
-                                    model_id=self.model_id,
-                                )
-                        except Exception:
-                            logger.debug(
-                                "Pre-compaction workspace memory queue failed",
-                                exc_info=True,
-                            )
-
-                    try:
-                        await run_compaction(
-                            self.job.session_id,
-                            job=self.job,
-                            session_factory=self.session_factory,
-                            provider_registry=self.provider_registry,
-                            agent_registry=self.agent_registry,
-                            model_id=self.model_id,
-                        )
-                        _consecutive_compact_failures = 0
-                    except Exception:
-                        _consecutive_compact_failures += 1
-                        logger.warning(
-                            "Compaction failed (%d/%d) for session %s",
-                            _consecutive_compact_failures,
-                            _MAX_CONSECUTIVE_COMPACT_FAILURES,
-                            self.job.session_id,
-                            exc_info=True,
-                        )
-                        if _consecutive_compact_failures >= _MAX_CONSECUTIVE_COMPACT_FAILURES:
-                            self.job.publish(SSEEvent(AGENT_ERROR, {
-                                "error_message": (
-                                    "Context compression failed repeatedly. "
-                                    "Please start a new conversation."
-                                ),
-                            }))
-                            break
+                if outcome.strategy == "collapse":
+                    await _persist_context_collapse(
+                        self.job.session_id,
+                        outcome.messages,
+                        session_factory=self.session_factory,
+                    )
+                    logger.info(
+                        "Context collapse freed ~%d tokens, skipping full compaction",
+                        outcome.tokens_saved,
+                    )
+                elif outcome.strategy == "summarize_failed":
+                    logger.warning(
+                        "Compaction failed for session %s (consecutive failures: %d)",
+                        self.job.session_id,
+                        self.context_window.consecutive_compact_failures,
+                    )
+                elif outcome.strategy == "circuit_open":
+                    logger.warning(
+                        "Compaction circuit open for session %s — surfacing error",
+                        self.job.session_id,
+                    )
+                    self.job.publish(SSEEvent(AGENT_ERROR, {
+                        "error_message": (
+                            "Context compression failed repeatedly. "
+                            "Please start a new conversation."
+                        ),
+                    }))
+                    break
 
                 # Todo context recovery: after compaction the LLM may have
                 # lost awareness of outstanding todos (the original todo tool
@@ -793,6 +790,53 @@ class SessionPrompt:
                 break  # No tool calls, no incomplete todos → done
 
             # result == "continue": has tool calls, loop again with tool results
+
+    async def _run_full_compaction(self) -> dict[str, Any] | None:
+        """Layer 4 of the compaction funnel: WorkspaceMemory queue +
+        full LLM compaction.
+
+        Used as the ``on_summarize`` callback to
+        :meth:`ContextWindow.fit`. Persists internally; the returned
+        dict is opaque metadata that surfaces in :class:`FitOutcome`
+        (currently empty — telemetry hook for future use).
+        """
+        from app.session.compaction import run_compaction
+        from app.session.manager import get_message_history_for_llm
+
+        # Queue workspace memory BEFORE compaction so important info
+        # from messages about to be pruned is preserved in memory.
+        if self.workspace and self.workspace != ".":
+            try:
+                from app.memory.workspace_memory_queue import get_workspace_memory_queue
+
+                _ws_mq = get_workspace_memory_queue()
+                if _ws_mq is not None:
+                    async with self.session_factory() as db:
+                        async with db.begin():
+                            _pre_msgs = await get_message_history_for_llm(
+                                db, self.job.session_id
+                            )
+                    _ws_mq.add(
+                        self.job.session_id,
+                        self.workspace,
+                        _pre_msgs,
+                        model_id=self.model_id,
+                    )
+            except Exception:
+                logger.debug(
+                    "Pre-compaction workspace memory queue failed",
+                    exc_info=True,
+                )
+
+        await run_compaction(
+            self.job.session_id,
+            job=self.job,
+            session_factory=self.session_factory,
+            provider_registry=self.provider_registry,
+            agent_registry=self.agent_registry,
+            model_id=self.model_id,
+        )
+        return None
 
     # ------------------------------------------------------------------
     # Post-loop: cleanup, persist cost, DONE, auto-title
