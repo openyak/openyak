@@ -35,8 +35,8 @@ export function OnboardingScreen() {
             Welcome to OpenYak
           </h1>
           <p className="mt-2 max-w-xs text-sm text-[var(--text-secondary)]">
-            Your local AI workbench. Connect your own provider, local endpoint,
-            Rapid-MLX, Ollama, or ChatGPT subscription when you are ready.
+            Your local-first agent workbench. Start with a local endpoint,
+            Rapid-MLX, or Ollama, then add a BYOK provider when you want one.
           </p>
 
           <div className="mt-10 w-full space-y-3">

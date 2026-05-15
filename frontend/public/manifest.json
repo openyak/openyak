@@ -1,7 +1,7 @@
 {
   "name": "OpenYak Remote",
   "short_name": "OpenYak",
-  "description": "Remote control for your desktop OpenYak AI assistant",
+  "description": "Remote control for your local-first OpenYak desktop agent",
   "start_url": "/m",
   "display": "standalone",
   "background_color": "#09090b",

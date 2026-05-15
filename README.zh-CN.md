@@ -14,23 +14,24 @@
   <img src="docs/readme/openyak-workflow-artifacts.gif" width="900" alt="OpenYak 把多份办公文件整理成结构化回答和可复用 artifact" />
 </p>
 
-<h3 align="center">把文件、对话和混乱办公上下文，变成真正可交付的本地 AI 工作台。</h3>
+<h3 align="center">面向文件、工具、长线程和真实桌面工作的本地优先 AI Agent。</h3>
 
 <p align="center">
-  读取本地文件、对比表格、审阅 deck、综合 PDF、生成 artifact、延续长对话，并把工作留在你的设备上。
+  在自己的电脑上运行 agent，处理本地文件，优先使用本地模型，只在你主动选择时连接云端模型提供商。
 </p>
 
 ---
 
 ## 为什么选择 OpenYak
 
-OpenYak 不是只用来问一句话的聊天框，而是为真实办公动线设计的本地工作台。
+OpenYak 不是另一个必须登录的云端工作区，而是一个运行在你电脑上的本地 AI agent。
 
+- **不需要 OpenYak 账号。** 安装应用，选择本地模型或自带 provider key，就可以开始工作；没有登录、账单、席位或充值流程。
+- **本地优先的 agent runtime。** 文件、对话、记忆、生成的 artifact、工具权限和工作流状态都留在你的设备上。
 - **直接处理真实文件。** 上传 DOCX、XLSX、PPTX、PDF、CSV 和本地项目上下文，生成 brief、表格、follow-up、计划和可复用 artifact。
 - **同一个线程走完整流程。** 先分析文件，再继续生成 RACI、follow-up 邮件、会议 agenda，不需要反复重讲背景。
-- **自由选择模型。** 自带 API Key、接入 ChatGPT 订阅，或在 Apple Silicon 上通过 [Rapid-MLX](https://github.com/raullenchai/Rapid-MLX)、在各平台通过 [Ollama](https://ollama.com) 本地运行。
-- **默认本地优先。** 文件、对话、记忆和生成结果都存储在本机。使用云端模型时，只会直接请求你选择的模型提供商。
-- **可以从手机访问桌面 AI。** 开启远程访问后扫码连接，通过安全 tunnel 把任务发给桌面端执行。
+- **自由选择模型边界。** 通过 [Rapid-MLX](https://github.com/raullenchai/Rapid-MLX) 或 [Ollama](https://ollama.com) 本地运行模型；需要云端模型时，再使用自己的 OpenRouter、OpenAI、Anthropic、Google 等 provider key。
+- **从其他设备访问桌面 agent。** 开启远程访问后扫码连接，通过安全 tunnel 把任务发给你的电脑执行。
 
 ## 它解决什么问题
 
@@ -100,7 +101,7 @@ OpenYak 可以在同一个线程里综合多份文件，并在右侧 artifact pa
 ## 快速开始
 
 1. **安装 OpenYak。** 下载适合你系统的安装包。
-2. **连接模型。** 使用免费云端模型、自带 API Key、接入 ChatGPT 订阅，或连接 Rapid-MLX / 本地 Ollama。
+2. **选择推理运行在哪里。** 用 Rapid-MLX / Ollama 在本地或离线运行；需要托管模型时，再连接 BYOK 云端 provider。
 3. **新建会话并上传真实文件。**
 4. **直接说你要的交付物。** 比如 brief、行动计划、RACI、邮件、表格或 artifact。
 5. **检查结果并继续追问。** 在同一个线程里继续从分析推进到执行。
@@ -113,9 +114,15 @@ OpenYak 可以在同一个线程里综合多份文件，并在右侧 artifact pa
 最后写一封可以直接发给团队的 follow-up 邮件。
 ```
 
-## 支持的模型提供商
+## 模型选项
 
-### 云端与订阅
+### 本地优先
+
+- **Rapid-MLX：** Apple Silicon macOS 用户可以在设置里启动、切换精选 MLX 模型。OpenYak 会连接 Rapid-MLX 在 `localhost` 暴露的 OpenAI-compatible API。
+- **Ollama：** 通过 [Ollama](https://ollama.com) 运行任意本地模型。OpenYak 会自动检测本地模型，也可以在无网络环境下工作。
+- **自定义本地 endpoint：** 如果你自己运行 OpenAI-compatible 模型服务，可以直接把 OpenYak 指向本地地址。
+
+### 可选云端 Provider
 
 | 提供商 | 接入方式 | 说明 |
 |--------|----------|------|
@@ -133,10 +140,7 @@ OpenYak 可以在同一个线程里综合多份文件，并在右侧 artifact pa
 | 智谱 | BYOK | 直连提供商密钥 |
 | ChatGPT | 订阅 | 在可用时使用现有 ChatGPT Plus、Pro、Team 或 Enterprise 方案 |
 
-### 本地模型
-
-- **Rapid-MLX：** Apple Silicon macOS 用户可以在设置里启动、切换精选 MLX 模型。OpenYak 会连接 Rapid-MLX 在 `localhost` 暴露的 OpenAI-compatible API。
-- **Ollama：** 通过 [Ollama](https://ollama.com) 运行任意本地模型。OpenYak 会自动检测本地模型，也可以在无网络环境下工作。
+云端和订阅路径都是可选项。OpenYak 不提供内置模型账号，也不代理模型流量；请求会从你的桌面端直接发往你配置的 provider。
 
 ## 核心能力
 
@@ -146,7 +150,7 @@ OpenYak 可以在同一个线程里综合多份文件，并在右侧 artifact pa
 - **长上下文任务：** 从分析到计划再到 follow-up，不需要重新开始。
 - **远程访问：** 通过二维码和 Cloudflare Tunnel 从手机连接桌面端。
 - **自动化任务：** 定时清理、报告、文件整理和重复工作流。
-- **隐私控制：** 本地存储、BYOK、自带订阅和本地模型支持。
+- **隐私控制：** 本地存储、无需 OpenYak 账号、BYOK provider、本地模型支持。
 
 ## 开发者
 
@@ -173,19 +177,19 @@ npm run dev:all
 <details>
 <summary>我的数据会离开本机吗？</summary>
 
-文件、对话、记忆和生成的 artifact 都存储在本机。使用云端模型时，prompt 和相关上下文会直接发送给你选择的模型提供商。你也可以使用 Rapid-MLX 或 Ollama 本地模型进行离线工作。
+文件、对话、记忆、生成的 artifact 和工作流状态都存储在本机。使用 Rapid-MLX、Ollama 或其他本地 endpoint 时，模型请求留在你的机器上。只有当你主动选择云端模型时，prompt 和相关上下文才会从桌面端直接发送给你配置的模型提供商。
 </details>
 
 <details>
 <summary>需要 OpenYak 账号吗？</summary>
 
-不需要。OpenYak 不再需要 OpenYak 账号、登录、账单资料或充值流程。OpenYak 也不再提供内置模型提供商账号；OpenRouter 和其他云端提供商都需要使用你自己的 API Key。你可以连接 ChatGPT 订阅，或根据需要使用本地模型。
+不需要。OpenYak 不需要账号、登录、账单资料、充值流程、团队工作区或托管 OpenYak 后端。使用云端 provider 时，你需要自己的 API Key 或已有订阅；不使用云端 provider 时，可以直接走本地模型。
 </details>
 
 <details>
 <summary>和 ChatGPT 或 Claude.ai 有什么区别？</summary>
 
-OpenYak 运行在你的桌面上，围绕本地文件、artifact、工具和连续工作流设计。网页版聊天助手很适合问答，OpenYak 更像一个可以处理文件和重复办公任务的本地工作台。
+OpenYak 运行在你的桌面上，围绕本地文件、artifact、工具、权限和连续工作流设计。网页版聊天助手很适合问答，OpenYak 更像一个能查看文件、使用工具、把长任务留在你电脑上的本地 agent 工作台。
 </details>
 
 <details>

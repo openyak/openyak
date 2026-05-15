@@ -1,7 +1,7 @@
 [package]
 name = "openyak-desktop"
 version = "1.1.10"
-description = "OpenYak — Your local AI assistant"
+description = "OpenYak — local-first AI agent for desktop work"
 license = "MIT"
 edition = "2021"
 

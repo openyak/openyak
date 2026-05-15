@@ -14,23 +14,24 @@
   <img src="docs/readme/openyak-workflow-artifacts.gif" width="900" alt="OpenYak turns uploaded office files into a structured answer and reusable artifact" />
 </p>
 
-<h3 align="center">A local AI workspace for turning files, chats, and messy office context into deliverables.</h3>
+<h3 align="center">A local-first AI agent for files, tools, long threads, and real desktop work.</h3>
 
 <p align="center">
-  Read local files, compare spreadsheets, review decks, synthesize PDFs, create artifacts, continue long threads, and keep the work on your machine.
+  Run an agent on your own computer, work with local files, use local models when you can, and choose cloud providers only when you want them.
 </p>
 
 ---
 
 ## Why OpenYak
 
-OpenYak is built for real work, not just one-off chat prompts.
+OpenYak is built for people who want an AI agent that lives on their machine instead of behind another hosted workspace account.
 
-- **Work from your actual files.** Upload DOCX, XLSX, PPTX, PDFs, CSVs, and local project context, then ask for briefs, tables, follow-ups, plans, and reusable artifacts.
+- **No OpenYak account.** Install the app, choose a local model or bring your own provider key, and start working without login, billing, seats, or recharge flows.
+- **Local-first agent runtime.** Files, conversations, memory, generated artifacts, tool permissions, and workflow state stay on your device.
+- **Work from your actual files.** Attach DOCX, XLSX, PPTX, PDFs, CSVs, and local project context, then ask for briefs, tables, follow-ups, plans, and reusable artifacts.
 - **Keep the workflow in one thread.** Start with analysis, continue into a RACI, ask for a follow-up email, and preserve context across long conversations.
-- **Choose your model path.** Bring your own API key, connect a ChatGPT subscription, or run local models through [Rapid-MLX](https://github.com/raullenchai/Rapid-MLX) on Apple Silicon or [Ollama](https://ollama.com).
-- **Stay local by default.** Files, conversations, memory, and generated artifacts are stored on your device. Cloud model calls go directly to the model provider you choose.
-- **Use it from another device.** Remote access lets you scan a QR code and send tasks to your desktop through a secure tunnel.
+- **Choose your model boundary.** Run local models through [Rapid-MLX](https://github.com/raullenchai/Rapid-MLX) or [Ollama](https://ollama.com), or opt into direct BYOK calls to OpenRouter, OpenAI, Anthropic, Google, and other providers.
+- **Use your desktop agent from another device.** Remote access lets you scan a QR code and send tasks to your computer through a secure tunnel.
 
 ## What It Feels Like
 
@@ -100,7 +101,7 @@ Real office work rarely fits in one message. OpenYak is designed for follow-ups,
 ## Get Started
 
 1. **Install OpenYak** for your platform.
-2. **Connect a model** using free cloud models, your own API key, ChatGPT subscription, Rapid-MLX, or local Ollama.
+2. **Choose where inference runs:** local Rapid-MLX/Ollama for offline work, or a BYOK cloud provider when you want hosted models.
 3. **Start a new conversation** and attach a real file.
 4. **Ask for a deliverable**, not just a summary: brief, action plan, RACI, email, table, or artifact.
 5. **Review the result** in the chat and artifact panel, then continue in the same thread.
@@ -113,9 +114,15 @@ Start with three key takeaways, then list risks, owners, and next actions.
 Finally, write a follow-up email I can send to the team directly.
 ```
 
-## Supported Providers
+## Model Options
 
-### Cloud and Subscription
+### Local First
+
+- **Rapid-MLX:** Apple Silicon macOS users can start and switch curated MLX models from Settings. OpenYak connects to Rapid-MLX's OpenAI-compatible API on `localhost`.
+- **Ollama:** Run any model available through [Ollama](https://ollama.com). Local models are auto-detected and can be used without an internet connection.
+- **Custom local endpoints:** Point OpenYak at a local OpenAI-compatible server when you run your own model stack.
+
+### Optional Cloud Providers
 
 | Provider | Access | Notes |
 |----------|--------|-------|
@@ -133,10 +140,7 @@ Finally, write a follow-up email I can send to the team directly.
 | Zhipu | BYOK | Direct provider key |
 | ChatGPT | Subscription | Use an existing ChatGPT Plus, Pro, Team, or Enterprise plan when available |
 
-### Local
-
-- **Rapid-MLX:** Apple Silicon macOS users can start and switch curated MLX models from Settings. OpenYak connects to Rapid-MLX's OpenAI-compatible API on `localhost`.
-- **Ollama:** Run any model available through [Ollama](https://ollama.com). Local models are auto-detected and can be used without an internet connection.
+Cloud and subscription paths are optional. OpenYak does not provide hosted model accounts and does not proxy model traffic; requests go directly from your desktop to the provider you configure.
 
 ## Core Capabilities
 
@@ -146,7 +150,7 @@ Finally, write a follow-up email I can send to the team directly.
 - **Long-context work:** continue from analysis to planning to follow-up without starting over.
 - **Remote access:** connect from mobile through QR code and Cloudflare Tunnel.
 - **Automations:** schedule recurring cleanup, reporting, and file workflows.
-- **Privacy controls:** local storage, BYOK options, and local model support.
+- **Privacy controls:** local storage, no OpenYak account, BYOK provider access, and local model support.
 
 ## For Developers
 
@@ -173,19 +177,19 @@ This starts the backend on port `8000` and the frontend on port `3000`. For deep
 <details>
 <summary>Does my data leave my machine?</summary>
 
-Files, conversations, memory, and generated artifacts are stored locally. If you use a cloud model, the prompt and relevant context are sent directly to the model provider you selected. You can also use local Rapid-MLX or Ollama models for offline work.
+Files, conversations, memory, generated artifacts, and workflow state are stored locally. If you use Rapid-MLX, Ollama, or another local endpoint, model requests stay on your machine. If you choose a cloud model, the prompt and relevant context are sent directly from your desktop to the model provider you selected.
 </details>
 
 <details>
 <summary>Do I need an OpenYak account?</summary>
 
-No. OpenYak does not require an OpenYak account, login, billing profile, or recharge flow. OpenYak also does not provide built-in model provider accounts; OpenRouter and other cloud providers require your own API key. You can connect a ChatGPT subscription or run local models depending on your setup.
+No. OpenYak does not require an OpenYak account, login, billing profile, recharge flow, team workspace, or hosted OpenYak backend. Cloud providers, when used, require your own API key or existing subscription.
 </details>
 
 <details>
 <summary>How is OpenYak different from ChatGPT or Claude.ai?</summary>
 
-OpenYak runs on your desktop and is designed around local files, artifacts, tools, and workflow continuity. Web chat products are great assistants; OpenYak is closer to a local workbench for files and repeatable office tasks.
+OpenYak runs on your desktop and is designed around local files, artifacts, tools, permissions, and workflow continuity. Web chat products are great assistants; OpenYak is closer to a local agent workbench that can inspect files, use tools, and keep long-running work tied to your machine.
 </details>
 
 <details>

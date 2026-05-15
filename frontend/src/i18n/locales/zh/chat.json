@@ -181,7 +181,7 @@
   "questionPreviewPlaceholder": "选择选项查看预览",
 
   "loadingModel": "正在加载模型到内存...",
-  "setupProvider": "请先配置 AI 服务商以开始对话",
-  "setupProviderDesc": "添加 API 密钥、连接本地端点、使用 Rapid-MLX 或 Ollama，或登录 ChatGPT 订阅。",
+  "setupProvider": "选择模型来源后开始对话",
+  "setupProviderDesc": "优先使用 Rapid-MLX、Ollama 或本地 endpoint；需要云端模型时，再添加自己的 provider key。",
   "configureSettings": "前往配置"
 }

@@ -22,11 +22,12 @@ Please include:
 
 ## How OpenYak Handles Your Data
 
-OpenYak is designed with local-first privacy:
+OpenYak is designed as a local-first desktop agent:
 
-- **Files, conversations, and memory** are stored on your device. Nothing is uploaded to any server.
-- **Cloud model usage** sends only your prompt text directly to the model provider's API (OpenAI, Anthropic, etc.). OpenYak does not proxy, log, or store these requests.
-- **Local model usage** (via Ollama) keeps everything on your machine. No network requests are made.
+- **No OpenYak account is required.** The app does not depend on an OpenYak login, billing profile, recharge flow, or hosted workspace backend.
+- **Files, conversations, memory, generated artifacts, and workflow state** are stored on your device.
+- **Local model usage** through Ollama, Rapid-MLX, or another local endpoint keeps model requests on your machine.
+- **Cloud model usage** is optional and sends prompt context directly from your desktop to the model provider you configured. OpenYak does not proxy, log, or store these requests.
 - **No telemetry, no analytics, no tracking.** OpenYak does not collect usage data.
 
 ## Supported Versions

@@ -94,7 +94,7 @@ export function SplashScreen() {
               OPENYAK
             </h1>
             <p className="mt-2 text-sm text-[var(--text-tertiary)]">
-              Your local AI assistant
+              Local-first desktop agent
             </p>
           </motion.div>
 
