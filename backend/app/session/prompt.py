@@ -379,26 +379,18 @@ class SessionPrompt:
     # Main agent while-loop
     # ------------------------------------------------------------------
 
+    # Compaction failure threshold (consecutive failures before the session bails).
+    _MAX_CONSECUTIVE_COMPACT_FAILURES = 3
+
     async def _loop(self) -> None:
         """Main agent while-loop: step → LLM → tools → repeat."""
         # Deferred import to avoid circular dependency (processor imports prompt via TYPE_CHECKING only)
-        from app.session.processor import (
-            SessionProcessor,
-            _delete_empty_assistant_messages,
-        )
-        from app.session.utils import (
-            get_effective_context_window as _get_effective_context_window,
-            sanitize_llm_messages_for_request as _sanitize_llm_messages_for_request,
-        )
-        from app.session.compaction import run_compaction, should_compact
-        from app.session.manager import create_message as _create_message, get_message_history_for_llm
-        from app.session.microcompact import microcompact_messages, apply_tool_result_budget, context_collapse
+        from app.session.processor import SessionProcessor
 
-        _hard_cap_final_done = False
-        _consecutive_compact_failures = 0
-        _MAX_CONSECUTIVE_COMPACT_FAILURES = 3
-        _has_any_text = False  # Track if any step produced visible text
-        _empty_response_nudged = False  # Prevent infinite nudge loop
+        self._hard_cap_final_done = False
+        self._consecutive_compact_failures = 0
+        self._has_any_text = False
+        self._empty_response_nudged = False
 
         while True:
             if self.job.abort_event.is_set():
@@ -407,96 +399,15 @@ class SessionPrompt:
             self.step += 1
 
             if self.step > _cfg().max_steps:
-                if _hard_cap_final_done:
-                    # Already did the forced final step — truly stop now
-                    logger.warning(
-                        "Hard step cap+1 reached for session %s, stopping",
-                        self.job.session_id,
-                    )
+                if await self._should_break_on_hard_cap():
                     break
-
-                # First time hitting the cap: inject a summary request and let
-                # one more LLM step execute so the agent can wrap up gracefully
-                _hard_cap_final_done = True
-                logger.warning(
-                    "Hard step cap (%d) reached for session %s, requesting final summary",
-                    _cfg().max_steps,
-                    self.job.session_id,
-                )
-                async with self.session_factory() as db:
-                    async with db.begin():
-                        cap_msg = await _create_message(
-                            db,
-                            session_id=self.job.session_id,
-                            data={"role": "user", "agent": self.agent.name, "system": True},
-                        )
-                        await create_part(
-                            db,
-                            message_id=cap_msg.id,
-                            session_id=self.job.session_id,
-                            data={
-                                "type": "text",
-                                "text": (
-                                    "[System: You have reached the maximum number of steps. "
-                                    "Stop using tools and provide a final summary of what you "
-                                    "have accomplished and any remaining work.]"
-                                ),
-                            },
-                        )
-                # Fall through to normal step execution (do NOT break or continue)
+                # Fell through: execute one more step so the agent can wrap up.
 
             self.job.publish(SSEEvent(STEP_START, {"step": self.step, "session_id": self.job.session_id}))
 
-            # Load message history for this step
-            async with self.session_factory() as db:
-                async with db.begin():
-                    llm_messages = await get_message_history_for_llm(db, self.job.session_id)
-            llm_messages = _sanitize_llm_messages_for_request(
-                llm_messages,
-                session_id=self.job.session_id,
-                model_max_context=(
-                    _get_effective_context_window(self.model_info)
-                    if self.model_info
-                    else None
-                ),
-            )
+            llm_messages, mw_ctx = await self._prepare_step_messages()
+            await self._create_assistant_message_shell()
 
-            # --- Zero-cost context compression (inspired by Claude Code) ---
-            # Layer 1: Replace old tool outputs from specific tools with stubs
-            llm_messages = microcompact_messages(llm_messages)
-            # Layer 2: Enforce aggregate tool result size budget
-            llm_messages = apply_tool_result_budget(llm_messages)
-
-            # Run middleware before_llm_call hook
-            from app.session.middleware import MiddlewareContext
-
-            mw_ctx = MiddlewareContext(
-                session_id=self.job.session_id,
-                step=self.step,
-                job=self.job,
-                model_id=self.model_id,
-                agent_name=self.agent.name if self.agent else None,
-            )
-            llm_messages = await self.middleware_chain.run_before_llm_call(
-                llm_messages, mw_ctx,
-            )
-
-            # Create assistant message shell
-            async with self.session_factory() as db:
-                async with db.begin():
-                    assistant_msg = await _create_message(
-                        db,
-                        session_id=self.job.session_id,
-                        data={
-                            "role": "assistant",
-                            "agent": self.agent.name,
-                            "model_id": self.model_id,
-                            "provider_id": self.provider.id,
-                        },
-                    )
-            self.assistant_msg_id = assistant_msg.id
-
-            # Execute one LLM step — processor handles streaming + tool dispatch
             processor: SessionProcessor = SessionProcessor(
                 session_prompt=self,
                 llm_messages=llm_messages,
@@ -505,294 +416,368 @@ class SessionPrompt:
             )
             result = await processor.process()
 
-            # Accumulate cost and tokens from this step
-            if processor.has_text:
-                _has_any_text = True
-            self.total_cost += processor.step_cost
-            self.finish_reason = processor.finish_reason
-            # Reset length continuation counter when model finishes normally
-            if self.finish_reason != "length":
-                self._length_continuations = 0
-            if processor.usage_data:
-                for k in self.total_tokens_accumulated:
-                    self.total_tokens_accumulated[k] += processor.usage_data.get(k, 0)
-                self.latest_tokens_snapshot = {
-                    "input": processor.usage_data.get("input", 0),
-                    "output": processor.usage_data.get("output", 0),
-                    "reasoning": processor.usage_data.get("reasoning", 0),
-                    "cache_read": processor.usage_data.get("cache_read", 0),
-                    "cache_write": processor.usage_data.get("cache_write", 0),
-                    "total": processor.usage_data.get("total", 0),
-                }
+            self._accumulate_step_metrics(processor)
 
-            # Handle processor result
             if result == "compact":
-                # --- Layer 3: Try context collapse first (zero LLM cost) ---
-                # Drop the oldest 1/3 of messages. If that frees enough
-                # tokens, skip the expensive LLM-based full compaction.
-                _skip_full_compaction = False
-                if not self._context_collapse_exhausted:
-                    try:
-                        async with self.session_factory() as db:
-                            async with db.begin():
-                                _collapse_msgs = await get_message_history_for_llm(
-                                    db, self.job.session_id
-                                )
-                        collapsed, tokens_saved = context_collapse(_collapse_msgs)
-                        if tokens_saved > 0:
-                            # Persist the collapsed messages by deleting old ones
-                            await _persist_context_collapse(
-                                self.job.session_id,
-                                collapsed,
-                                session_factory=self.session_factory,
-                            )
-                            logger.info(
-                                "Context collapse freed ~%d tokens, "
-                                "skipping full compaction",
-                                tokens_saved,
-                            )
-                            _skip_full_compaction = True
-                        else:
-                            # Nothing to collapse — mark exhausted so we
-                            # go straight to full compaction next time
-                            self._context_collapse_exhausted = True
-                    except Exception:
-                        logger.debug(
-                            "Context collapse failed, falling back to full compaction",
-                            exc_info=True,
-                        )
-                        self._context_collapse_exhausted = True
-
-                if not _skip_full_compaction:
-                    # --- Layer 4: Full LLM-based compaction ---
-                    # Queue workspace memory BEFORE compaction so important info
-                    # from messages about to be pruned is preserved in memory.
-                    if self.workspace and self.workspace != ".":
-                        try:
-                            from app.memory.workspace_memory_queue import get_workspace_memory_queue
-
-                            _ws_mq = get_workspace_memory_queue()
-                            if _ws_mq is not None:
-                                async with self.session_factory() as db:
-                                    async with db.begin():
-                                        _pre_msgs = await get_message_history_for_llm(
-                                            db, self.job.session_id
-                                        )
-                                _ws_mq.add(
-                                    self.job.session_id,
-                                    self.workspace,
-                                    _pre_msgs,
-                                    model_id=self.model_id,
-                                )
-                        except Exception:
-                            logger.debug(
-                                "Pre-compaction workspace memory queue failed",
-                                exc_info=True,
-                            )
-
-                    try:
-                        await run_compaction(
-                            self.job.session_id,
-                            job=self.job,
-                            session_factory=self.session_factory,
-                            provider_registry=self.provider_registry,
-                            agent_registry=self.agent_registry,
-                            model_id=self.model_id,
-                        )
-                        _consecutive_compact_failures = 0
-                    except Exception:
-                        _consecutive_compact_failures += 1
-                        logger.warning(
-                            "Compaction failed (%d/%d) for session %s",
-                            _consecutive_compact_failures,
-                            _MAX_CONSECUTIVE_COMPACT_FAILURES,
-                            self.job.session_id,
-                            exc_info=True,
-                        )
-                        if _consecutive_compact_failures >= _MAX_CONSECUTIVE_COMPACT_FAILURES:
-                            self.job.publish(SSEEvent(AGENT_ERROR, {
-                                "error_message": (
-                                    "Context compression failed repeatedly. "
-                                    "Please start a new conversation."
-                                ),
-                            }))
-                            break
-
-                # Todo context recovery: after compaction the LLM may have
-                # lost awareness of outstanding todos (the original todo tool
-                # call got truncated). Re-inject a reminder so it can continue.
-                incomplete = [
-                    t for t in self.current_todos
-                    if t.get("status") in ("pending", "in_progress")
-                ]
-                if incomplete:
-                    todo_summary = "\n".join(
-                        f"  - [{t.get('status', '?')}] {t.get('content', 'unnamed')}"
-                        for t in incomplete[:10]
-                    )
-                    logger.info(
-                        "Todo recovery after compaction: %d incomplete todo(s)",
-                        len(incomplete),
-                    )
-                    async with self.session_factory() as db:
-                        async with db.begin():
-                            recovery_msg = await _create_message(
-                                db,
-                                session_id=self.job.session_id,
-                                data={"role": "user", "agent": self.agent.name, "system": True},
-                            )
-                            await create_part(
-                                db,
-                                message_id=recovery_msg.id,
-                                session_id=self.job.session_id,
-                                data={
-                                    "type": "text",
-                                    "text": (
-                                        "[System: Context was compacted. Your active todo list:\n"
-                                        f"{todo_summary}\n"
-                                        "Continue working on these tasks. Call the todo tool to "
-                                        "update status as you complete each one.]"
-                                    ),
-                                },
-                            )
-
+                if await self._handle_compact_result():
+                    break
                 continue
 
             if result == "stop":
-                # Length continuation: model hit token limit, keep going
-                # Cap at 3 to prevent runaway token consumption.
-                if self.finish_reason == "length":
-                    self._length_continuations += 1
-                    if self._length_continuations <= 3:
-                        logger.info(
-                            "finish_reason=length at step %d (attempt %d/3), "
-                            "continuing for more output",
-                            self.step,
-                            self._length_continuations,
-                        )
-                        continue
-                    else:
-                        logger.warning(
-                            "finish_reason=length exceeded max continuations (3) "
-                            "at step %d, stopping to prevent runaway token usage",
-                            self.step,
-                        )
-                        # Fall through to stop
-
-                # First-turn tool nudge: if step 1 had 3+ attachments but no tool calls,
-                # nudge the model to use tools for analysis
-                if (
-                    self.step == 1
-                    and len(self.request.attachments) >= 3
-                    and not self.job.abort_event.is_set()
-                ):
-                    logger.info(
-                        "First-turn tool nudge: %d attachments with no tool calls",
-                        len(self.request.attachments),
-                    )
-                    async with self.session_factory() as db:
-                        async with db.begin():
-                            nudge_msg = await _create_message(
-                                db,
-                                session_id=self.job.session_id,
-                                data={"role": "user", "agent": self.agent.name, "system": True},
-                            )
-                            await create_part(
-                                db,
-                                message_id=nudge_msg.id,
-                                session_id=self.job.session_id,
-                                data={
-                                    "type": "text",
-                                    "text": (
-                                        "[System: You have access to tools. Please use them to "
-                                        "analyze the attached files and provide a thorough response.]"
-                                    ),
-                                },
-                            )
-                    continue
-
-                # Completion guard: nudge agent if it stopped with incomplete todos
-                incomplete = [
-                    t for t in self.current_todos
-                    if t.get("status") in ("pending", "in_progress")
-                ]
-                if incomplete and self.continuation_attempts < _cfg().max_continuation_attempts:
-                    self.continuation_attempts += 1
-                    incomplete_names = ", ".join(
-                        t.get("content", "unnamed") for t in incomplete[:5]
-                    )
-                    logger.info(
-                        "Completion guard: %d incomplete todo(s), attempt %d/%d",
-                        len(incomplete),
-                        self.continuation_attempts,
-                        _cfg().max_continuation_attempts,
-                    )
-                    async with self.session_factory() as db:
-                        async with db.begin():
-                            cont_msg = await _create_message(
-                                db,
-                                session_id=self.job.session_id,
-                                data={"role": "user", "agent": self.agent.name, "system": True},
-                            )
-                            await create_part(
-                                db,
-                                message_id=cont_msg.id,
-                                session_id=self.job.session_id,
-                                data={
-                                    "type": "text",
-                                    "text": (
-                                        f"[System: You have {len(incomplete)} incomplete todo(s): "
-                                        f"{incomplete_names}. "
-                                        f"Continue working on them. Call the todo tool to update "
-                                        f"status, then use tools to complete each task.]"
-                                    ),
-                                },
-                            )
-                    continue
-
-                # Empty response guard: if the entire generation produced no
-                # visible text, nudge the model once to provide a final summary.
-                # Without this, the user sees a blank response (all output was
-                # reasoning + tool calls hidden in the activity panel).
-                if (
-                    not _has_any_text
-                    and not _empty_response_nudged
-                    and not self.job.abort_event.is_set()
-                ):
-                    _empty_response_nudged = True
-                    logger.warning(
-                        "Agent produced no text output across %d step(s) for "
-                        "session %s, nudging for final summary",
-                        self.step,
-                        self.job.session_id,
-                    )
-                    async with self.session_factory() as db:
-                        async with db.begin():
-                            nudge_msg = await _create_message(
-                                db,
-                                session_id=self.job.session_id,
-                                data={"role": "user", "agent": self.agent.name, "system": True},
-                            )
-                            await create_part(
-                                db,
-                                message_id=nudge_msg.id,
-                                session_id=self.job.session_id,
-                                data={
-                                    "type": "text",
-                                    "text": (
-                                        "[System: You completed your work but produced no visible "
-                                        "response text. The user cannot see your reasoning or tool "
-                                        "activity. Please provide a clear, helpful summary of what "
-                                        "you found and accomplished. Do NOT use any tools — just "
-                                        "respond with text.]"
-                                    ),
-                                },
-                            )
-                    continue
-
-                break  # No tool calls, no incomplete todos → done
+                if await self._handle_stop_result():
+                    break
+                continue
 
             # result == "continue": has tool calls, loop again with tool results
+
+    # ------------------------------------------------------------------
+    # _loop step helpers
+    # ------------------------------------------------------------------
+
+    async def _should_break_on_hard_cap(self) -> bool:
+        """Handle ``step > max_steps``.
+
+        On the first hit, inject a final-summary request and let one more step
+        run so the agent can wrap up gracefully. Returns False (continue
+        executing this step). On the second hit, returns True (break the loop).
+        """
+        if self._hard_cap_final_done:
+            logger.warning(
+                "Hard step cap+1 reached for session %s, stopping",
+                self.job.session_id,
+            )
+            return True
+
+        self._hard_cap_final_done = True
+        logger.warning(
+            "Hard step cap (%d) reached for session %s, requesting final summary",
+            _cfg().max_steps,
+            self.job.session_id,
+        )
+        await self._inject_system_message(
+            "[System: You have reached the maximum number of steps. "
+            "Stop using tools and provide a final summary of what you "
+            "have accomplished and any remaining work.]"
+        )
+        return False
+
+    async def _prepare_step_messages(self) -> tuple[list[Any], Any]:
+        """Load history, sanitize, microcompact, and run the before_llm_call middleware."""
+        from app.session.utils import (
+            get_effective_context_window as _get_effective_context_window,
+            sanitize_llm_messages_for_request as _sanitize_llm_messages_for_request,
+        )
+        from app.session.manager import get_message_history_for_llm
+        from app.session.microcompact import microcompact_messages, apply_tool_result_budget
+        from app.session.middleware import MiddlewareContext
+
+        async with self.session_factory() as db:
+            async with db.begin():
+                llm_messages = await get_message_history_for_llm(db, self.job.session_id)
+        llm_messages = _sanitize_llm_messages_for_request(
+            llm_messages,
+            session_id=self.job.session_id,
+            model_max_context=(
+                _get_effective_context_window(self.model_info)
+                if self.model_info
+                else None
+            ),
+        )
+
+        # --- Zero-cost context compression (inspired by Claude Code) ---
+        # Layer 1: Replace old tool outputs from specific tools with stubs
+        llm_messages = microcompact_messages(llm_messages)
+        # Layer 2: Enforce aggregate tool result size budget
+        llm_messages = apply_tool_result_budget(llm_messages)
+
+        mw_ctx = MiddlewareContext(
+            session_id=self.job.session_id,
+            step=self.step,
+            job=self.job,
+            model_id=self.model_id,
+            agent_name=self.agent.name if self.agent else None,
+        )
+        llm_messages = await self.middleware_chain.run_before_llm_call(
+            llm_messages, mw_ctx,
+        )
+        return llm_messages, mw_ctx
+
+    async def _create_assistant_message_shell(self) -> None:
+        """Create an empty assistant message that the processor fills with parts."""
+        from app.session.manager import create_message as _create_message
+
+        async with self.session_factory() as db:
+            async with db.begin():
+                assistant_msg = await _create_message(
+                    db,
+                    session_id=self.job.session_id,
+                    data={
+                        "role": "assistant",
+                        "agent": self.agent.name,
+                        "model_id": self.model_id,
+                        "provider_id": self.provider.id,
+                    },
+                )
+        self.assistant_msg_id = assistant_msg.id
+
+    def _accumulate_step_metrics(self, processor: Any) -> None:
+        """Roll a finished processor's per-step cost/tokens/finish_reason into cross-step totals."""
+        if processor.has_text:
+            self._has_any_text = True
+        self.total_cost += processor.step_cost
+        self.finish_reason = processor.finish_reason
+        # Reset length continuation counter when model finishes normally
+        if self.finish_reason != "length":
+            self._length_continuations = 0
+        if processor.usage_data:
+            for k in self.total_tokens_accumulated:
+                self.total_tokens_accumulated[k] += processor.usage_data.get(k, 0)
+            self.latest_tokens_snapshot = {
+                "input": processor.usage_data.get("input", 0),
+                "output": processor.usage_data.get("output", 0),
+                "reasoning": processor.usage_data.get("reasoning", 0),
+                "cache_read": processor.usage_data.get("cache_read", 0),
+                "cache_write": processor.usage_data.get("cache_write", 0),
+                "total": processor.usage_data.get("total", 0),
+            }
+
+    async def _handle_compact_result(self) -> bool:
+        """Handle ``result == 'compact'``.
+
+        Tries the zero-cost context collapse first; falls back to LLM-based
+        compaction if that frees nothing or is exhausted. Returns True if the
+        outer loop should break (compaction failed permanently).
+        """
+        from app.session.compaction import run_compaction
+        from app.session.manager import get_message_history_for_llm
+        from app.session.microcompact import context_collapse
+
+        # --- Layer 3: Try context collapse first (zero LLM cost) ---
+        # Drop the oldest 1/3 of messages. If that frees enough tokens,
+        # skip the expensive LLM-based full compaction.
+        skip_full_compaction = False
+        if not self._context_collapse_exhausted:
+            try:
+                async with self.session_factory() as db:
+                    async with db.begin():
+                        collapse_msgs = await get_message_history_for_llm(
+                            db, self.job.session_id
+                        )
+                collapsed, tokens_saved = context_collapse(collapse_msgs)
+                if tokens_saved > 0:
+                    await _persist_context_collapse(
+                        self.job.session_id,
+                        collapsed,
+                        session_factory=self.session_factory,
+                    )
+                    logger.info(
+                        "Context collapse freed ~%d tokens, "
+                        "skipping full compaction",
+                        tokens_saved,
+                    )
+                    skip_full_compaction = True
+                else:
+                    # Nothing to collapse — mark exhausted so we go straight to
+                    # full compaction next time.
+                    self._context_collapse_exhausted = True
+            except Exception:
+                logger.debug(
+                    "Context collapse failed, falling back to full compaction",
+                    exc_info=True,
+                )
+                self._context_collapse_exhausted = True
+
+        if not skip_full_compaction:
+            # --- Layer 4: Full LLM-based compaction ---
+            # Queue workspace memory BEFORE compaction so important info from
+            # messages about to be pruned is preserved in memory.
+            if self.workspace and self.workspace != ".":
+                try:
+                    from app.memory.workspace_memory_queue import get_workspace_memory_queue
+
+                    ws_mq = get_workspace_memory_queue()
+                    if ws_mq is not None:
+                        async with self.session_factory() as db:
+                            async with db.begin():
+                                pre_msgs = await get_message_history_for_llm(
+                                    db, self.job.session_id
+                                )
+                        ws_mq.add(
+                            self.job.session_id,
+                            self.workspace,
+                            pre_msgs,
+                            model_id=self.model_id,
+                        )
+                except Exception:
+                    logger.debug(
+                        "Pre-compaction workspace memory queue failed",
+                        exc_info=True,
+                    )
+
+            try:
+                await run_compaction(
+                    self.job.session_id,
+                    job=self.job,
+                    session_factory=self.session_factory,
+                    provider_registry=self.provider_registry,
+                    agent_registry=self.agent_registry,
+                    model_id=self.model_id,
+                )
+                self._consecutive_compact_failures = 0
+            except Exception:
+                self._consecutive_compact_failures += 1
+                logger.warning(
+                    "Compaction failed (%d/%d) for session %s",
+                    self._consecutive_compact_failures,
+                    self._MAX_CONSECUTIVE_COMPACT_FAILURES,
+                    self.job.session_id,
+                    exc_info=True,
+                )
+                if self._consecutive_compact_failures >= self._MAX_CONSECUTIVE_COMPACT_FAILURES:
+                    self.job.publish(SSEEvent(AGENT_ERROR, {
+                        "error_message": (
+                            "Context compression failed repeatedly. "
+                            "Please start a new conversation."
+                        ),
+                    }))
+                    return True
+
+        # Todo context recovery: after compaction the LLM may have lost
+        # awareness of outstanding todos (the original todo tool call got
+        # truncated). Re-inject a reminder so it can continue.
+        incomplete = [
+            t for t in self.current_todos
+            if t.get("status") in ("pending", "in_progress")
+        ]
+        if incomplete:
+            todo_summary = "\n".join(
+                f"  - [{t.get('status', '?')}] {t.get('content', 'unnamed')}"
+                for t in incomplete[:10]
+            )
+            logger.info(
+                "Todo recovery after compaction: %d incomplete todo(s)",
+                len(incomplete),
+            )
+            await self._inject_system_message(
+                "[System: Context was compacted. Your active todo list:\n"
+                f"{todo_summary}\n"
+                "Continue working on these tasks. Call the todo tool to "
+                "update status as you complete each one.]"
+            )
+        return False
+
+    async def _handle_stop_result(self) -> bool:
+        """Handle ``result == 'stop'``.
+
+        Evaluates four nudge guards in order — length continuation, first-turn
+        tool nudge, incomplete-todo continuation, empty-response nudge — and
+        injects a system message + continues the loop on the first match.
+        Returns True only when none fire (truly done).
+        """
+        # Length continuation: model hit token limit, keep going.
+        # Cap at 3 to prevent runaway token consumption.
+        if self.finish_reason == "length":
+            self._length_continuations += 1
+            if self._length_continuations <= 3:
+                logger.info(
+                    "finish_reason=length at step %d (attempt %d/3), "
+                    "continuing for more output",
+                    self.step,
+                    self._length_continuations,
+                )
+                return False
+            logger.warning(
+                "finish_reason=length exceeded max continuations (3) "
+                "at step %d, stopping to prevent runaway token usage",
+                self.step,
+            )
+            # Fall through to evaluate the remaining guards before truly stopping.
+
+        # First-turn tool nudge: if step 1 had 3+ attachments but no tool
+        # calls, nudge the model to use tools for analysis.
+        if (
+            self.step == 1
+            and len(self.request.attachments) >= 3
+            and not self.job.abort_event.is_set()
+        ):
+            logger.info(
+                "First-turn tool nudge: %d attachments with no tool calls",
+                len(self.request.attachments),
+            )
+            await self._inject_system_message(
+                "[System: You have access to tools. Please use them to "
+                "analyze the attached files and provide a thorough response.]"
+            )
+            return False
+
+        # Completion guard: nudge agent if it stopped with incomplete todos.
+        incomplete = [
+            t for t in self.current_todos
+            if t.get("status") in ("pending", "in_progress")
+        ]
+        if incomplete and self.continuation_attempts < _cfg().max_continuation_attempts:
+            self.continuation_attempts += 1
+            incomplete_names = ", ".join(
+                t.get("content", "unnamed") for t in incomplete[:5]
+            )
+            logger.info(
+                "Completion guard: %d incomplete todo(s), attempt %d/%d",
+                len(incomplete),
+                self.continuation_attempts,
+                _cfg().max_continuation_attempts,
+            )
+            await self._inject_system_message(
+                f"[System: You have {len(incomplete)} incomplete todo(s): "
+                f"{incomplete_names}. "
+                f"Continue working on them. Call the todo tool to update "
+                f"status, then use tools to complete each task.]"
+            )
+            return False
+
+        # Empty response guard: if the entire generation produced no visible
+        # text, nudge the model once to provide a final summary. Without this,
+        # the user sees a blank response (all output was reasoning + tool calls
+        # hidden in the activity panel).
+        if (
+            not self._has_any_text
+            and not self._empty_response_nudged
+            and not self.job.abort_event.is_set()
+        ):
+            self._empty_response_nudged = True
+            logger.warning(
+                "Agent produced no text output across %d step(s) for "
+                "session %s, nudging for final summary",
+                self.step,
+                self.job.session_id,
+            )
+            await self._inject_system_message(
+                "[System: You completed your work but produced no visible "
+                "response text. The user cannot see your reasoning or tool "
+                "activity. Please provide a clear, helpful summary of what "
+                "you found and accomplished. Do NOT use any tools — just "
+                "respond with text.]"
+            )
+            return False
+
+        return True  # No tool calls, no incomplete todos → done
+
+    async def _inject_system_message(self, text: str) -> None:
+        """Persist a synthetic system-as-user message visible to the agent on its next step."""
+        from app.session.manager import create_message as _create_message
+
+        async with self.session_factory() as db:
+            async with db.begin():
+                msg = await _create_message(
+                    db,
+                    session_id=self.job.session_id,
+                    data={"role": "user", "agent": self.agent.name, "system": True},
+                )
+                await create_part(
+                    db,
+                    message_id=msg.id,
+                    session_id=self.job.session_id,
+                    data={"type": "text", "text": text},
+                )
 
     # ------------------------------------------------------------------
     # Post-loop: cleanup, persist cost, DONE, auto-title
