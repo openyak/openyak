@@ -42,7 +42,6 @@ from app.session.manager import (
 )
 from app.session.retry import (
     MAX_RETRIES,
-    is_auth_error,
     is_context_overflow,
     is_retryable,
     max_retries_for_error,
