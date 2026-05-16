@@ -42,7 +42,6 @@ from app.session.manager import (
 )
 from app.session.retry import (
     MAX_RETRIES,
-    is_auth_error,
     is_context_overflow,
     is_retryable,
     max_retries_for_error,
@@ -420,56 +419,110 @@ class SessionProcessor:
           "stop"     — no tool calls; model finished this turn
           "compact"  — context overflow detected; run compaction then continue
         """
-        sp = self._sp
-        job = sp.job
-        session_factory = sp.session_factory
+        self._init_step_state()
+        await self._persist_step_start()
 
-        # --- Persist step-start part (mirrors OpenCode's StepStartPart) ---
-        async with session_factory() as db:
+        # Phase 1: stream from LLM (with retry); may early-return "stop".
+        early = await self._stream_llm_with_retry()
+        if early is not None:
+            return early
+
+        # Phase 2: non-retryable / retries-exhausted stream error → "compact" or "stop".
+        if self._stream_error is not None:
+            return await self._handle_stream_error()
+
+        # Phase 3: empty output after retries → continue the loop.
+        if await self._handle_empty_output_after_retries():
+            return "continue"
+
+        # Phase 4: persist text + reasoning parts.
+        await self._persist_text_and_reasoning()
+
+        # Phase 5: dispatch concurrent tool calls.
+        early = await self._dispatch_tool_calls()
+        if early is not None:
+            return early
+
+        # Phase 6: cost tracking.
+        self._compute_step_cost()
+
+        # If this step produced tool calls, the agent loop is not actually
+        # finished yet, even if the provider reported a generic "stop".
+        # Surface that as "tool_use" so the frontend keeps streaming UI alive
+        # until the follow-up step completes.
+        if self._has_tool_calls and self.finish_reason != "tool_use":
+            self.finish_reason = "tool_use"
+
+        # Phase 7: step finish (SSE + DB step-finish part).
+        await self._persist_step_finish()
+
+        # Phase 8: reactive compaction on usage-based overflow.
+        if self._check_context_overflow():
+            return "compact"
+
+        # Phase 9: middleware on_step_complete.
+        if self._mw_ctx is not None:
+            await self._sp.middleware_chain.run_on_step_complete(self._mw_ctx)
+
+        # Phase 10: determine continuation.
+        if not self._has_tool_calls:
+            return "stop"
+        return "continue"
+
+    # ------------------------------------------------------------------
+    # process() phases — initialization
+    # ------------------------------------------------------------------
+
+    def _init_step_state(self) -> None:
+        """Initialize per-step accumulator state shared across phases."""
+        from app.session.tool_executor import StreamingToolExecutor
+
+        self._accumulated_text: str = ""
+        self._accumulated_reasoning: str = ""
+        self._tool_calls_in_step: list[dict[str, Any]] = []
+        self._has_tool_calls: bool = False
+        self._native_search_ids: set[str] = set()
+        self._native_search_count: int = 0
+        self._ws_part_ids: dict[str, str] = {}  # web_search call_id → part_id
+        self._stream_error: Exception | None = None
+
+        # Streaming tool executor: starts concurrent-safe tools during streaming
+        self._streaming_executor = StreamingToolExecutor(self._sp.job.abort_event)
+        self._exec_metadata: dict[int, dict[str, Any]] = {}
+        self._exec_index: int = 0
+        self._exec_blocked: bool = False  # Set True if loop detection blocks
+
+    async def _persist_step_start(self) -> None:
+        """Persist the StepStart part (mirrors OpenCode's StepStartPart)."""
+        sp = self._sp
+        async with sp.session_factory() as db:
             async with db.begin():
                 await create_part(
                     db,
                     message_id=self._assistant_msg_id,
-                    session_id=job.session_id,
+                    session_id=sp.job.session_id,
                     data={"type": "step-start", "step": sp.step},
                 )
 
-        has_tool_calls = False
-        accumulated_text = ""
-        accumulated_reasoning = ""
-        tool_calls_in_step: list[dict[str, Any]] = []
-        native_search_ids: set[str] = set()
-        native_search_count: int = 0  # counts native web searches in this step
-        _ws_part_ids: dict[str, str] = {}  # web_search call_id → part_id
-        stream_error: Exception | None = None
+    # ------------------------------------------------------------------
+    # process() phases — LLM streaming with retry
+    # ------------------------------------------------------------------
 
-        # Streaming tool executor: starts concurrent-safe tools during streaming
-        from app.session.tool_executor import StreamingToolExecutor, ToolCallInfo
-        streaming_executor = StreamingToolExecutor(job.abort_event)
-        # Maps submission index → metadata for post-processing
-        _exec_metadata: dict[int, dict[str, Any]] = {}
-        _exec_index = 0
-        _exec_blocked = False  # Set True if loop detection blocks
+    async def _stream_llm_with_retry(self) -> Literal["stop"] | None:
+        """Stream from the LLM with retry. Mutates self._accumulated_*, self._stream_error.
 
-        # --- Stream from LLM with retry ---
+        Returns "stop" early only for fatal in-stream conditions (non-vision model
+        received images, or the stream chunk reported an explicit error).
+        """
+        sp = self._sp
+        job = sp.job
+
         for attempt in range(MAX_RETRIES + 1):
             if job.abort_event.is_set():
                 break
 
             try:
-                reasoning_extra = None
-                if sp.request.reasoning is False:
-                    reasoning_extra = {"reasoning": {"enabled": False}}
-
-                safe_max_tokens = _compute_safe_max_tokens(
-                    self._llm_messages,
-                    model_max_context=(
-                        _get_effective_context_window(sp.model_info) if sp.model_info else 8192
-                    ),
-                    model_max_output=(
-                        sp.model_info.capabilities.max_output if sp.model_info else None
-                    ),
-                )
+                reasoning_extra, safe_max_tokens, exclude_tools = await self._build_stream_args()
 
                 logger.info(
                     "Starting LLM stream for model=%s, messages=%d, max_tokens=%d",
@@ -478,76 +531,24 @@ class SessionProcessor:
                     safe_max_tokens,
                 )
 
-                _exclude_tools: set[str] | None = None
-                _sq_count, _sq_credits = await _search_quota.get_quota()
-                if not _sq_credits and _sq_count >= get_settings().daily_search_limit:
-                    _exclude_tools = {"web_search"}
-
-                # Use native web search for OpenAI subscription provider
-                if sp.provider.id == "openai-subscription":
-                    _exclude_tools = _exclude_tools or set()
-                    _exclude_tools.add("web_search")
-
                 # Notify frontend that the model may need loading (Ollama cold start)
                 if sp.provider.id == "ollama":
                     job.publish(SSEEvent(MODEL_LOADING, {"model": sp.model_id, "status": "loading"}))
 
-                _llm_msgs = self._llm_messages
-                if (
-                    sp.model_info
-                    and not sp.model_info.capabilities.vision
-                    and _llm_messages_have_image_content(_llm_msgs)
-                ):
-                    message = (
-                        "The selected model does not support images. "
-                        "Choose a vision model and try again."
-                    )
-                    logger.info(
-                        "Blocked image content for non-vision model=%s session=%s",
-                        sp.model_id,
-                        job.session_id,
-                    )
-                    job.publish(
-                        SSEEvent(
-                            AGENT_ERROR,
-                            {
-                                "error_type": "MODEL_DOES_NOT_SUPPORT_IMAGES",
-                                "error_message": message,
-                            },
-                        )
-                    )
-                    async with session_factory() as db:
-                        async with db.begin():
-                            await create_part(
-                                db,
-                                message_id=self._assistant_msg_id,
-                                session_id=job.session_id,
-                                data={"type": "text", "text": message},
-                            )
-                            await create_part(
-                                db,
-                                message_id=self._assistant_msg_id,
-                                session_id=job.session_id,
-                                data={
-                                    "type": "step-finish",
-                                    "reason": "error",
-                                    "tokens": {},
-                                    "cost": 0.0,
-                                },
-                            )
-                    self.finish_reason = "error"
-                    return "stop"
+                blocked = await self._check_vision_blocked()
+                if blocked is not None:
+                    return blocked
 
                 async for chunk in stream_llm(
                     sp.provider,
                     sp.model_id,
-                    _llm_msgs,
+                    self._llm_messages,
                     system_prompt=sp.system_prompt,
                     agent=sp.agent,
                     tool_registry=sp.tool_registry,
                     extra_body=reasoning_extra,
                     max_tokens=safe_max_tokens,
-                    exclude_tools=_exclude_tools,
+                    exclude_tools=exclude_tools,
                     discovered_tools=sp.discovered_tools,
                     response_format=sp.request.format,
                 ):
@@ -558,262 +559,29 @@ class SessionProcessor:
                     match chunk.type:
                         case "text-delta":
                             text = chunk.data.get("text", "")
-                            accumulated_text += text
-                            job.publish(
-                                SSEEvent(
-                                    TEXT_DELTA,
-                                    {
-                                        "session_id": job.session_id,
-                                        "message_id": self._assistant_msg_id,
-                                        "text": text,
-                                    },
-                                )
-                            )
+                            self._accumulated_text += text
+                            job.publish(SSEEvent(TEXT_DELTA, {
+                                "session_id": job.session_id,
+                                "message_id": self._assistant_msg_id,
+                                "text": text,
+                            }))
 
                         case "reasoning-delta":
                             text = chunk.data.get("text", "")
-                            accumulated_reasoning += text
+                            self._accumulated_reasoning += text
                             job.publish(SSEEvent(REASONING_DELTA, {"text": text}))
 
                         case "tool-call":
-                            has_tool_calls = True
-                            tool_calls_in_step.append(chunk.data)
-
-                            # --- Streaming tool execution: prepare & submit immediately ---
-                            if not _exec_blocked:
-                                _tc = chunk.data
-                                _tn = _tc.get("name", "")
-                                _ta = _tc.get("arguments", {})
-                                _ci = _tc.get("id", generate_ulid())
-                                _tn, _ta = _repair_tool_call_payload(_tn, _ta)
-
-                                # Loop detection
-                                _lr: LoopCheckResult = loop_detector.check(job.session_id, _tn, _ta)
-                                if _lr.action == "block":
-                                    job.publish(SSEEvent(AGENT_ERROR, {
-                                        "error_type": "loop_detected",
-                                        "error_message": _lr.message,
-                                        "tool": _tn,
-                                    }))
-                                    await _persist_tool_error(
-                                        session_factory, self._assistant_msg_id,
-                                        job.session_id, _tn, _ci, _ta,
-                                        _lr.message or "Loop detected — hard stop",
-                                    )
-                                    _exec_blocked = True
-                                    continue
-
-                                # Resolve tool
-                                _tool = sp.tool_registry.get(_tn)
-                                if _tool is None:
-                                    _tool = sp.tool_registry.get(_tn.lower())
-                                if _tool is None:
-                                    _tool = sp.tool_registry.get("invalid")
-                                    if _tool:
-                                        _ta = {"name": _tn}
-                                if _tool is None:
-                                    job.publish(SSEEvent(TOOL_ERROR, {"call_id": _ci, "error": f"Tool not found: {_tn}"}))
-                                    continue
-
-                                # Permission check
-                                _rp = "*"
-                                if _tool.id in _FILE_TOOLS:
-                                    _rp = _ta.get("file_path", "*")
-                                _action = evaluate(_tool.id, _rp, sp.merged_permissions)
-
-                                if _action == "deny":
-                                    job.publish(SSEEvent(TOOL_ERROR, {"call_id": _ci, "error": f"Permission denied for tool: {_tool.id}"}))
-                                    await _persist_tool_error(
-                                        session_factory, self._assistant_msg_id,
-                                        job.session_id, _tool.id, _ci, _ta, "Permission denied",
-                                    )
-                                    continue
-
-                                if _action == "ask":
-                                    if job.interactive:
-                                        _decision = await _ask_permission(
-                                            job,
-                                            call_id=_ci,
-                                            tool_name=_tool.id,
-                                            tool_args=_ta,
-                                            resource_pattern=_rp,
-                                        )
-                                        if _decision.get("remember"):
-                                            await _remember_permission_rule(
-                                                session_factory,
-                                                job.session_id,
-                                                sp,
-                                                permission=_tool.id,
-                                                pattern=_rp,
-                                                allow=bool(_decision.get("allowed")),
-                                            )
-                                        if not _decision.get("allowed"):
-                                            job.publish(SSEEvent(TOOL_ERROR, {"call_id": _ci, "error": f"User denied permission for: {_tool.id}"}))
-                                            await _persist_tool_error(
-                                                session_factory, self._assistant_msg_id,
-                                                job.session_id, _tool.id, _ci, _ta, "Permission denied by user",
-                                            )
-                                            continue
-
-                                # Persist "running" state
-                                _tpid = generate_ulid()
-                                async with session_factory() as db:
-                                    async with db.begin():
-                                        await create_part(
-                                            db, message_id=self._assistant_msg_id,
-                                            session_id=job.session_id, part_id=_tpid,
-                                            data={"type": "tool", "tool": _tool.id, "call_id": _ci,
-                                                  "state": {"status": "running", "input": _ta}},
-                                        )
-                                job.publish(SSEEvent(TOOL_START, {
-                                    "tool": _tool.id, "call_id": _ci,
-                                    "arguments": _ta, "session_id": job.session_id,
-                                }))
-
-                                # Build context
-                                _ctx = ToolContext(
-                                    session_id=job.session_id,
-                                    message_id=self._assistant_msg_id,
-                                    agent=sp.agent, call_id=_ci,
-                                    abort_event=job.abort_event,
-                                    workspace=sp.workspace,
-                                    index_manager=getattr(sp, "index_manager", None),
-                                    messages=self._llm_messages,
-                                    discovered_tools=sp.discovered_tools,
-                                    _publish_fn=lambda et, d: job.publish(SSEEvent(et, d)),
-                                )
-                                _ctx._app_state = {  # type: ignore[attr-defined]
-                                    "session_factory": session_factory,
-                                    "provider_registry": sp.provider_registry,
-                                    "agent_registry": sp.agent_registry,
-                                    "tool_registry": sp.tool_registry,
-                                }
-                                _ctx._model_id = sp.model_id  # type: ignore[attr-defined]
-                                _ctx._job = job  # type: ignore[attr-defined]
-                                _ctx._depth = job._depth  # type: ignore[attr-defined]
-
-                                # Submit to streaming executor (concurrent tools start NOW)
-                                streaming_executor.submit(ToolCallInfo(
-                                    index=_exec_index, tool=_tool,
-                                    tool_name=_tool.id, tool_args=_ta,
-                                    call_id=_ci, ctx=_ctx,
-                                    timeout=_cfg().tool_timeout,
-                                ))
-                                _exec_metadata[_exec_index] = {
-                                    "tool_part_id": _tpid,
-                                    "loop_result": _lr,
-                                    "tool": _tool,
-                                    "tool_args": _ta,
-                                    "call_id": _ci,
-                                }
-                                _exec_index += 1
+                            self._has_tool_calls = True
+                            self._tool_calls_in_step.append(chunk.data)
+                            if not self._exec_blocked:
+                                await self._handle_tool_call_chunk(chunk)
 
                         case "web-search-start":
-                            # Native web search started (OpenAI subscription)
-                            ws_call_id = chunk.data.get("id", "")
-                            ws_query = chunk.data.get("query", "")
-                            native_search_ids.add(ws_call_id)
-                            native_search_count += 1
-
-                            # Drop excess searches beyond the per-step cap
-                            if native_search_count > get_settings().max_native_searches_per_step:
-                                continue
-
-                            # Persist "running" tool part
-                            _ws_part_ids[ws_call_id] = generate_ulid()
-                            async with session_factory() as db:
-                                async with db.begin():
-                                    await create_part(
-                                        db,
-                                        message_id=self._assistant_msg_id,
-                                        session_id=job.session_id,
-                                        part_id=_ws_part_ids[ws_call_id],
-                                        data={
-                                            "type": "tool",
-                                            "tool": "web_search",
-                                            "call_id": ws_call_id,
-                                            "state": {"status": "running", "input": {"query": ws_query}},
-                                        },
-                                    )
-
-                            # Emit TOOL_START so frontend shows searching state
-                            job.publish(SSEEvent(
-                                TOOL_START,
-                                {
-                                    "tool": "web_search",
-                                    "call_id": ws_call_id,
-                                    "arguments": {"query": ws_query},
-                                    "session_id": job.session_id,
-                                },
-                            ))
+                            await self._handle_web_search_start_chunk(chunk)
 
                         case "web-search-result":
-                            # Native web search completed (OpenAI subscription)
-                            ws_call_id = chunk.data.get("id", "")
-                            ws_query = chunk.data.get("query", "")
-                            ws_results = chunk.data.get("results", [])
-
-                            # Skip results for searches that exceeded the per-step cap
-                            if ws_call_id not in _ws_part_ids:
-                                continue
-
-                            # Format results like the custom web_search tool
-                            output_lines: list[str] = []
-                            results_data: list[dict[str, str]] = []
-                            for i, r in enumerate(ws_results, 1):
-                                title = r.get("title", "")
-                                url = r.get("url", "")
-                                snippet = r.get("snippet", "")
-                                output_lines.append(f"{i}. {title}")
-                                output_lines.append(f"   {url}")
-                                if snippet:
-                                    output_lines.append(f"   {snippet}")
-                                output_lines.append("")
-                                results_data.append({"url": url, "title": title, "snippet": snippet})
-
-                            count = len(results_data)
-                            output_text = "\n".join(output_lines) if output_lines else "No results found."
-                            ws_title = f"Search: {ws_query[:50]} ({count} results)"
-                            ws_metadata = {
-                                "query": ws_query,
-                                "count": count,
-                                "results": results_data,
-                                "_native": True,
-                            }
-
-                            # Update tool part to completed
-                            ws_part_id = _ws_part_ids.pop(ws_call_id, None)
-                            if ws_part_id:
-                                async with session_factory() as db:
-                                    async with db.begin():
-                                        await update_part_data(
-                                            db,
-                                            part_id=ws_part_id,
-                                            data={
-                                                "type": "tool",
-                                                "tool": "web_search",
-                                                "call_id": ws_call_id,
-                                                "state": {
-                                                    "status": "completed",
-                                                    "input": {"query": ws_query},
-                                                    "output": output_text,
-                                                    "title": ws_title,
-                                                    "metadata": ws_metadata,
-                                                },
-                                            },
-                                        )
-
-                            # Emit TOOL_RESULT so frontend updates to completed
-                            job.publish(SSEEvent(
-                                TOOL_RESULT,
-                                {
-                                    "call_id": ws_call_id,
-                                    "tool": "web_search",
-                                    "output": output_text[:500],
-                                    "title": ws_title,
-                                    "metadata": ws_metadata,
-                                },
-                            ))
+                            await self._handle_web_search_result_chunk(chunk)
 
                         case "usage":
                             self.usage_data = chunk.data
@@ -824,39 +592,23 @@ class SessionProcessor:
                             )
 
                         case "error":
-                            if accumulated_text:
-                                async with session_factory() as db:
-                                    async with db.begin():
-                                        await create_part(
-                                            db,
-                                            message_id=self._assistant_msg_id,
-                                            session_id=job.session_id,
-                                            data={"type": "text", "text": accumulated_text},
-                                        )
-                            job.publish(
-                                SSEEvent(
-                                    AGENT_ERROR,
-                                    {"error_message": chunk.data.get("message", "LLM error")},
-                                )
-                            )
-                            await _delete_empty_assistant_messages(session_factory, job.session_id)
-                            return "stop"
+                            return await self._handle_stream_error_chunk(chunk)
 
-                stream_error = None
+                self._stream_error = None
                 logger.info(
                     "LLM stream completed: text=%d chars, reasoning=%d chars, "
                     "tool_calls=%d, finish=%s",
-                    len(accumulated_text),
-                    len(accumulated_reasoning),
-                    len(tool_calls_in_step),
+                    len(self._accumulated_text),
+                    len(self._accumulated_reasoning),
+                    len(self._tool_calls_in_step),
                     self.finish_reason,
                 )
 
                 # --- Empty response guard: retry if LLM produced nothing ---
                 if (
-                    not accumulated_text.strip()
-                    and not has_tool_calls
-                    and not accumulated_reasoning
+                    not self._accumulated_text.strip()
+                    and not self._has_tool_calls
+                    and not self._accumulated_reasoning
                     and not job.abort_event.is_set()
                     and attempt < 2
                 ):
@@ -865,45 +617,34 @@ class SessionProcessor:
                         attempt + 1,
                         MAX_RETRIES + 1,
                     )
-                    accumulated_text = ""
-                    accumulated_reasoning = ""
-                    tool_calls_in_step = []
-                    has_tool_calls = False
+                    self._reset_stream_accumulators()
                     continue
 
                 break
 
             except Exception as e:
-                stream_error = e
+                self._stream_error = e
                 retry_reason = is_retryable(e)
+                effective_max = max_retries_for_error(e)
 
-                _effective_max = max_retries_for_error(e)
-                if retry_reason and attempt < _effective_max:
+                if retry_reason and attempt < effective_max:
                     delay = retry_delay(attempt, e)
                     logger.warning(
                         "LLM stream error (attempt %d/%d, %s), retrying in %.1fs: %s",
                         attempt + 1,
-                        _effective_max,
+                        effective_max,
                         retry_reason,
                         delay,
                         e,
                     )
-                    job.publish(
-                        SSEEvent(
-                            RETRY,
-                            {
-                                "attempt": attempt + 1,
-                                "max_retries": MAX_RETRIES,
-                                "delay": delay,
-                                "reason": retry_reason,
-                                "message": str(e),
-                            },
-                        )
-                    )
-                    accumulated_text = ""
-                    accumulated_reasoning = ""
-                    tool_calls_in_step = []
-                    has_tool_calls = False
+                    job.publish(SSEEvent(RETRY, {
+                        "attempt": attempt + 1,
+                        "max_retries": MAX_RETRIES,
+                        "delay": delay,
+                        "reason": retry_reason,
+                        "message": str(e),
+                    }))
+                    self._reset_stream_accumulators()
                     aborted = await sleep_with_abort(delay, job.abort_event)
                     if aborted:
                         break
@@ -911,330 +652,754 @@ class SessionProcessor:
                 else:
                     break
 
-        if stream_error:
-            # --- Reactive compact: recover from context overflow via compaction ---
-            # Inspired by Claude Code's reactive compact pattern.
-            if is_context_overflow(stream_error):
-                logger.info(
-                    "Context overflow detected, triggering reactive compaction "
-                    "for session %s",
-                    job.session_id,
-                )
-                await _delete_empty_assistant_messages(session_factory, job.session_id)
-                return "compact"
+        return None
 
-            logger.exception("LLM stream error (not retryable or retries exhausted)")
-            had_visible_text = bool(accumulated_text.strip())
-            self.has_text = had_visible_text
-            self.finish_reason = "error"
-            if accumulated_text or accumulated_reasoning:
-                async with session_factory() as db:
-                    async with db.begin():
-                        if accumulated_text:
-                            await create_part(
-                                db,
-                                message_id=self._assistant_msg_id,
-                                session_id=job.session_id,
-                                data={"type": "text", "text": accumulated_text},
-                            )
-                        if accumulated_reasoning:
-                            await create_part(
-                                db,
-                                message_id=self._assistant_msg_id,
-                                session_id=job.session_id,
-                                data={"type": "reasoning", "text": accumulated_reasoning},
-                            )
+    async def _build_stream_args(self) -> tuple[Any, int, set[str] | None]:
+        """Compute (reasoning_extra, safe_max_tokens, exclude_tools) for one stream attempt."""
+        sp = self._sp
+
+        reasoning_extra = None
+        if sp.request.reasoning is False:
+            reasoning_extra = {"reasoning": {"enabled": False}}
+
+        safe_max_tokens = _compute_safe_max_tokens(
+            self._llm_messages,
+            model_max_context=(
+                _get_effective_context_window(sp.model_info) if sp.model_info else 8192
+            ),
+            model_max_output=(
+                sp.model_info.capabilities.max_output if sp.model_info else None
+            ),
+        )
+
+        exclude_tools: set[str] | None = None
+        sq_count, sq_credits = await _search_quota.get_quota()
+        if not sq_credits and sq_count >= get_settings().daily_search_limit:
+            exclude_tools = {"web_search"}
+
+        # Use native web search for OpenAI subscription provider
+        if sp.provider.id == "openai-subscription":
+            exclude_tools = exclude_tools or set()
+            exclude_tools.add("web_search")
+
+        return reasoning_extra, safe_max_tokens, exclude_tools
+
+    async def _check_vision_blocked(self) -> Literal["stop"] | None:
+        """If a non-vision model received image content, persist an error + return 'stop'."""
+        sp = self._sp
+        job = sp.job
+
+        if not (
+            sp.model_info
+            and not sp.model_info.capabilities.vision
+            and _llm_messages_have_image_content(self._llm_messages)
+        ):
+            return None
+
+        message = (
+            "The selected model does not support images. "
+            "Choose a vision model and try again."
+        )
+        logger.info(
+            "Blocked image content for non-vision model=%s session=%s",
+            sp.model_id,
+            job.session_id,
+        )
+        job.publish(SSEEvent(
+            AGENT_ERROR,
+            {
+                "error_type": "MODEL_DOES_NOT_SUPPORT_IMAGES",
+                "error_message": message,
+            },
+        ))
+        async with sp.session_factory() as db:
+            async with db.begin():
+                await create_part(
+                    db,
+                    message_id=self._assistant_msg_id,
+                    session_id=job.session_id,
+                    data={"type": "text", "text": message},
+                )
+                await create_part(
+                    db,
+                    message_id=self._assistant_msg_id,
+                    session_id=job.session_id,
+                    data={
+                        "type": "step-finish",
+                        "reason": "error",
+                        "tokens": {},
+                        "cost": 0.0,
+                    },
+                )
+        self.finish_reason = "error"
+        return "stop"
+
+    def _reset_stream_accumulators(self) -> None:
+        """Reset per-attempt accumulators between retries (mirrors original local reset)."""
+        self._accumulated_text = ""
+        self._accumulated_reasoning = ""
+        self._tool_calls_in_step = []
+        self._has_tool_calls = False
+
+    # ------------------------------------------------------------------
+    # process() phases — chunk handlers
+    # ------------------------------------------------------------------
+
+    async def _handle_tool_call_chunk(self, chunk: Any) -> None:
+        """Submit one streamed tool call to the executor (with loop/permission checks)."""
+        from app.session.tool_executor import ToolCallInfo
+
+        sp = self._sp
+        job = sp.job
+        session_factory = sp.session_factory
+
+        tc = chunk.data
+        tn = tc.get("name", "")
+        ta = tc.get("arguments", {})
+        ci = tc.get("id", generate_ulid())
+        tn, ta = _repair_tool_call_payload(tn, ta)
+
+        # Loop detection
+        lr: LoopCheckResult = loop_detector.check(job.session_id, tn, ta)
+        if lr.action == "block":
+            job.publish(SSEEvent(AGENT_ERROR, {
+                "error_type": "loop_detected",
+                "error_message": lr.message,
+                "tool": tn,
+            }))
+            await _persist_tool_error(
+                session_factory, self._assistant_msg_id,
+                job.session_id, tn, ci, ta,
+                lr.message or "Loop detected — hard stop",
+            )
+            self._exec_blocked = True
+            return
+
+        # Resolve tool
+        tool = sp.tool_registry.get(tn)
+        if tool is None:
+            tool = sp.tool_registry.get(tn.lower())
+        if tool is None:
+            tool = sp.tool_registry.get("invalid")
+            if tool:
+                ta = {"name": tn}
+        if tool is None:
+            job.publish(SSEEvent(TOOL_ERROR, {"call_id": ci, "error": f"Tool not found: {tn}"}))
+            return
+
+        # Permission check
+        rp = "*"
+        if tool.id in _FILE_TOOLS:
+            rp = ta.get("file_path", "*")
+        action = evaluate(tool.id, rp, sp.merged_permissions)
+
+        if action == "deny":
+            job.publish(SSEEvent(TOOL_ERROR, {"call_id": ci, "error": f"Permission denied for tool: {tool.id}"}))
+            await _persist_tool_error(
+                session_factory, self._assistant_msg_id,
+                job.session_id, tool.id, ci, ta, "Permission denied",
+            )
+            return
+
+        if action == "ask" and job.interactive:
+            decision = await _ask_permission(
+                job,
+                call_id=ci,
+                tool_name=tool.id,
+                tool_args=ta,
+                resource_pattern=rp,
+            )
+            if decision.get("remember"):
+                await _remember_permission_rule(
+                    session_factory,
+                    job.session_id,
+                    sp,
+                    permission=tool.id,
+                    pattern=rp,
+                    allow=bool(decision.get("allowed")),
+                )
+            if not decision.get("allowed"):
+                job.publish(SSEEvent(TOOL_ERROR, {"call_id": ci, "error": f"User denied permission for: {tool.id}"}))
+                await _persist_tool_error(
+                    session_factory, self._assistant_msg_id,
+                    job.session_id, tool.id, ci, ta, "Permission denied by user",
+                )
+                return
+
+        # Persist "running" state
+        tool_part_id = generate_ulid()
+        async with session_factory() as db:
+            async with db.begin():
+                await create_part(
+                    db, message_id=self._assistant_msg_id,
+                    session_id=job.session_id, part_id=tool_part_id,
+                    data={"type": "tool", "tool": tool.id, "call_id": ci,
+                          "state": {"status": "running", "input": ta}},
+                )
+        job.publish(SSEEvent(TOOL_START, {
+            "tool": tool.id, "call_id": ci,
+            "arguments": ta, "session_id": job.session_id,
+        }))
+
+        # Build context
+        ctx = ToolContext(
+            session_id=job.session_id,
+            message_id=self._assistant_msg_id,
+            agent=sp.agent, call_id=ci,
+            abort_event=job.abort_event,
+            workspace=sp.workspace,
+            index_manager=getattr(sp, "index_manager", None),
+            messages=self._llm_messages,
+            discovered_tools=sp.discovered_tools,
+            _publish_fn=lambda et, d: job.publish(SSEEvent(et, d)),
+        )
+        ctx._app_state = {  # type: ignore[attr-defined]
+            "session_factory": session_factory,
+            "provider_registry": sp.provider_registry,
+            "agent_registry": sp.agent_registry,
+            "tool_registry": sp.tool_registry,
+        }
+        ctx._model_id = sp.model_id  # type: ignore[attr-defined]
+        ctx._job = job  # type: ignore[attr-defined]
+        ctx._depth = job._depth  # type: ignore[attr-defined]
+
+        # Submit to streaming executor (concurrent tools start NOW)
+        self._streaming_executor.submit(ToolCallInfo(
+            index=self._exec_index, tool=tool,
+            tool_name=tool.id, tool_args=ta,
+            call_id=ci, ctx=ctx,
+            timeout=_cfg().tool_timeout,
+        ))
+        self._exec_metadata[self._exec_index] = {
+            "tool_part_id": tool_part_id,
+            "loop_result": lr,
+            "tool": tool,
+            "tool_args": ta,
+            "call_id": ci,
+        }
+        self._exec_index += 1
+
+    async def _handle_web_search_start_chunk(self, chunk: Any) -> None:
+        """Persist a 'running' tool part for an OpenAI-native web search start."""
+        sp = self._sp
+        job = sp.job
+
+        ws_call_id = chunk.data.get("id", "")
+        ws_query = chunk.data.get("query", "")
+        self._native_search_ids.add(ws_call_id)
+        self._native_search_count += 1
+
+        # Drop excess searches beyond the per-step cap
+        if self._native_search_count > get_settings().max_native_searches_per_step:
+            return
+
+        self._ws_part_ids[ws_call_id] = generate_ulid()
+        async with sp.session_factory() as db:
+            async with db.begin():
+                await create_part(
+                    db,
+                    message_id=self._assistant_msg_id,
+                    session_id=job.session_id,
+                    part_id=self._ws_part_ids[ws_call_id],
+                    data={
+                        "type": "tool",
+                        "tool": "web_search",
+                        "call_id": ws_call_id,
+                        "state": {"status": "running", "input": {"query": ws_query}},
+                    },
+                )
+
+        # Emit TOOL_START so frontend shows searching state
+        job.publish(SSEEvent(
+            TOOL_START,
+            {
+                "tool": "web_search",
+                "call_id": ws_call_id,
+                "arguments": {"query": ws_query},
+                "session_id": job.session_id,
+            },
+        ))
+
+    async def _handle_web_search_result_chunk(self, chunk: Any) -> None:
+        """Format & persist completion of an OpenAI-native web search."""
+        sp = self._sp
+        job = sp.job
+
+        ws_call_id = chunk.data.get("id", "")
+        ws_query = chunk.data.get("query", "")
+        ws_results = chunk.data.get("results", [])
+
+        # Skip results for searches that exceeded the per-step cap
+        if ws_call_id not in self._ws_part_ids:
+            return
+
+        # Format results like the custom web_search tool
+        output_lines: list[str] = []
+        results_data: list[dict[str, str]] = []
+        for i, r in enumerate(ws_results, 1):
+            title = r.get("title", "")
+            url = r.get("url", "")
+            snippet = r.get("snippet", "")
+            output_lines.append(f"{i}. {title}")
+            output_lines.append(f"   {url}")
+            if snippet:
+                output_lines.append(f"   {snippet}")
+            output_lines.append("")
+            results_data.append({"url": url, "title": title, "snippet": snippet})
+
+        count = len(results_data)
+        output_text = "\n".join(output_lines) if output_lines else "No results found."
+        ws_title = f"Search: {ws_query[:50]} ({count} results)"
+        ws_metadata = {
+            "query": ws_query,
+            "count": count,
+            "results": results_data,
+            "_native": True,
+        }
+
+        # Update tool part to completed
+        ws_part_id = self._ws_part_ids.pop(ws_call_id, None)
+        if ws_part_id:
+            async with sp.session_factory() as db:
+                async with db.begin():
+                    await update_part_data(
+                        db,
+                        part_id=ws_part_id,
+                        data={
+                            "type": "tool",
+                            "tool": "web_search",
+                            "call_id": ws_call_id,
+                            "state": {
+                                "status": "completed",
+                                "input": {"query": ws_query},
+                                "output": output_text,
+                                "title": ws_title,
+                                "metadata": ws_metadata,
+                            },
+                        },
+                    )
+
+        # Emit TOOL_RESULT so frontend updates to completed
+        job.publish(SSEEvent(
+            TOOL_RESULT,
+            {
+                "call_id": ws_call_id,
+                "tool": "web_search",
+                "output": output_text[:500],
+                "title": ws_title,
+                "metadata": ws_metadata,
+            },
+        ))
+
+    async def _handle_stream_error_chunk(self, chunk: Any) -> Literal["stop"]:
+        """Mid-stream 'error' chunk: persist any accumulated text + publish error + clean up."""
+        sp = self._sp
+        job = sp.job
+
+        if self._accumulated_text:
+            async with sp.session_factory() as db:
+                async with db.begin():
+                    await create_part(
+                        db,
+                        message_id=self._assistant_msg_id,
+                        session_id=job.session_id,
+                        data={"type": "text", "text": self._accumulated_text},
+                    )
+        job.publish(SSEEvent(
+            AGENT_ERROR,
+            {"error_message": chunk.data.get("message", "LLM error")},
+        ))
+        await _delete_empty_assistant_messages(sp.session_factory, job.session_id)
+        return "stop"
+
+    # ------------------------------------------------------------------
+    # process() phases — post-stream
+    # ------------------------------------------------------------------
+
+    async def _handle_stream_error(self) -> Literal["compact", "stop"]:
+        """Handle a retries-exhausted or non-retryable stream exception."""
+        sp = self._sp
+        job = sp.job
+
+        # --- Reactive compact: recover from context overflow via compaction ---
+        # Inspired by Claude Code's reactive compact pattern.
+        if is_context_overflow(self._stream_error):
+            logger.info(
+                "Context overflow detected, triggering reactive compaction for session %s",
+                job.session_id,
+            )
+            await _delete_empty_assistant_messages(sp.session_factory, job.session_id)
+            return "compact"
+
+        logger.exception("LLM stream error (not retryable or retries exhausted)")
+        self.has_text = bool(self._accumulated_text.strip())
+        self.finish_reason = "error"
+        if self._accumulated_text or self._accumulated_reasoning:
+            async with sp.session_factory() as db:
+                async with db.begin():
+                    if self._accumulated_text:
                         await create_part(
                             db,
                             message_id=self._assistant_msg_id,
                             session_id=job.session_id,
-                            data={
-                                "type": "step-finish",
-                                "reason": self.finish_reason,
-                                "tokens": self.usage_data,
-                                "cost": self.step_cost,
-                            },
+                            data={"type": "text", "text": self._accumulated_text},
                         )
-                job.publish(
-                    SSEEvent(
-                        STEP_FINISH,
-                        {
+                    if self._accumulated_reasoning:
+                        await create_part(
+                            db,
+                            message_id=self._assistant_msg_id,
+                            session_id=job.session_id,
+                            data={"type": "reasoning", "text": self._accumulated_reasoning},
+                        )
+                    await create_part(
+                        db,
+                        message_id=self._assistant_msg_id,
+                        session_id=job.session_id,
+                        data={
+                            "type": "step-finish",
+                            "reason": self.finish_reason,
                             "tokens": self.usage_data,
                             "cost": self.step_cost,
-                            "total_cost": sp.total_cost + self.step_cost,
-                            "reason": self.finish_reason,
                         },
                     )
-                )
-            await _delete_empty_assistant_messages(session_factory, job.session_id)
-            job.publish(SSEEvent(AGENT_ERROR, {"error_message": f"LLM stream error: {stream_error}"}))
-            return "stop"
+            job.publish(SSEEvent(
+                STEP_FINISH,
+                {
+                    "tokens": self.usage_data,
+                    "cost": self.step_cost,
+                    "total_cost": sp.total_cost + self.step_cost,
+                    "reason": self.finish_reason,
+                },
+            ))
+        await _delete_empty_assistant_messages(sp.session_factory, job.session_id)
+        job.publish(SSEEvent(
+            AGENT_ERROR,
+            {"error_message": f"LLM stream error: {self._stream_error}"},
+        ))
+        return "stop"
 
-        # --- Empty output after retries: clean up and continue the loop ---
-        # The model produced nothing (no text, no tools, no reasoning) even after retries.
-        # Rather than surfacing an error, delete the empty assistant message shell and
-        # return "continue" so the outer loop re-invokes the LLM with the full conversation
-        # context intact. The hard step cap (50) prevents infinite looping.
-        if (
-            not accumulated_text.strip()
-            and not has_tool_calls
-            and not accumulated_reasoning
-            and not stream_error
+    async def _handle_empty_output_after_retries(self) -> bool:
+        """Return True if the step produced nothing after retries (caller continues the loop).
+
+        The model produced nothing (no text, no tools, no reasoning) even after retries.
+        Rather than surfacing an error, delete the empty assistant message shell and let
+        the outer loop re-invoke the LLM with the full conversation context intact.
+        The hard step cap (50) prevents infinite looping.
+        """
+        sp = self._sp
+        job = sp.job
+
+        if not (
+            not self._accumulated_text.strip()
+            and not self._has_tool_calls
+            and not self._accumulated_reasoning
+            and self._stream_error is None
             and not job.abort_event.is_set()
         ):
-            logger.warning(
-                "LLM produced no output after retries for session %s, continuing loop",
-                job.session_id,
-            )
-            # Publish a paired non-terminal STEP_FINISH so the frontend step tracker
-            # stays consistent without seeing an undeclared terminal reason.
-            job.publish(
-                SSEEvent(
-                    STEP_FINISH,
-                    {
-                        "tokens": None,
-                        "cost": 0.0,
-                        "total_cost": sp.total_cost,
-                        "reason": "tool_use",
-                    },
-                )
-            )
-            await _delete_empty_assistant_messages(session_factory, job.session_id)
-            return "continue"
+            return False
 
-        # --- Persist text and reasoning parts ---
-        self.has_text = bool(accumulated_text.strip())
+        logger.warning(
+            "LLM produced no output after retries for session %s, continuing loop",
+            job.session_id,
+        )
+        # Publish a paired non-terminal STEP_FINISH so the frontend step tracker
+        # stays consistent without seeing an undeclared terminal reason.
+        job.publish(SSEEvent(
+            STEP_FINISH,
+            {
+                "tokens": None,
+                "cost": 0.0,
+                "total_cost": sp.total_cost,
+                "reason": "tool_use",
+            },
+        ))
+        await _delete_empty_assistant_messages(sp.session_factory, job.session_id)
+        return True
+
+    async def _persist_text_and_reasoning(self) -> None:
+        """Persist accumulated text + reasoning as parts on the assistant message."""
+        sp = self._sp
+        self.has_text = bool(self._accumulated_text.strip())
+        async with sp.session_factory() as db:
+            async with db.begin():
+                if self._accumulated_text.strip():
+                    await create_part(
+                        db,
+                        message_id=self._assistant_msg_id,
+                        session_id=sp.job.session_id,
+                        data={"type": "text", "text": self._accumulated_text},
+                    )
+                if self._accumulated_reasoning:
+                    await create_part(
+                        db,
+                        message_id=self._assistant_msg_id,
+                        session_id=sp.job.session_id,
+                        data={"type": "reasoning", "text": self._accumulated_reasoning},
+                    )
+
+    # ------------------------------------------------------------------
+    # process() phases — tool dispatch
+    # ------------------------------------------------------------------
+
+    async def _dispatch_tool_calls(self) -> Literal["stop"] | None:
+        """Collect concurrent tool results, finalize each. Returns 'stop' if loop-blocked."""
+        # Filter out native web search calls (already persisted during streaming)
+        if self._native_search_ids:
+            self._tool_calls_in_step = [
+                tc for tc in self._tool_calls_in_step
+                if tc.get("id") not in self._native_search_ids
+            ]
+            if not self._tool_calls_in_step:
+                self._has_tool_calls = False
+
+        if not (self._has_tool_calls and self._streaming_executor.has_submissions):
+            return None
+
+        if self._exec_blocked:
+            return "stop"
+
+        # === Collect results — concurrent tools already running, exclusive run now ===
+        exec_results = await self._streaming_executor.collect()
+
+        # === Finalize — persist results, emit SSE, handle side effects ===
+        if exec_results:
+            for exec_result in exec_results:
+                meta = self._exec_metadata.get(exec_result.index)
+                if meta is None:
+                    continue
+                await self._finalize_one_tool_result(meta, exec_result)
+
+        return None
+
+    async def _finalize_one_tool_result(
+        self, meta: dict[str, Any], exec_result: Any,
+    ) -> None:
+        """Persist one tool result: timeouts/errors, SSE, side effects, agent switching."""
+        sp = self._sp
+        job = sp.job
+        session_factory = sp.session_factory
+
+        tool_part_id = meta["tool_part_id"]
+        loop_result = meta["loop_result"]
+        tool = meta["tool"]
+        tool_args = meta["tool_args"]
+        call_id = meta["call_id"]
+
+        # Handle timeout
+        if exec_result.timed_out:
+            timeout_msg = f"Tool timed out after {_cfg().tool_timeout}s: {tool.id}"
+            logger.warning(timeout_msg)
+            job.publish(SSEEvent(TOOL_ERROR, {"call_id": call_id, "error": timeout_msg}))
+            await _update_tool_part_error(
+                session_factory, tool_part_id, tool.id, call_id, tool_args, timeout_msg,
+            )
+            return
+
+        # Handle execution error
+        if exec_result.error is not None:
+            if isinstance(exec_result.error, RejectedError):
+                err_msg = f"Permission denied: {exec_result.error.permission}"
+            else:
+                err_msg = str(exec_result.error)
+                logger.exception("Tool execution error: %s", tool.id)
+            job.publish(SSEEvent(TOOL_ERROR, {"call_id": call_id, "error": err_msg}))
+            await _update_tool_part_error(
+                session_factory, tool_part_id, tool.id, call_id, tool_args, err_msg,
+            )
+            return
+
+        result = exec_result.result
+        if result is None:
+            return
+
+        # Emit SSE result
+        if result.error:
+            job.publish(SSEEvent(
+                TOOL_ERROR,
+                {"call_id": call_id, "error": result.error, "tool": tool.id},
+            ))
+        else:
+            job.publish(SSEEvent(
+                TOOL_RESULT,
+                {
+                    "call_id": call_id,
+                    "tool": tool.id,
+                    "output": result.output[:500] if result.output else "",
+                    "title": result.title,
+                    "metadata": result.metadata,
+                },
+            ))
+
+        await self._apply_tool_side_effects(tool, result)
+        persist_output = await self._build_tool_persist_output(
+            tool, tool_args, result, loop_result,
+        )
+
+        # Update tool part to "completed" / "error"
         async with session_factory() as db:
             async with db.begin():
-                if accumulated_text.strip():
-                    await create_part(
-                        db,
-                        message_id=self._assistant_msg_id,
-                        session_id=job.session_id,
-                        data={"type": "text", "text": accumulated_text},
-                    )
-                if accumulated_reasoning:
-                    await create_part(
-                        db,
-                        message_id=self._assistant_msg_id,
-                        session_id=job.session_id,
-                        data={"type": "reasoning", "text": accumulated_reasoning},
-                    )
+                await update_part_data(
+                    db,
+                    tool_part_id,
+                    {
+                        "type": "tool",
+                        "tool": tool.id,
+                        "call_id": call_id,
+                        "state": {
+                            "status": "completed" if result.success else "error",
+                            "input": tool_args,
+                            "output": persist_output,
+                            "title": result.title,
+                            "metadata": result.metadata,
+                        },
+                    },
+                )
 
-        # --- Process tool calls ---
-        # Filter out native web search calls (already persisted during streaming)
-        if native_search_ids:
-            tool_calls_in_step = [
-                tc for tc in tool_calls_in_step
-                if tc.get("id") not in native_search_ids
-            ]
-            if not tool_calls_in_step:
-                has_tool_calls = False
-
-        if has_tool_calls and streaming_executor.has_submissions:
-            if _exec_blocked:
-                return "stop"
-
-            # === Collect results — concurrent tools already running, exclusive run now ===
-            exec_results = await streaming_executor.collect()
-
-            # === Finalize — persist results, emit SSE, handle side effects ===
-            if exec_results:
-                for exec_result in exec_results:
-                    meta = _exec_metadata.get(exec_result.index)
-                    if meta is None:
-                        continue
-
-                    tool_part_id = meta["tool_part_id"]
-                    loop_result = meta["loop_result"]
-                    tool = meta["tool"]
-                    tool_args = meta["tool_args"]
-                    call_id = meta["call_id"]
-
-                    # Handle timeout
-                    if exec_result.timed_out:
-                        timeout_msg = f"Tool timed out after {_cfg().tool_timeout}s: {tool.id}"
-                        logger.warning(timeout_msg)
-                        job.publish(SSEEvent(TOOL_ERROR, {"call_id": call_id, "error": timeout_msg}))
-                        await _update_tool_part_error(
-                            session_factory, tool_part_id, tool.id, call_id, tool_args, timeout_msg,
-                        )
-                        continue
-
-                    # Handle execution error
-                    if exec_result.error is not None:
-                        if isinstance(exec_result.error, RejectedError):
-                            err_msg = f"Permission denied: {exec_result.error.permission}"
-                        else:
-                            err_msg = str(exec_result.error)
-                            logger.exception("Tool execution error: %s", tool.id)
-                        job.publish(SSEEvent(TOOL_ERROR, {"call_id": call_id, "error": err_msg}))
-                        await _update_tool_part_error(
-                            session_factory, tool_part_id, tool.id, call_id, tool_args, err_msg,
-                        )
-                        continue
-
-                    result = exec_result.result
-                    if result is None:
-                        continue
-
-                    # Emit SSE result
-                    if result.error:
-                        job.publish(
-                            SSEEvent(TOOL_ERROR, {"call_id": call_id, "error": result.error, "tool": tool.id})
-                        )
-                    else:
-                        job.publish(
-                            SSEEvent(
-                                TOOL_RESULT,
-                                {
-                                    "call_id": call_id,
-                                    "tool": tool.id,
-                                    "output": result.output[:500] if result.output else "",
-                                    "title": result.title,
-                                    "metadata": result.metadata,
-                                },
-                            )
-                        )
-
-                    # Web search usage tracking
-                    if tool.id == "web_search" and result.success:
-                        charged = bool(result.metadata and result.metadata.get("charged"))
-                        await _search_quota.increment(charged=charged)
-
-                    # Track session files from write/edit tools
-                    if (
-                        tool.id in ("write", "edit")
-                        and result.success
-                        and result.metadata
-                        and result.metadata.get("file_path")
-                    ):
-                        await _track_session_file(
-                            session_factory,
+        # Persist file attachments returned by the tool as FileParts
+        if result.attachments:
+            async with session_factory() as db:
+                async with db.begin():
+                    for att in result.attachments:
+                        await create_part(
+                            db,
+                            message_id=self._assistant_msg_id,
                             session_id=job.session_id,
-                            file_path=result.metadata["file_path"],
-                            tool_id=tool.id,
+                            data={"type": "file", **att},
                         )
 
-                    # Track files created or modified inside code_execute runs.
-                    if (
-                        tool.id == "code_execute"
-                        and result.success
-                        and result.metadata
-                        and result.metadata.get("written_files")
-                    ):
-                        for file_path in result.metadata["written_files"]:
-                            await _track_session_file(
-                                session_factory,
-                                session_id=job.session_id,
-                                file_path=file_path,
-                                tool_id=tool.id,
-                            )
+        self._maybe_switch_agent(result)
 
-                    # Track artifacts as workspace files (save to disk)
-                    if (
-                        tool.id == "artifact"
-                        and result.success
-                        and result.metadata
-                        and result.metadata.get("content")
-                    ):
-                        await _save_artifact_as_file(
-                            session_factory,
-                            session_id=job.session_id,
-                            workspace=sp.workspace,
-                            metadata=result.metadata,
-                        )
+    async def _apply_tool_side_effects(self, tool: Any, result: Any) -> None:
+        """Update session files / artifact files / todos / web_search quota from a tool result."""
+        sp = self._sp
+        job = sp.job
+        session_factory = sp.session_factory
 
-                    # Track todos from todo tool results
-                    if tool.id == "todo" and result.metadata and "todos" in result.metadata:
-                        sp.current_todos = list(result.metadata["todos"])
+        # Web search usage tracking
+        if tool.id == "web_search" and result.success:
+            charged = bool(result.metadata and result.metadata.get("charged"))
+            await _search_quota.increment(charged=charged)
 
-                    # Build persisted output (may include todo reminder for LLM)
-                    persist_output = result.output or result.error or ""
-                    if result.success:
-                        persist_output += _presentation_reminder(tool.id, result.metadata)
+        # Track session files from write/edit tools
+        if (
+            tool.id in ("write", "edit")
+            and result.success
+            and result.metadata
+            and result.metadata.get("file_path")
+        ):
+            await _track_session_file(
+                session_factory,
+                session_id=job.session_id,
+                file_path=result.metadata["file_path"],
+                tool_id=tool.id,
+            )
 
-                    # Inject loop warning into output so LLM sees it
-                    if loop_result.action == "warn" and loop_result.message:
-                        persist_output += f"\n\n{loop_result.message}"
+        # Track files created or modified inside code_execute runs.
+        if (
+            tool.id == "code_execute"
+            and result.success
+            and result.metadata
+            and result.metadata.get("written_files")
+        ):
+            for file_path in result.metadata["written_files"]:
+                await _track_session_file(
+                    session_factory,
+                    session_id=job.session_id,
+                    file_path=file_path,
+                    tool_id=tool.id,
+                )
 
-                    if (
-                        tool.id in _MODIFYING_TOOLS
-                        and tool.id != "todo"
-                        and sp.current_todos
-                        and any(
-                            t.get("status") in ("pending", "in_progress")
-                            for t in sp.current_todos
-                        )
-                    ):
-                        persist_output += (
-                            "\n\n<reminder>You have an active todo list. "
-                            "Call the todo tool NOW to mark this task completed "
-                            "and start the next one.</reminder>"
-                        )
+        # Track artifacts as workspace files (save to disk)
+        if (
+            tool.id == "artifact"
+            and result.success
+            and result.metadata
+            and result.metadata.get("content")
+        ):
+            await _save_artifact_as_file(
+                session_factory,
+                session_id=job.session_id,
+                workspace=sp.workspace,
+                metadata=result.metadata,
+            )
 
-                    # Run middleware after_tool_exec hooks
-                    if self._mw_ctx is not None:
-                        persist_output = await sp.middleware_chain.run_after_tool_exec(
-                            tool.id, tool_args, persist_output, self._mw_ctx,
-                        )
+        # Track todos from todo tool results
+        if tool.id == "todo" and result.metadata and "todos" in result.metadata:
+            sp.current_todos = list(result.metadata["todos"])
 
-                    # Phase 3: update to "completed" or "error"
-                    async with session_factory() as db:
-                        async with db.begin():
-                            await update_part_data(
-                                db,
-                                tool_part_id,
-                                {
-                                    "type": "tool",
-                                    "tool": tool.id,
-                                    "call_id": call_id,
-                                    "state": {
-                                        "status": "completed" if result.success else "error",
-                                        "input": tool_args,
-                                        "output": persist_output,
-                                        "title": result.title,
-                                        "metadata": result.metadata,
-                                    },
-                                },
-                            )
+    async def _build_tool_persist_output(
+        self,
+        tool: Any,
+        tool_args: dict[str, Any],
+        result: Any,
+        loop_result: Any,
+    ) -> str:
+        """Assemble the output text persisted to the tool part (+ reminders, middleware)."""
+        sp = self._sp
 
-                    # Persist file attachments returned by the tool as FileParts
-                    if result.attachments:
-                        async with session_factory() as db:
-                            async with db.begin():
-                                for att in result.attachments:
-                                    await create_part(
-                                        db,
-                                        message_id=self._assistant_msg_id,
-                                        session_id=job.session_id,
-                                        data={"type": "file", **att},
-                                    )
+        persist_output = result.output or result.error or ""
+        if result.success:
+            persist_output += _presentation_reminder(tool.id, result.metadata)
 
-                    # --- Agent switching (plan tool enter/exit) ---
-                    if result.metadata and result.metadata.get("switch_agent"):
-                        new_agent_name = result.metadata["switch_agent"]
-                        new_agent = sp.agent_registry.get(new_agent_name)
-                        if new_agent:
-                            sp.agent = new_agent
-                            if sp.agent.model:
-                                new_resolved = sp.provider_registry.resolve_model(
-                                    sp.agent.model.model_id
-                                )
-                                if new_resolved:
-                                    sp.provider, sp.model_info = new_resolved
-                                    sp.model_id = sp.agent.model.model_id
-                            sp.rebuild_permissions_and_prompt()
-                            logger.info("Agent switched to: %s", sp.agent.name)
+        # Inject loop warning into output so LLM sees it
+        if loop_result.action == "warn" and loop_result.message:
+            persist_output += f"\n\n{loop_result.message}"
 
-        # --- Cost tracking ---
+        if (
+            tool.id in _MODIFYING_TOOLS
+            and tool.id != "todo"
+            and sp.current_todos
+            and any(
+                t.get("status") in ("pending", "in_progress")
+                for t in sp.current_todos
+            )
+        ):
+            persist_output += (
+                "\n\n<reminder>You have an active todo list. "
+                "Call the todo tool NOW to mark this task completed "
+                "and start the next one.</reminder>"
+            )
+
+        # Run middleware after_tool_exec hooks
+        if self._mw_ctx is not None:
+            persist_output = await sp.middleware_chain.run_after_tool_exec(
+                tool.id, tool_args, persist_output, self._mw_ctx,
+            )
+
+        return persist_output
+
+    def _maybe_switch_agent(self, result: Any) -> None:
+        """Apply agent switching if the tool result requested it (plan tool enter/exit)."""
+        sp = self._sp
+        if not (result.metadata and result.metadata.get("switch_agent")):
+            return
+
+        new_agent_name = result.metadata["switch_agent"]
+        new_agent = sp.agent_registry.get(new_agent_name)
+        if not new_agent:
+            return
+
+        sp.agent = new_agent
+        if sp.agent.model:
+            new_resolved = sp.provider_registry.resolve_model(sp.agent.model.model_id)
+            if new_resolved:
+                sp.provider, sp.model_info = new_resolved
+                sp.model_id = sp.agent.model.model_id
+        sp.rebuild_permissions_and_prompt()
+        logger.info("Agent switched to: %s", sp.agent.name)
+
+    # ------------------------------------------------------------------
+    # process() phases — cost / finish / overflow
+    # ------------------------------------------------------------------
+
+    def _compute_step_cost(self) -> None:
+        """Compute self.step_cost from self.usage_data + model pricing; log usage."""
+        sp = self._sp
         if self.usage_data and sp.model_info:
             if sp.model_info.pricing and (
                 sp.model_info.pricing.prompt > 0 or sp.model_info.pricing.completion > 0
             ):
-                self.step_cost = _calculate_step_cost(
-                    self.usage_data, sp.model_info
-                )
+                self.step_cost = _calculate_step_cost(self.usage_data, sp.model_info)
             elif sp.model_info.provider_id == "openai-subscription":
                 self.step_cost = 0.0
             else:
@@ -1258,27 +1423,21 @@ class SessionProcessor:
                 self.usage_data.get("cache_write", 0),
             )
 
-        # If this step produced tool calls, the agent loop is not actually
-        # finished yet, even if the provider reported a generic "stop".
-        # Surface that as "tool_use" so the frontend keeps streaming UI alive
-        # until the follow-up step completes.
-        if has_tool_calls and self.finish_reason != "tool_use":
-            self.finish_reason = "tool_use"
+    async def _persist_step_finish(self) -> None:
+        """Emit STEP_FINISH SSE event + persist the step-finish part."""
+        sp = self._sp
+        job = sp.job
 
-        # --- Step finish ---
-        job.publish(
-            SSEEvent(
-                STEP_FINISH,
-                {
-                    "tokens": self.usage_data,
-                    "cost": self.step_cost,
-                    "total_cost": sp.total_cost + self.step_cost,
-                    "reason": self.finish_reason,
-                },
-            )
-        )
-
-        async with session_factory() as db:
+        job.publish(SSEEvent(
+            STEP_FINISH,
+            {
+                "tokens": self.usage_data,
+                "cost": self.step_cost,
+                "total_cost": sp.total_cost + self.step_cost,
+                "reason": self.finish_reason,
+            },
+        ))
+        async with sp.session_factory() as db:
             async with db.begin():
                 await create_part(
                     db,
@@ -1292,25 +1451,23 @@ class SessionProcessor:
                     },
                 )
 
-        # --- Context overflow check → compaction ---
-        if self.usage_data and sp.model_info:
-            from app.session.compaction import should_compact
+    def _check_context_overflow(self) -> bool:
+        """Return True if usage_data exceeds the safe compaction threshold."""
+        sp = self._sp
+        if not (self.usage_data and sp.model_info):
+            return False
 
-            max_ctx = _get_effective_context_window(sp.model_info) or sp.model_info.capabilities.max_context
-            max_out = sp.model_info.capabilities.max_output
-            if should_compact(self.usage_data, max_ctx, model_max_output=max_out):
-                logger.info("Context overflow detected, running compaction")
-                return "compact"
+        from app.session.compaction import should_compact
 
-        # --- Run middleware on_step_complete ---
-        if self._mw_ctx is not None:
-            await sp.middleware_chain.run_on_step_complete(self._mw_ctx)
-
-        # --- Determine continuation ---
-        if not has_tool_calls:
-            return "stop"
-
-        return "continue"
+        max_ctx = (
+            _get_effective_context_window(sp.model_info)
+            or sp.model_info.capabilities.max_context
+        )
+        max_out = sp.model_info.capabilities.max_output
+        if should_compact(self.usage_data, max_ctx, model_max_output=max_out):
+            logger.info("Context overflow detected, running compaction")
+            return True
+        return False
 
 
 # ---------------------------------------------------------------------------
