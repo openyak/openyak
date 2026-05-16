@@ -520,7 +520,7 @@ class SessionPrompt:
                 )
         self.assistant_msg_id = assistant_msg.id
 
-    def _accumulate_step_metrics(self, processor: Any) -> None:
+    def _accumulate_step_metrics(self, processor: "SessionProcessor") -> None:
         """Roll a finished processor's per-step cost/tokens/finish_reason into cross-step totals."""
         if processor.has_text:
             self._has_any_text = True
