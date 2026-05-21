@@ -36,6 +36,7 @@ class GenericOpenAIProvider(OpenAICompatProvider):
         base_url: str,
         kind: str = "openai_compat",
         default_headers: dict[str, str] | None = None,
+        models_override: list[dict] | None = None,
     ):
         super().__init__(
             api_key=api_key,
@@ -47,6 +48,14 @@ class GenericOpenAIProvider(OpenAICompatProvider):
         self._provider_id = provider_id
         self._kind = kind
         self._models_cache: list[ModelInfo] | None = None
+        # Manual model declaration — when non-empty, skip /v1/models entirely
+        # and synthesize ModelInfo from the user's list. Used by custom
+        # endpoints where /v1/models is unreliable or shouldn't be exposed.
+        self._models_override = [
+            {"id": m["id"], "name": m.get("name") or m["id"]}
+            for m in (models_override or [])
+            if isinstance(m, dict) and m.get("id")
+        ]
 
     @property
     def id(self) -> str:
@@ -56,6 +65,23 @@ class GenericOpenAIProvider(OpenAICompatProvider):
         """Return models with metadata. Merges models.dev + yakAgent catalog + API."""
         if self._models_cache is not None:
             return self._models_cache
+
+        # Manual override wins over every discovery path.
+        if self._models_override:
+            models = [
+                ModelInfo(
+                    id=m["id"],
+                    name=m["name"],
+                    provider_id=self._provider_id,
+                    capabilities=ModelCapabilities(
+                        function_calling=True,
+                        max_context=_infer_context_from_name(m["id"]),
+                    ),
+                )
+                for m in self._models_override
+            ]
+            self._models_cache = models
+            return models
 
         models = []
         seen_ids = set()

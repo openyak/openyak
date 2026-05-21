@@ -19,6 +19,8 @@ def create_provider(
     api_key: str,
     *,
     base_url: str | None = None,
+    models_override: list[dict] | None = None,
+    extra_headers: dict[str, str] | None = None,
 ) -> BaseProvider:
     """Create a desktop provider by ID.
 
@@ -31,6 +33,10 @@ def create_provider(
         provider_id: Provider ID from the catalog.
         api_key: API key for the provider.
         base_url: Override base URL (required for Azure).
+        models_override: Custom-endpoint-only. Manual model list; when non-empty
+            the provider skips the /v1/models discovery call.
+        extra_headers: Custom-endpoint-only. Extra headers merged into every
+            outgoing chat-completions request.
 
     Raises:
         ValueError: If provider_id is not in the catalog.
@@ -73,12 +79,20 @@ def create_provider(
                 f"Provider '{provider_id}' requires a base_url. "
                 f"Ensure the corresponding setting is provided."
             )
+
+        merged_headers: dict[str, str] | None = None
+        if pdef.default_headers or extra_headers:
+            merged_headers = dict(pdef.default_headers or {})
+            if extra_headers:
+                merged_headers.update(extra_headers)
+
         return GenericOpenAIProvider(
             api_key=api_key,
             provider_id=provider_id,
             base_url=effective_url,
             kind=pdef.kind,
-            default_headers=pdef.default_headers or None,
+            default_headers=merged_headers,
+            models_override=models_override,
         )
 
     raise ValueError(f"Unknown provider kind: '{pdef.kind}' for provider '{provider_id}'")

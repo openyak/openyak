@@ -217,6 +217,71 @@ class RapidMLXManager:
             raise RuntimeError("Rapid-MLX was not started by OpenYak in this session.")
         await _terminate_pid(pid)
 
+    async def uninstall(self, *, delete_models: bool = True) -> dict[str, Any]:
+        """Clear all OpenYak-managed Rapid-MLX state.
+
+        The binary itself is brew/pip-managed (we didn't install it), so this
+        only stops the runtime, deletes the model cache, and returns the
+        commands the user must run to fully remove the binary.
+        """
+        stopped = False
+        # Stop the runtime regardless of whether we started it — covers
+        # leftover processes from a prior session too.
+        if self.is_managed_process_alive or await _rapid_mlx_running(
+            _base_url_for_port(self._port)
+        ):
+            try:
+                await self.stop()
+                stopped = True
+            except Exception as exc:
+                # Best-effort: log and continue. Even if stop fails, we
+                # still want to delete cached models.
+                import logging
+                logging.getLogger(__name__).warning(
+                    "rapid-mlx stop during uninstall failed: %s", exc
+                )
+
+        removed: list[str] = []
+        errors: list[dict[str, str]] = []
+        freed_bytes = 0
+        if delete_models:
+            # Dedupe — multiple aliases can resolve to the same repo.
+            hf_cache = _huggingface_cache_dir()
+            seen: set[str] = set()
+            for alias in _ALIAS_REPOS:
+                repo = resolve_rapid_mlx_repo(alias)
+                if repo in seen or "/" not in repo:
+                    continue
+                seen.add(repo)
+                cache_dir = hf_cache / f"models--{repo.replace('/', '--')}"
+                if not cache_dir.exists():
+                    continue
+                try:
+                    size = sum(
+                        f.stat().st_size
+                        for f in cache_dir.rglob("*")
+                        if f.is_file()
+                    )
+                except Exception:
+                    size = 0
+                try:
+                    shutil.rmtree(cache_dir, ignore_errors=True)
+                    removed.append(repo)
+                    freed_bytes += size
+                except Exception as exc:
+                    errors.append({"repo": repo, "error": str(exc)})
+
+        return {
+            "stopped": stopped,
+            "removed_models": removed,
+            "freed_bytes": freed_bytes,
+            "errors": errors,
+            "binary_install_commands": [
+                "brew uninstall raullenchai/rapid-mlx/rapid-mlx",
+                "pip uninstall rapid-mlx",
+            ],
+        }
+
     async def _version(self) -> str | None:
         executable = self.executable_path
         if not executable:
