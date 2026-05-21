@@ -333,7 +333,9 @@ export function RapidMLXPanel() {
                       ? "Wait for the current stop to finish"
                       : startMutation.isPending
                         ? "Wait for the current start to finish"
-                        : "Uninstall Rapid-MLX from OpenYak"
+                        : removeMutation.isPending
+                          ? "Wait for the model removal to finish"
+                          : "Uninstall Rapid-MLX from OpenYak"
                   }
                 >
                   <PowerOff className="mr-1 h-3 w-3" />
