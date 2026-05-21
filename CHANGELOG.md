@@ -113,9 +113,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/), and this project
 
 ## [1.1.3] - 2026-04-24
 
-### Changed
+### Security
 
-- **backend (security):** Hardening pass for the local HTTP API — tightened request authentication, origin validation, and CORS scope around the loopback-bound server. No functional change for typical desktop usage; details will be expanded in a follow-up note once the upgrade window has passed.
+- **backend (local HTTP API):** Fixed an unauthenticated CSRF chain in the loopback-bound desktop API that allowed any malicious web page the user visited to reach `127.0.0.1:<random port>` cross-origin and execute arbitrary shell commands through the build agent (CWE-352 / CWE-306 / CWE-346 / CWE-94 / CWE-942). CVSS 9.6 (`CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:H/I:H/A:H`). Tracked as [GHSA-ccxp-q2w5-27jw](https://github.com/openyak/openyak/security/advisories/GHSA-ccxp-q2w5-27jw) / CVE-2026-46409. Affected: all releases up to and including v1.1.2.
+  - **Fix.** New pure-ASGI `CsrfProtectionMiddleware` rejects mutating requests (POST/PUT/PATCH/DELETE) whose `Origin` (or `Referer` fallback) is not in an explicit allowlist; the literal `"null"` origin is rejected. Body `Content-Type` is restricted to `application/json`, `multipart/form-data`, and `application/x-www-form-urlencoded`. CORS narrowed from `allow_origins=["*"]` to a regex matching only the OpenYak frontend (Tauri shell + loopback). Auth middleware is now deny-by-default with an explicit public allowlist; per-run session-token files are written `0600`. The tunnel-URL allowlist is dynamic so cloudflared restarts swap origins atomically. Native API consumers (Tauri shell, mobile companion, curl, CI scripts) are unaffected — they don't send `Origin` and continue to work.
+  - **Coverage.** 38 unit tests cover the Origin allowlist, hostname-spoofing variants (subdomain tricks, userinfo, decimal/hex-encoded IPs, punycode), IPv6 loopback, Referer precedence, case-insensitive scheme/host, Content-Type enforcement, CORS preflight behavior, and the `/v1/*` (OpenAI-compat) path that earlier drafts missed.
+  - **Credit.** Reported responsibly by Arturo Melgarejo Galindo ([@Arturo0x90](https://github.com/Arturo0x90)) with a full PoC, written chain analysis, and three rounds of review on the private patch — including catching the `/v1/*` path-allowlist gap and pointing out that defense-in-depth `Origin` checks don't replace authentication as the primary control. Coordinated disclosure handled professionally throughout.
+
+This entry replaces the original "Local API Hardening" placeholder. The fix has been live since 2026-04-24 (auto-update); advisory publication was originally scheduled 2026-05-08 and slipped to 2026-05-21.
 
 ## [1.1.2] - 2026-04-22
 
