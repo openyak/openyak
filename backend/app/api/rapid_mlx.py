@@ -45,6 +45,14 @@ class RapidMLXRemoveRequest(BaseModel):
     alias: str = Field(..., min_length=1, max_length=200)
 
 
+class RapidMLXUninstallResponse(BaseModel):
+    stopped: bool = False
+    removed_models: list[str] = Field(default_factory=list)
+    freed_bytes: int = 0
+    errors: list[dict[str, str]] = Field(default_factory=list)
+    binary_install_commands: list[str] = Field(default_factory=list)
+
+
 def _get_manager(request: Request):
     mgr = getattr(request.app.state, "rapid_mlx_manager", None)
     if mgr is None:
@@ -121,6 +129,32 @@ async def start_rapid_mlx(
     if data["running"]:
         await _register_rapid_mlx_provider(base_url, registry, settings)
     return RapidMLXRuntimeStatus(**data)
+
+
+@router.delete("/rapid-mlx/uninstall", response_model=RapidMLXUninstallResponse)
+async def uninstall_rapid_mlx(
+    request: Request,
+    registry: ProviderRegistryDep,
+    settings: SettingsDep,
+    delete_models: bool = True,
+) -> RapidMLXUninstallResponse:
+    """Stop Rapid-MLX, delete cached models, and clear OpenYak's config.
+
+    The brew/pip-managed binary itself is left to the user — the response
+    includes the commands they need to run for a full removal.
+    """
+    mgr = _get_manager(request)
+    summary = await mgr.uninstall(delete_models=delete_models)
+
+    registry.unregister("rapid-mlx")
+
+    from app.api.config import _remove_env_key
+    _remove_env_key("OPENYAK_RAPID_MLX_BASE_URL")
+    _remove_env_key("OPENYAK_RAPID_MLX_MODEL")
+    settings.rapid_mlx_base_url = ""
+    settings.rapid_mlx_model = ""
+
+    return RapidMLXUninstallResponse(**summary)
 
 
 @router.post("/rapid-mlx/stop", response_model=RapidMLXRuntimeStatus)

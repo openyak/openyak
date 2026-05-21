@@ -105,6 +105,66 @@ class ProviderRegistry:
         )
         return result
 
+    async def refresh_provider(self, provider_id: str) -> list[ModelInfo]:
+        """Refresh just one provider's models, leaving the rest untouched.
+
+        Used by self-healing paths (e.g. GET /config/providers) that need to
+        re-register a single dropped provider without paying for a full
+        cross-provider refresh.
+
+        Returns the provider's model list, or ``[]`` if the provider is
+        absent or refresh failed.
+        """
+        provider = self._providers.get(provider_id)
+        if provider is None:
+            return []
+
+        pid, _, models, error = await self._refresh_provider_models(provider_id, provider)
+        if error is not None:
+            logger.warning("Failed to refresh models for %s: %s", pid, error)
+            return []
+
+        # Drop this provider's prior rows, then append fresh ones.
+        self._full_models = [
+            (p, m) for p, m in self._full_models if p.id != pid
+        ]
+        # Rebuild the quick-lookup index entries that came from this
+        # provider — direct providers still win over aggregators on
+        # collision. We only touch keys this provider can affect.
+        affected_ids = {
+            mid for mid, (p, _) in self._model_index.items() if p.id == pid
+        } | {m.id for m in models}
+
+        for m in models:
+            self._full_models.append((provider, m))
+
+        # Rebuild the index entries for every model id this provider can
+        # affect — re-scan all (provider, model) rows for each id and pick
+        # the lowest-priority winner (direct beats aggregator).
+        for mid in affected_ids:
+            best_entry: tuple[BaseProvider, ModelInfo] | None = None
+            best_priority: int | None = None
+            for p, m in self._full_models:
+                if m.id != mid:
+                    continue
+                pri = _provider_priority(p.id)
+                if best_priority is None or pri < best_priority:
+                    best_entry = (p, m)
+                    best_priority = pri
+            if best_entry is None:
+                self._model_index.pop(mid, None)
+            else:
+                self._model_index[mid] = best_entry
+
+        logger.info(
+            "Refreshed provider %s: %d models (index=%d, total=%d)",
+            pid,
+            len(models),
+            len(self._model_index),
+            len(self._full_models),
+        )
+        return models
+
     async def _refresh_provider_models(
         self,
         pid: str,

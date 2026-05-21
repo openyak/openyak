@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import uuid
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -28,9 +27,11 @@ from app.schemas.provider import (
     ApiKeyUpdate,
     CustomEndpointConfig,
     CustomEndpointCreate,
+    CustomEndpointModel,
     CustomEndpointUpdate,
     ProviderInfo,
     ProviderKeyUpdate,
+    RESERVED_CUSTOM_SLUGS,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,34 @@ def _mask_key(key: str) -> str:
     return f"{key[:7]}...{key[-4:]}"
 
 
+def _mask_header_value(value: str) -> str:
+    """Mask a header value so the form can show what's persisted without
+    leaking the credential. Keep the first 4 / last 2 chars on long
+    values; short ones get the universal ``****`` treatment."""
+    if not value:
+        return ""
+    if len(value) <= 8:
+        return "****"
+    return f"{value[:4]}...{value[-2:]}"
+
+
+def _mask_headers(headers: dict[str, str] | None) -> dict[str, str] | None:
+    if not headers:
+        return None
+    return {k: _mask_header_value(v) for k, v in headers.items()}
+
+
+def _models_for_response(ce: dict[str, Any]) -> list[CustomEndpointModel] | None:
+    raw = ce.get("models") or []
+    if not isinstance(raw, list) or not raw:
+        return None
+    out: list[CustomEndpointModel] = []
+    for m in raw:
+        if isinstance(m, dict) and isinstance(m.get("id"), str) and m["id"]:
+            out.append(CustomEndpointModel(id=m["id"], name=m.get("name")))
+    return out or None
+
+
 def _build_custom_endpoint_info(
     ce: dict[str, Any],
     *,
@@ -73,6 +102,9 @@ def _build_custom_endpoint_info(
         model_count=model_count,
         status=status,
         base_url=ce.get("base_url"),
+        slug=ce.get("slug"),
+        models=_models_for_response(ce),
+        headers=_mask_headers(ce.get("headers")),
     )
 
 
@@ -373,6 +405,30 @@ async def list_providers(settings: SettingsDep, registry: ProviderRegistryDep) -
         is_disabled = pid in disabled or not ce.get("enabled", True)
         provider = registry.get_provider(pid)
 
+        # Heal-on-read: if persisted as enabled but the registry has no
+        # provider for it (stale unregister, dropped during a partial
+        # update, etc.), try to register from the persisted config. The
+        # cost is bounded — one rebuild per missing endpoint per page
+        # load — and most healing paths are instant because manual model
+        # lists skip the /v1/models discovery call. We refresh only this
+        # provider's models rather than the whole registry so unrelated
+        # providers don't get re-polled on every settings page load.
+        if not is_disabled and provider is None:
+            try:
+                healed = create_desktop_provider(
+                    pid,
+                    ce.get("api_key", ""),
+                    base_url=ce.get("base_url"),
+                    models_override=ce.get("models") or None,
+                    extra_headers=ce.get("headers") or None,
+                )
+                await healed.list_models()
+                registry.register(healed)
+                await registry.refresh_provider(pid)
+                provider = healed
+            except Exception as e:
+                logger.warning("Heal-on-read failed for %s: %s", pid, e)
+
         if is_disabled:
             result.append(_build_custom_endpoint_info(ce, enabled=False, status="disabled"))
         elif provider:
@@ -550,14 +606,32 @@ async def create_custom_endpoint(
     body: CustomEndpointCreate, settings: SettingsDep, registry: ProviderRegistryDep
 ) -> ProviderInfo:
     """Create a new custom endpoint."""
+    slug = body.slug
     base_url = body.base_url
     api_key = body.api_key.strip() if body.api_key else ""
     name = body.name.strip() or "Custom Endpoint"
+    models_payload = [{"id": m.id, "name": m.name} for m in body.models]
+    headers_payload = dict(body.headers or {})
 
-    endpoint_id = f"custom_{uuid.uuid4().hex[:8]}"
+    endpoint_id = f"custom_{slug}"
+
+    # Uniqueness: slug must not collide with an existing custom endpoint
+    # nor with any reserved provider name (slug validator already rejects
+    # reserved names; the catalog check defends against future additions).
+    existing = get_custom_endpoints(settings)
+    if any(e.get("slug") == slug or e.get("id") == endpoint_id for e in existing):
+        raise HTTPException(400, f"Provider ID '{slug}' is already in use")
+    if slug in PROVIDER_CATALOG or slug in RESERVED_CUSTOM_SLUGS:
+        raise HTTPException(400, f"Provider ID '{slug}' is reserved")
 
     try:
-        test_provider = create_desktop_provider(endpoint_id, api_key, base_url=base_url)
+        test_provider = create_desktop_provider(
+            endpoint_id,
+            api_key,
+            base_url=base_url,
+            models_override=models_payload or None,
+            extra_headers=headers_payload or None,
+        )
         models = await test_provider.list_models()
     except Exception as e:
         logger.warning("Failed validation for custom endpoint %s: %s", name, e)
@@ -565,12 +639,17 @@ async def create_custom_endpoint(
 
     async with _custom_endpoints_lock:
         endpoints = get_custom_endpoints(settings)
+        if any(e.get("slug") == slug or e.get("id") == endpoint_id for e in endpoints):
+            raise HTTPException(400, f"Provider ID '{slug}' is already in use")
         new_config = {
             "id": endpoint_id,
+            "slug": slug,
             "name": name,
             "base_url": base_url,
             "api_key": api_key,
-            "enabled": True
+            "enabled": True,
+            "models": models_payload,
+            "headers": headers_payload,
         }
         endpoints.append(new_config)
 
@@ -583,11 +662,7 @@ async def create_custom_endpoint(
     except Exception as e:
         logger.warning("Failed to refresh models after adding custom endpoint %s: %s", endpoint_id, e)
 
-    return ProviderInfo(
-        id=endpoint_id, name=name, is_configured=True, enabled=True,
-        masked_key=_mask_key(api_key) if api_key else None,
-        model_count=len(models), status="connected", base_url=base_url
-    )
+    return _build_custom_endpoint_info(new_config, enabled=True, status="connected", model_count=len(models))
 
 @router.delete("/config/custom/{endpoint_id}", response_model=ProviderInfo)
 async def delete_custom_endpoint(
@@ -621,21 +696,18 @@ async def update_custom_endpoint(
     settings: SettingsDep,
     registry: ProviderRegistryDep,
 ) -> ProviderInfo:
-    """Update a custom endpoint (partial update)."""
+    """Update a custom endpoint (partial update). Slug is immutable."""
     models: list = []
     test_provider = None
-    needs_rebuild = body.base_url is not None or body.api_key is not None
 
     # --- Phase 1: read current config (under lock) ---
     async with _custom_endpoints_lock:
         endpoints = get_custom_endpoints(settings)
 
         found = None
-        found_idx = -1
-        for i, e in enumerate(endpoints):
+        for e in endpoints:
             if e.get("id") == endpoint_id:
                 found = e
-                found_idx = i
                 break
 
         if not found:
@@ -645,11 +717,49 @@ async def update_custom_endpoint(
     base_url = body.base_url if body.base_url is not None else found.get("base_url", "")
     api_key = body.api_key.strip() if body.api_key is not None else found.get("api_key", "")
     enabled = body.enabled if body.enabled is not None else found.get("enabled", True)
+    prev_enabled = bool(found.get("enabled", True))
+
+    # Any change to fields that flow into the provider constructor requires
+    # rebuilding. Also rebuild when re-enabling a previously disabled
+    # endpoint — the toggle-off path explicitly unregisters the provider,
+    # so the on-path has to put it back.
+    needs_rebuild = (
+        body.base_url is not None
+        or body.api_key is not None
+        or body.models is not None
+        or body.headers is not None
+        or (enabled and not prev_enabled)
+    )
+    if body.models is not None:
+        models_payload = [{"id": m.id, "name": m.name} for m in body.models]
+    else:
+        models_payload = list(found.get("models") or [])
+    # Headers follow JSON Merge Patch semantics on PATCH — body.headers is
+    # a delta, never a full replacement. This stops the edit form's
+    # masked round-trip (we mask values on GET, so we can't safely echo
+    # them back on save) from silently wiping headers the user hasn't
+    # touched.
+    existing_headers: dict[str, str] = dict(found.get("headers") or {})
+    if body.headers is None:
+        headers_payload = existing_headers
+    else:
+        headers_payload = dict(existing_headers)
+        for key, value in body.headers.items():
+            if value is None:
+                headers_payload.pop(key, None)
+            else:
+                headers_payload[key] = value
 
     # --- Phase 2: validate (outside lock — network I/O) ---
     if needs_rebuild:
         try:
-            test_provider = create_desktop_provider(endpoint_id, api_key, base_url=base_url)
+            test_provider = create_desktop_provider(
+                endpoint_id,
+                api_key,
+                base_url=base_url,
+                models_override=models_payload or None,
+                extra_headers=headers_payload or None,
+            )
             models = await test_provider.list_models()
         except Exception as e:
             logger.warning("Failed validation for custom endpoint %s: %s", name, e)
@@ -666,12 +776,16 @@ async def update_custom_endpoint(
         if found_idx == -1:
             raise HTTPException(404, "Custom endpoint was deleted during update")
 
+        prior = endpoints[found_idx]
         updated_config = {
             "id": endpoint_id,
+            "slug": prior.get("slug") or endpoint_id[len("custom_"):],
             "name": name,
             "base_url": base_url,
             "api_key": api_key,
             "enabled": enabled,
+            "models": models_payload,
+            "headers": headers_payload,
         }
         endpoints[found_idx] = updated_config
 
@@ -688,10 +802,11 @@ async def update_custom_endpoint(
     elif not enabled:
         registry.unregister(endpoint_id)
 
-    return ProviderInfo(
-        id=endpoint_id, name=name, is_configured=True, enabled=enabled,
-        masked_key=_mask_key(api_key) if api_key else None,
-        model_count=len(models), status="connected" if enabled else "disabled", base_url=base_url
+    return _build_custom_endpoint_info(
+        updated_config,
+        enabled=enabled,
+        status="connected" if enabled else "disabled",
+        model_count=len(models),
     )
 
 @router.get("/config/local", response_model=LocalProviderStatus)

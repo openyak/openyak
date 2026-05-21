@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { AlertCircle, Loader2, LogOut } from "lucide-react";
+import { AlertCircle, Loader2, LogOut, Pencil } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { errorToMessage } from "@/lib/errors";
 import { API, queryKeys } from "@/lib/constants";
 import type { LocalProviderStatus, ProviderInfo } from "@/types/usage";
 import { CustomEndpointForm } from "@/components/settings/providers/custom-endpoint-form";
+import { CustomEndpointEditForm } from "@/components/settings/providers/custom-endpoint-edit-form";
 
 function extractApiDetail(err: unknown, fallback: string): string {
   if (!(err instanceof ApiError)) return fallback;
@@ -32,6 +33,7 @@ export function CustomEndpointPanel({
   const qc = useQueryClient();
 
   const [mutatingId, setMutatingId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [providerError, setProviderError] = useState<Record<string, string>>(
     {},
   );
@@ -153,28 +155,68 @@ export function CustomEndpointPanel({
               )}
             </div>
           )}
-          {customProviders.map((p) => (
+          {customProviders.map((p) => {
+            const headerCount = p.headers
+              ? Object.keys(p.headers).length
+              : 0;
+            const manualModelCount = p.models?.length ?? 0;
+            return (
             <div
               key={p.id}
               className={`p-3 border border-[var(--border-primary)] rounded-lg bg-[var(--surface-secondary)] ${!p.enabled ? "opacity-50" : ""}`}
             >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="font-semibold">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs">
+                  <span className="font-semibold truncate">
                     {p.name || t("customEndpoint")}
                   </span>
-                  <span className="text-[var(--text-secondary)] font-mono ml-2 text-ui-3xs bg-[var(--surface-primary)] px-2 py-0.5 rounded">
+                  {p.slug && (
+                    <span className="text-[var(--text-tertiary)] font-mono text-ui-3xs bg-[var(--surface-primary)] px-1.5 py-0.5 rounded">
+                      {p.slug}
+                    </span>
+                  )}
+                  <span className="text-[var(--text-secondary)] font-mono text-ui-3xs bg-[var(--surface-primary)] px-2 py-0.5 rounded truncate max-w-[260px]">
                     {p.base_url}
                   </span>
                   {p.masked_key && (
-                    <span className="text-[var(--text-tertiary)] font-mono ml-2 text-ui-3xs">
+                    <span className="text-[var(--text-tertiary)] font-mono text-ui-3xs">
                       Key: {p.masked_key}
                     </span>
                   )}
+                  {headerCount > 0 && (
+                    <span
+                      className="text-[var(--text-tertiary)] text-ui-3xs bg-[var(--surface-primary)] px-1.5 py-0.5 rounded"
+                      title={Object.keys(p.headers ?? {}).join(", ")}
+                    >
+                      {t("customHeadersBadge", {
+                        defaultValue: "{{count}} headers",
+                        count: headerCount,
+                      })}
+                    </span>
+                  )}
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-ui-3xs text-[var(--text-tertiary)]">
-                    {p.model_count} models
+                <div className="flex items-center gap-2 shrink-0">
+                  <span
+                    className="text-ui-3xs text-[var(--text-tertiary)]"
+                    title={
+                      manualModelCount > 0
+                        ? t("customModelsManualTitle", {
+                            defaultValue: "Manually declared",
+                          })
+                        : t("customModelsAutoTitle", {
+                            defaultValue: "Auto-discovered via /v1/models",
+                          })
+                    }
+                  >
+                    {manualModelCount > 0
+                      ? t("customModelCountManual", {
+                          defaultValue: "{{count}} models (manual)",
+                          count: p.model_count,
+                        })
+                      : t("customModelCountAuto", {
+                          defaultValue: "{{count}} models",
+                          count: p.model_count,
+                        })}
                   </span>
                   <button
                     type="button"
@@ -205,6 +247,23 @@ export function CustomEndpointPanel({
                   <Button
                     variant="ghost"
                     size="sm"
+                    className="h-6 px-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                    onClick={() =>
+                      setEditingId((curr) => (curr === p.id ? null : p.id))
+                    }
+                    title={
+                      editingId === p.id
+                        ? t("cancel", { defaultValue: "Cancel" })
+                        : t("editProvider", {
+                            defaultValue: "Edit provider",
+                          })
+                    }
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     className="h-6 px-2 text-[var(--color-destructive)] hover:text-[var(--color-destructive)] hover:bg-[var(--color-destructive)]/10"
                     onClick={() => deleteCustomEndpoint.mutate(p.id)}
                     disabled={mutatingId === p.id}
@@ -217,8 +276,15 @@ export function CustomEndpointPanel({
                   </Button>
                 </div>
               </div>
+              {editingId === p.id && (
+                <CustomEndpointEditForm
+                  endpoint={p}
+                  onClose={() => setEditingId(null)}
+                />
+              )}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

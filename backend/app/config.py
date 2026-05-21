@@ -191,10 +191,58 @@ def get_settings() -> Settings:
     return Settings()
 
 def get_custom_endpoints(settings: Settings) -> list[dict[str, Any]]:
+    """Read + normalize the persisted custom endpoint list.
+
+    Old entries (pre-v2 schema) only have ``id/name/base_url/api_key/enabled``.
+    We synthesize the new fields on read so the rest of the app can rely on
+    them being present:
+
+    * ``slug``: derived from ``id`` by stripping the ``custom_`` prefix
+      (so a UUID-suffixed legacy ID like ``custom_abc12345`` reads back as
+      slug ``abc12345`` — ugly but stable and unique).
+    * ``models``: empty list (= auto-discover via /v1/models).
+    * ``headers``: empty dict.
+    """
     try:
         data = json.loads(settings.custom_endpoints)
-        if isinstance(data, list):
-            return data
     except Exception:
-        pass
-    return []
+        return []
+    if not isinstance(data, list):
+        return []
+
+    normalized: list[dict[str, Any]] = []
+    for entry in data:
+        if not isinstance(entry, dict):
+            continue
+        endpoint_id = str(entry.get("id", "") or "")
+        if not endpoint_id:
+            continue
+        slug = entry.get("slug")
+        if not isinstance(slug, str) or not slug:
+            slug = endpoint_id[len("custom_"):] if endpoint_id.startswith("custom_") else endpoint_id
+
+        raw_models = entry.get("models")
+        models: list[dict[str, Any]] = []
+        if isinstance(raw_models, list):
+            for m in raw_models:
+                if isinstance(m, dict) and isinstance(m.get("id"), str) and m["id"]:
+                    models.append({"id": m["id"], "name": m.get("name")})
+
+        raw_headers = entry.get("headers")
+        headers: dict[str, str] = {}
+        if isinstance(raw_headers, dict):
+            for k, v in raw_headers.items():
+                if isinstance(k, str) and isinstance(v, str) and k.strip():
+                    headers[k.strip()] = v
+
+        normalized.append({
+            "id": endpoint_id,
+            "slug": slug,
+            "name": entry.get("name") or "Custom Endpoint",
+            "base_url": entry.get("base_url", "") or "",
+            "api_key": entry.get("api_key", "") or "",
+            "enabled": bool(entry.get("enabled", True)),
+            "models": models,
+            "headers": headers,
+        })
+    return normalized

@@ -284,7 +284,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             pid = ce["id"]
             if pid in disabled:
                 continue
-            provider = create_desktop_provider(pid, ce.get("api_key", ""), base_url=ce.get("base_url"))
+            provider = create_desktop_provider(
+                pid,
+                ce.get("api_key", ""),
+                base_url=ce.get("base_url"),
+                models_override=ce.get("models") or None,
+                extra_headers=ce.get("headers") or None,
+            )
             registry.register(provider)
             byok_registered += 1
             should_refresh_models = True

@@ -59,6 +59,11 @@ export interface ApiKeyStatus {
   is_valid: boolean | null;
 }
 
+export interface CustomEndpointModel {
+  id: string;
+  name?: string | null;
+}
+
 export interface ProviderInfo {
   id: string;
   name: string;
@@ -68,6 +73,11 @@ export interface ProviderInfo {
   model_count: number;
   status: "connected" | "error" | "unconfigured" | "disabled";
   base_url?: string;
+  // Custom-endpoint-only fields. Built-in providers omit these.
+  slug?: string | null;
+  models?: CustomEndpointModel[] | null;
+  /** Header values are masked server-side; safe to render as-is. */
+  headers?: Record<string, string> | null;
 }
 
 export interface LocalProviderStatus {

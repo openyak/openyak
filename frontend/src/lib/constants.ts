@@ -301,6 +301,8 @@ export const API = {
     REMOVE: "/api/rapid-mlx/remove",
     START: "/api/rapid-mlx/start",
     STOP: "/api/rapid-mlx/stop",
+    UNINSTALL: (deleteModels: boolean) =>
+      `/api/rapid-mlx/uninstall?delete_models=${deleteModels}` as const,
   },
   AGENTS: "/api/agents",
   MODELS: "/api/models",
