@@ -2,7 +2,7 @@
 name = "openyak-desktop"
 version = "1.1.11"
 description = "OpenYak — local-first AI agent for desktop work"
-license = "MIT"
+license = "Apache-2.0"
 edition = "2021"
 
 [lib]

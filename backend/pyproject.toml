@@ -2,7 +2,7 @@
 name = "openyak"
 version = "1.1.9"
 description = "Your local AI assistant — private, powerful, personal"
-license = "MIT"
+license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = [
     # Web framework

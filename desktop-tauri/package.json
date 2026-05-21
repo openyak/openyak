@@ -1,7 +1,7 @@
 {
   "name": "openyak-desktop-tauri",
   "private": true,
-  "license": "MIT",
+  "license": "Apache-2.0",
   "devDependencies": {
     "@tauri-apps/cli": "^2.10.1"
   }

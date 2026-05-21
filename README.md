@@ -212,4 +212,4 @@ Enable remote access in settings, scan the QR code, and open the mobile web clie
 
 ## License
 
-[MIT](LICENSE)
+[Apache-2.0](LICENSE)

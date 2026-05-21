@@ -2,7 +2,7 @@
   "name": "openyak-frontend",
   "version": "1.1.11",
   "private": true,
-  "license": "MIT",
+  "license": "Apache-2.0",
   "scripts": {
     "dev": "next dev --turbopack",
     "postinstall": "cp node_modules/pdfjs-dist/build/pdf.worker.min.mjs public/pdf.worker.min.mjs 2>/dev/null || true; rm -rf public/cmaps public/standard_fonts 2>/dev/null; cp -R node_modules/pdfjs-dist/cmaps public/cmaps 2>/dev/null || true; cp -R node_modules/pdfjs-dist/standard_fonts public/standard_fonts 2>/dev/null || true",

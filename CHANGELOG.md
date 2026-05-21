@@ -6,6 +6,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/), and this project
 
 ## [Unreleased]
 
+### Changed
+
+- **license:** Changed from MIT to Apache-2.0. Updated `LICENSE`, all `package.json` files, `backend/pyproject.toml`, `desktop-tauri/src-tauri/Cargo.toml`, and README badges. Apache-2.0 adds an explicit patent grant and a `NOTICE` mechanism for downstream attribution.
+
 ## [1.1.11] - 2026-05-21
 
 ### Added
