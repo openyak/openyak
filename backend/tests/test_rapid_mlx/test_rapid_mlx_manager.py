@@ -187,3 +187,158 @@ async def test_rapid_mlx_start_replaces_managed_process_on_new_port(
             "19000",
         )
     ]
+
+
+# ---------------------------------------------------------------------------
+# uninstall — freed_bytes accounting + HF cache cleanup
+# ---------------------------------------------------------------------------
+
+
+def _make_hf_cache(root: Path) -> Path:
+    """Create a fake HuggingFace hub directory at ``<root>/hub``."""
+    hub = root / "hub"
+    hub.mkdir(parents=True, exist_ok=True)
+    return hub
+
+
+def _make_cached_repo(hub: Path, repo: str, blob_sizes: list[int]) -> Path:
+    """Lay out a model dir mirroring how HF actually structures the cache:
+    ``blobs/<sha>`` are the real files, ``snapshots/<rev>/<name>`` are
+    symlinks pointing at them.
+
+    Returns the model dir.
+    """
+    model_dir = hub / f"models--{repo.replace('/', '--')}"
+    blobs_dir = model_dir / "blobs"
+    blobs_dir.mkdir(parents=True)
+    snapshots_dir = model_dir / "snapshots" / "rev1"
+    snapshots_dir.mkdir(parents=True)
+    refs_dir = model_dir / "refs"
+    refs_dir.mkdir(parents=True)
+    (refs_dir / "main").write_text("rev1", encoding="utf-8")
+
+    for i, size in enumerate(blob_sizes):
+        sha = f"abc{i}"
+        blob = blobs_dir / sha
+        blob.write_bytes(b"\0" * size)
+        # snapshot file is a symlink → blob
+        snap = snapshots_dir / f"file{i}.bin"
+        snap.symlink_to(blob)
+    return model_dir
+
+
+@pytest.mark.asyncio
+async def test_uninstall_filters_symlinks_when_counting_freed_bytes(
+    monkeypatch, tmp_path: Path
+):
+    """HF cache layout uses snapshots/<rev>/file → blobs/<sha> symlinks.
+    rglob+stat follows symlinks, so naively summing every "file" would
+    double-count the real blob through its snapshot pointer. The fix
+    must skip symlinks and count blobs only.
+    """
+    hub = _make_hf_cache(tmp_path)
+    # Two blobs: 1000 + 2500 bytes — both reachable via symlinks too.
+    # Plus the refs/main pointer file (4 bytes — "rev1").
+    target_sizes = [1000, 2500]
+    expected_freed = sum(target_sizes) + len("rev1")
+
+    # Use the first known alias from the catalog so resolve_rapid_mlx_repo
+    # produces a stable repo path.
+    from app.rapid_mlx.catalog import RAPID_MLX_ALIAS_REPOS, resolve_rapid_mlx_repo
+
+    target_alias = next(iter(RAPID_MLX_ALIAS_REPOS))
+    target_repo = resolve_rapid_mlx_repo(target_alias)
+    _make_cached_repo(hub, target_repo, target_sizes)
+    naive_double = sum(target_sizes) * 2 + len("rev1")
+
+    monkeypatch.setattr(manager_module, "_huggingface_cache_dir", lambda: hub)
+    # Treat the binary as already gone — uninstall.stop() should no-op
+    # cleanly (nothing is running) and we focus on the cleanup path.
+    monkeypatch.setattr(
+        manager_module,
+        "_rapid_mlx_running",
+        lambda _url: _coro(False),
+    )
+
+    mgr = RapidMLXManager(tmp_path)
+
+    summary = await mgr.uninstall(delete_models=True)
+
+    assert summary["removed_models"] == [target_repo]
+    # The big check: freed_bytes is the real blob size, NOT 2× (which is
+    # what we'd get if symlinks weren't filtered).
+    assert summary["freed_bytes"] == expected_freed, (
+        f"got {summary['freed_bytes']}, expected {expected_freed} "
+        f"(naive symlink-following would have given {naive_double})"
+    )
+    # Directory is actually gone.
+    assert not (hub / f"models--{target_repo.replace('/', '--')}").exists()
+
+
+@pytest.mark.asyncio
+async def test_uninstall_skips_uncached_models(monkeypatch, tmp_path: Path):
+    """If a known alias isn't cached on disk, it shouldn't show up in
+    removed_models — and shouldn't contribute to freed_bytes."""
+    hub = _make_hf_cache(tmp_path)
+    monkeypatch.setattr(manager_module, "_huggingface_cache_dir", lambda: hub)
+    monkeypatch.setattr(
+        manager_module,
+        "_rapid_mlx_running",
+        lambda _url: _coro(False),
+    )
+
+    mgr = RapidMLXManager(tmp_path)
+    summary = await mgr.uninstall(delete_models=True)
+
+    assert summary["removed_models"] == []
+    assert summary["freed_bytes"] == 0
+
+
+@pytest.mark.asyncio
+async def test_uninstall_keeps_models_when_flag_false(monkeypatch, tmp_path: Path):
+    """delete_models=False should leave HF cache untouched."""
+    hub = _make_hf_cache(tmp_path)
+    from app.rapid_mlx.catalog import RAPID_MLX_ALIAS_REPOS, resolve_rapid_mlx_repo
+
+    target_repo = resolve_rapid_mlx_repo(next(iter(RAPID_MLX_ALIAS_REPOS)))
+    cache_dir = _make_cached_repo(hub, target_repo, [500])
+
+    monkeypatch.setattr(manager_module, "_huggingface_cache_dir", lambda: hub)
+    monkeypatch.setattr(
+        manager_module,
+        "_rapid_mlx_running",
+        lambda _url: _coro(False),
+    )
+
+    mgr = RapidMLXManager(tmp_path)
+    summary = await mgr.uninstall(delete_models=False)
+
+    assert summary["removed_models"] == []
+    assert summary["freed_bytes"] == 0
+    assert cache_dir.exists()
+
+
+def test_uninstall_includes_binary_removal_commands(monkeypatch, tmp_path: Path):
+    """The dialog renders these so the user can copy/paste — keep
+    brew + pip both in the response."""
+    hub = _make_hf_cache(tmp_path)
+    monkeypatch.setattr(manager_module, "_huggingface_cache_dir", lambda: hub)
+    monkeypatch.setattr(
+        manager_module,
+        "_rapid_mlx_running",
+        lambda _url: _coro(False),
+    )
+
+    mgr = RapidMLXManager(tmp_path)
+    import asyncio as _asyncio
+
+    summary = _asyncio.run(mgr.uninstall(delete_models=False))
+    cmds = summary["binary_install_commands"]
+    assert any("brew uninstall" in c for c in cmds)
+    assert any("pip uninstall rapid-mlx" in c for c in cmds)
+
+
+async def _coro(value):
+    """Helper: turn a value into an awaitable, since the function under
+    test does ``await _rapid_mlx_running(...)``."""
+    return value

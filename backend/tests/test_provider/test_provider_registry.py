@@ -102,6 +102,119 @@ class TestRefreshModels:
         assert result["slow"] == []
         assert len(reg.all_models()) == 1
 
+class TestRefreshProvider:
+    """Single-provider refresh — used by heal-on-read so we don't pay
+    cross-provider /v1/models calls for one missing endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_for_unknown_pid(self):
+        reg = ProviderRegistry()
+        result = await reg.refresh_provider("nope")
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_adds_models_for_freshly_registered(self):
+        reg = ProviderRegistry()
+        reg.register(_make_provider("p1", [_model("m1", "p1")]))
+        models = await reg.refresh_provider("p1")
+        assert [m.id for m in models] == ["m1"]
+        assert "m1" in reg._model_index
+        assert reg._model_index["m1"][0].id == "p1"
+
+    @pytest.mark.asyncio
+    async def test_leaves_other_providers_alone(self):
+        reg = ProviderRegistry()
+        reg.register(_make_provider("p1", [_model("m1", "p1")]))
+        reg.register(_make_provider("p2", [_model("m2", "p2")]))
+        await reg.refresh_models()
+
+        # Re-refresh only p1 — p2's models must still be there. Capture
+        # the call count to confirm p2 wasn't list_models'd again.
+        p2 = reg.get_provider("p2")
+        p2.list_models.reset_mock()  # type: ignore[union-attr]
+        p2.clear_cache.reset_mock()  # type: ignore[union-attr]
+        await reg.refresh_provider("p1")
+
+        assert "m1" in reg._model_index
+        assert "m2" in reg._model_index
+        p2.list_models.assert_not_called()  # type: ignore[union-attr]
+        p2.clear_cache.assert_not_called()  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio
+    async def test_direct_beats_aggregator(self):
+        """When a model id exists on both an aggregator and a direct
+        provider, direct should win the index slot — and refresh_provider
+        on the aggregator must not steal it back."""
+        reg = ProviderRegistry()
+        aggregator = _make_provider("openrouter", [_model("shared", "openrouter")])
+        direct = _make_provider("openai", [_model("shared", "openai")])
+        reg.register(aggregator)
+        reg.register(direct)
+        await reg.refresh_models()
+        assert reg._model_index["shared"][0].id == "openai"
+
+        # Refresh the aggregator alone — direct still wins.
+        await reg.refresh_provider("openrouter")
+        assert reg._model_index["shared"][0].id == "openai"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_when_direct_drops_model(self):
+        """If a direct provider stops exposing a model that an aggregator
+        also serves, the index should fall back to the aggregator on the
+        next refresh_provider call."""
+        reg = ProviderRegistry()
+        aggregator = _make_provider("openrouter", [_model("shared", "openrouter")])
+        direct = _make_provider("openai", [_model("shared", "openai")])
+        reg.register(aggregator)
+        reg.register(direct)
+        await reg.refresh_models()
+        assert reg._model_index["shared"][0].id == "openai"
+
+        # Direct drops the model on next refresh.
+        direct.list_models = AsyncMock(return_value=[])  # type: ignore[union-attr]
+        await reg.refresh_provider("openai")
+
+        assert "shared" in reg._model_index
+        assert reg._model_index["shared"][0].id == "openrouter"
+
+    @pytest.mark.asyncio
+    async def test_drops_removed_models(self):
+        """A model the provider no longer exposes should vanish from the
+        registry even if nothing else serves it."""
+        reg = ProviderRegistry()
+        reg.register(_make_provider("p1", [_model("m1", "p1"), _model("m2", "p1")]))
+        await reg.refresh_models()
+        assert {"m1", "m2"} <= set(reg._model_index.keys())
+
+        p1 = reg.get_provider("p1")
+        p1.list_models = AsyncMock(return_value=[_model("m1", "p1")])  # type: ignore[union-attr]
+        await reg.refresh_provider("p1")
+
+        assert "m1" in reg._model_index
+        assert "m2" not in reg._model_index
+        # _full_models should also be cleaned up
+        assert not any(m.id == "m2" for _, m in reg._full_models)
+
+    @pytest.mark.asyncio
+    async def test_swallows_provider_failure(self):
+        """If list_models raises, refresh_provider returns [] and logs;
+        existing index entries for that provider should remain untouched
+        — we don't have a better state to fall back to."""
+        reg = ProviderRegistry()
+        reg.register(_make_provider("p1", [_model("m1", "p1")]))
+        await reg.refresh_models()
+        assert "m1" in reg._model_index
+
+        p1 = reg.get_provider("p1")
+        p1.list_models = AsyncMock(side_effect=RuntimeError("network down"))  # type: ignore[union-attr]
+        result = await reg.refresh_provider("p1")
+
+        assert result == []
+        # Pre-existing index entry should still be there since the
+        # refresh failed before we mutated anything.
+        assert "m1" in reg._model_index
+
+
 class TestResolveModel:
     @pytest.mark.asyncio
     async def test_existing(self):
