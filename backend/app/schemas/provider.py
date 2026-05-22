@@ -21,6 +21,7 @@ RESERVED_CUSTOM_SLUGS = {
     "openrouter", "openai", "anthropic", "google", "groq", "deepseek",
     "mistral", "xai", "together", "deepinfra", "cerebras", "cohere",
     "perplexity", "fireworks", "azure", "qwen", "kimi", "minimax",
+    "atlas",
     "zhipu", "siliconflow", "xiaomi",
     "openai-subscription", "openai_subscription",
     "ollama", "rapid-mlx", "rapid_mlx", "local", "custom",

@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     qwen_api_key: str = ""          # OPENYAK_QWEN_API_KEY (Alibaba DashScope)
     kimi_api_key: str = ""          # OPENYAK_KIMI_API_KEY (Moonshot)
     minimax_api_key: str = ""       # OPENYAK_MINIMAX_API_KEY
+    atlas_api_key: str = ""         # OPENYAK_ATLAS_API_KEY (Atlas Cloud)
     zhipu_api_key: str = ""         # OPENYAK_ZHIPU_API_KEY (智谱 GLM)
     siliconflow_api_key: str = ""   # OPENYAK_SILICONFLOW_API_KEY (硅基流动)
     xiaomi_api_key: str = ""        # OPENYAK_XIAOMI_API_KEY (MiMo)

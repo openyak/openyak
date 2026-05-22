@@ -137,8 +137,13 @@ Finally, write a follow-up email I can send to the team directly.
 | Qwen | BYOK | Direct provider key |
 | Kimi | BYOK | Moonshot models |
 | MiniMax | BYOK | Direct provider key |
+| Atlas Cloud | BYOK | OpenAI-compatible multi-model gateway. [Official site](https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=openyak) |
 | Zhipu | BYOK | Direct provider key |
 | ChatGPT | Subscription | Use an existing ChatGPT Plus, Pro, Team, or Enterprise plan when available |
+
+<p align="center">
+  <img src="docs/readme/atlas-cloud-provider.png" width="900" alt="Atlas Cloud provider integration preview for OpenYak" />
+</p>
 
 Cloud and subscription paths are optional. OpenYak does not provide hosted model accounts and does not proxy model traffic; requests go directly from your desktop to the provider you configure.
 

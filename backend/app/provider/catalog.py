@@ -150,6 +150,13 @@ PROVIDER_CATALOG: dict[str, ProviderDef] = {
         kind="openai_compat",
         base_url="https://api.minimaxi.com/v1",
     ),
+    "atlas": ProviderDef(
+        id="atlas",
+        name="Atlas Cloud",
+        settings_key="atlas_api_key",
+        kind="openai_compat",
+        base_url="https://api.atlascloud.ai/v1",
+    ),
     "zhipu": ProviderDef(
         id="zhipu",
         name="ZhipuAI (智谱)",
