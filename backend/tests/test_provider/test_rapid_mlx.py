@@ -35,18 +35,13 @@ class _ModelsClient:
 
 
 @pytest.mark.asyncio
-async def test_rapid_mlx_falls_back_to_default_model():
+async def test_rapid_mlx_returns_no_models_when_runtime_is_unavailable():
     provider = RapidMLXProvider()
     provider._client = _Client()
 
     models = await provider.list_models()
 
-    assert len(models) == 1
-    assert models[0].id == "rapid-mlx/default"
-    assert models[0].provider_id == "rapid-mlx"
-    assert models[0].pricing.prompt == 0
-    assert models[0].capabilities.function_calling is True
-    assert models[0].capabilities.prompt_caching is True
+    assert models == []
 
 
 @pytest.mark.asyncio
@@ -59,3 +54,21 @@ async def test_rapid_mlx_marks_known_vision_models():
 
     assert by_id["rapid-mlx/qwen3-vl-4b"].capabilities.vision is True
     assert by_id["rapid-mlx/qwen3.5-9b"].capabilities.vision is False
+
+
+@pytest.mark.asyncio
+async def test_rapid_mlx_maps_legacy_default_model(monkeypatch):
+    provider = RapidMLXProvider()
+    chunks = []
+
+    async def fake_stream(self, model, messages, **kwargs):
+        chunks.append((model, messages, kwargs))
+        if False:
+            yield None
+
+    monkeypatch.setattr("app.provider.openai_compat.OpenAICompatProvider.stream_chat", fake_stream)
+
+    async for _ in provider.stream_chat("rapid-mlx/default", [{"role": "user", "content": "hi"}]):
+        pass
+
+    assert chunks[0][0] == "qwen3.5-4b"

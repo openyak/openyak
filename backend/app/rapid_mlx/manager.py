@@ -13,7 +13,7 @@ from typing import Any
 
 import httpx
 
-from app.provider.rapid_mlx import DEFAULT_BASE_URL, DEFAULT_MODEL
+from app.provider.rapid_mlx import DEFAULT_BASE_URL, DEFAULT_MODEL, normalize_rapid_mlx_model
 from app.rapid_mlx.catalog import (
     RAPID_MLX_ALIAS_REPOS,
     canonical_rapid_mlx_model,
@@ -87,7 +87,7 @@ class RapidMLXManager:
         self._port = port
         running = await _rapid_mlx_running(base_url)
         version = await self._version() if self.is_binary_installed else None
-        model = configured_model or self._model or DEFAULT_MODEL
+        model = normalize_rapid_mlx_model(configured_model or self._model or DEFAULT_MODEL)
         return {
             "platform_supported": self.platform_supported,
             "binary_installed": self.is_binary_installed,
@@ -161,7 +161,7 @@ class RapidMLXManager:
         if not executable:
             raise RuntimeError("rapid-mlx is not installed.")
 
-        next_model = model.strip() or DEFAULT_MODEL
+        next_model = normalize_rapid_mlx_model(model)
         next_identity = canonical_rapid_mlx_model(next_model)
         base_url = _base_url_for_port(port)
         if await _rapid_mlx_running(base_url):

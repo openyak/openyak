@@ -239,8 +239,12 @@ class SessionPrompt:
         elif self.provider.id == "rapid-mlx":
             try:
                 from app.api.config import _update_env_file
+                from app.provider.rapid_mlx import normalize_rapid_mlx_model
 
-                _update_env_file("OPENYAK_RAPID_MLX_MODEL", model_id.removeprefix("rapid-mlx/"))
+                _update_env_file(
+                    "OPENYAK_RAPID_MLX_MODEL",
+                    normalize_rapid_mlx_model(model_id),
+                )
             except Exception:
                 pass
 
