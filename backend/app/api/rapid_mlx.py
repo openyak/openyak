@@ -23,7 +23,7 @@ class RapidMLXRuntimeStatus(BaseModel):
     port: int = DEFAULT_PORT
     base_url: str | None = None
     version: str | None = None
-    current_model: str = "default"
+    current_model: str = "qwen3.5-4b"
     executable_path: str | None = None
     install_commands: list[str] = Field(default_factory=list)
 
@@ -116,11 +116,13 @@ async def start_rapid_mlx(
         raise HTTPException(400, str(exc))
 
     from app.api.config import _update_env_file
+    from app.provider.rapid_mlx import normalize_rapid_mlx_model
 
+    model = normalize_rapid_mlx_model(body.model)
     _update_env_file("OPENYAK_RAPID_MLX_BASE_URL", base_url)
-    _update_env_file("OPENYAK_RAPID_MLX_MODEL", body.model)
+    _update_env_file("OPENYAK_RAPID_MLX_MODEL", model)
     settings.rapid_mlx_base_url = base_url
-    settings.rapid_mlx_model = body.model
+    settings.rapid_mlx_model = model
 
     data = await mgr.status(
         configured_base_url=settings.rapid_mlx_base_url,
@@ -191,6 +193,10 @@ async def _register_rapid_mlx_provider(
         existing is not None
         and getattr(existing, "_base_url", None) == base_url.rstrip("/")
     ):
+        try:
+            await registry.refresh_provider("rapid-mlx")
+        except Exception as exc:
+            logger.warning("Failed to refresh existing Rapid-MLX provider: %s", exc)
         return
 
     registry.register(RapidMLXProvider(base_url=base_url))

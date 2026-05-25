@@ -20,15 +20,26 @@ logger = logging.getLogger(__name__)
 
 PROVIDER_ID = "rapid-mlx"
 DEFAULT_BASE_URL = "http://localhost:18080/v1"
-DEFAULT_MODEL = "default"
+DEFAULT_MODEL = "qwen3.5-4b"
+LEGACY_DEFAULT_MODEL = "default"
+
+
+def normalize_rapid_mlx_model(name: str | None) -> str:
+    """Map old OpenYak defaults to a real rapid-mlx alias."""
+    value = (name or "").strip().removeprefix(f"{PROVIDER_ID}/").strip()
+    if not value or value == LEGACY_DEFAULT_MODEL:
+        return DEFAULT_MODEL
+    return value
 
 
 def _model_id(name: str) -> str:
-    return name if name.startswith(f"{PROVIDER_ID}/") else f"{PROVIDER_ID}/{name}"
+    normalized = normalize_rapid_mlx_model(name)
+    return normalized if normalized.startswith(f"{PROVIDER_ID}/") else f"{PROVIDER_ID}/{normalized}"
 
 
 def _model_name(name: str) -> str:
-    return "Rapid-MLX Default" if name == DEFAULT_MODEL else name
+    normalized = normalize_rapid_mlx_model(name)
+    return "Rapid-MLX Qwen 3.5 4B" if normalized == DEFAULT_MODEL else normalized
 
 
 def _rapid_capabilities(model: str = DEFAULT_MODEL) -> ModelCapabilities:
@@ -68,7 +79,7 @@ class RapidMLXProvider(OpenAICompatProvider):
             response = await self._client.models.list()
             seen: set[str] = set()
             for item in response.data:
-                name = item.id or DEFAULT_MODEL
+                name = normalize_rapid_mlx_model(item.id or DEFAULT_MODEL)
                 if name in seen:
                     continue
                 seen.add(name)
@@ -84,21 +95,10 @@ class RapidMLXProvider(OpenAICompatProvider):
                 )
         except Exception as exc:
             logger.debug(
-                "Rapid-MLX: /v1/models unavailable, using default model: %s",
+                "Rapid-MLX: /v1/models unavailable: %s",
                 exc,
             )
-
-        if not models:
-            models = [
-                ModelInfo(
-                    id=_model_id(DEFAULT_MODEL),
-                    name=_model_name(DEFAULT_MODEL),
-                    provider_id=self.id,
-                    capabilities=_rapid_capabilities(DEFAULT_MODEL),
-                    pricing=ModelPricing(prompt=0.0, completion=0.0),
-                    metadata={"local": True},
-                )
-            ]
+            return []
 
         self._models_cache = models
         return models
@@ -109,7 +109,7 @@ class RapidMLXProvider(OpenAICompatProvider):
         messages: list[dict[str, Any]],
         **kwargs: Any,
     ):
-        bare_model = model.removeprefix(f"{PROVIDER_ID}/") or DEFAULT_MODEL
+        bare_model = normalize_rapid_mlx_model(model)
         async for chunk in super().stream_chat(bare_model, messages, **kwargs):
             yield chunk
 

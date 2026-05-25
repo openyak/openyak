@@ -199,7 +199,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.rapid_mlx_manager = rapid_mlx_manager
 
     if settings.rapid_mlx_base_url:
-        from app.provider.rapid_mlx import RapidMLXProvider
+        from app.provider.rapid_mlx import RapidMLXProvider, normalize_rapid_mlx_model
+
+        normalized_rapid_mlx_model = normalize_rapid_mlx_model(settings.rapid_mlx_model)
+        if normalized_rapid_mlx_model != settings.rapid_mlx_model:
+            from app.api.config import _update_env_file
+
+            _update_env_file("OPENYAK_RAPID_MLX_MODEL", normalized_rapid_mlx_model)
+        settings.rapid_mlx_model = normalized_rapid_mlx_model
 
         if (
             rapid_mlx_manager.platform_supported
