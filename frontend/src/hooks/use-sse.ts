@@ -11,7 +11,7 @@ import { SSE_EVENTS } from "@/types/streaming";
 import { useChatStore } from "@/stores/chat-store";
 import { useConnectionStore } from "@/stores/connection-store";
 import { useArtifactStore } from "@/stores/artifact-store";
-import { useWorkspaceStore, type WorkspaceTodo, type WorkspaceFile } from "@/stores/workspace-store";
+import { useWorkspaceStore, type WorkspaceTodo, type WorkspaceFile, type WorkspaceTaskBatch } from "@/stores/workspace-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { api } from "@/lib/api";
 import type { SessionResponse } from "@/types/session";
@@ -465,6 +465,37 @@ export function useSSE(streamId: string | null) {
         // Non-terminal step (tool_use) — clear any pending safety timer
         cancelPendingStepFinish();
       }
+    });
+
+    const updateTaskBatch = (data: { batch_id?: string | null; mode?: string | null; tasks?: unknown[] | null }) => {
+      if (!data.batch_id || !data.mode || !Array.isArray(data.tasks)) return;
+      const ws = useWorkspaceStore.getState();
+      ws.setTaskBatch({
+        batch_id: data.batch_id,
+        mode: data.mode === "sequential" ? "sequential" : "parallel",
+        tasks: data.tasks as WorkspaceTaskBatch["tasks"],
+      });
+      if (!ws.isOpen) {
+        ws.open();
+      }
+      ws.expandSection("progress");
+    };
+
+    client.on(SSE_EVENTS.TASK_BATCH_START, (data, id) => {
+      persistedLastEventId = id;
+      cancelPendingStepFinish();
+      updateTaskBatch(data);
+    });
+
+    client.on(SSE_EVENTS.TASK_BATCH_UPDATE, (data, id) => {
+      persistedLastEventId = id;
+      cancelPendingStepFinish();
+      updateTaskBatch(data);
+    });
+
+    client.on(SSE_EVENTS.TASK_BATCH_FINISH, (data, id) => {
+      persistedLastEventId = id;
+      updateTaskBatch(data);
     });
 
     // Compaction lifecycle

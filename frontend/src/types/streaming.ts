@@ -25,7 +25,21 @@ export const SSE_EVENTS = {
   MODEL_LOADING: "model-loading",
   PERMISSION_RESOLVED: "permission-resolved",
   QUESTION_RESOLVED: "question-resolved",
+  TASK_BATCH_START: "task-batch-start",
+  TASK_BATCH_UPDATE: "task-batch-update",
+  TASK_BATCH_FINISH: "task-batch-finish",
 } as const;
+
+export interface TaskBatchProgressItem {
+  task_id: string;
+  session_id: string;
+  title: string;
+  agent: string;
+  model?: string | null;
+  provider_id?: string | null;
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  error?: string | null;
+}
 
 /** SSE event payload — mirrors backend app/schemas/streaming.py SSEEventData */
 export interface SSEEventData {
@@ -84,6 +98,11 @@ export interface SSEEventData {
   // plan-review
   plan?: string | null;
   files_to_modify?: string[] | null;
+
+  // task-batch-start / task-batch-update / task-batch-finish
+  batch_id?: string | null;
+  mode?: "sequential" | "parallel" | null;
+  tasks?: TaskBatchProgressItem[] | null;
 }
 
 /** Parsed SSE event with type and data. */

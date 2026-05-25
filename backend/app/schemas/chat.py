@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class PromptRequest(BaseModel):
@@ -28,6 +28,25 @@ class PromptResponse(BaseModel):
 
     stream_id: str
     session_id: str
+
+
+class TaskBatchTask(BaseModel):
+    """One explicit child-agent task in a multi-agent batch."""
+
+    title: str = Field(..., min_length=1, max_length=120)
+    prompt: str = Field(..., min_length=1)
+    agent: str = "explore"
+    model: str | None = None
+    provider_id: str | None = None
+
+
+class TaskBatchRequest(BaseModel):
+    """Start a sequential or parallel multi-agent task batch."""
+
+    session_id: str | None = None
+    mode: Literal["sequential", "parallel"] = "parallel"
+    tasks: list[TaskBatchTask] = Field(..., min_length=1, max_length=12)
+    workspace: str | None = None
 
 
 class CompactRequest(BaseModel):

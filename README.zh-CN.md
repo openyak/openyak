@@ -41,6 +41,7 @@ OpenYak 不是另一个必须登录的云端工作区，而是一个运行在你
 | 分析一个 workbook | Budget / actual variance、驱动因素、异常和财务会议口径 |
 | 审阅一份 deck | 每页叙事、证据缺口、speaker notes 和最后的 decision ask |
 | 综合多份文件 | 把 memo、预算表、deck、PDF 对齐成一份 board brief |
+| 拆给多个 agent 并行处理 | 多个 child-agent task、独立会话链接和汇总结果 |
 | 在同一线程继续追问 | RACI、30 天计划、agenda 和 follow-up 草稿 |
 | 遇到错误 | 上传、鉴权、文件解析失败时给出清楚的恢复路径 |
 
@@ -72,6 +73,14 @@ OpenYak 可以在同一个线程里综合多份文件，并在右侧 artifact pa
 
 <p align="center">
   <img src="docs/readme/openyak-artifact-panel.png" width="900" alt="OpenYak 右侧 artifact panel 展示多文件 board brief" />
+</p>
+
+### Multi-Agent Task Batch
+
+把较大的请求拆成多个聚焦的 child-agent task，并行执行；父线程负责收拢进度、子会话链接和最终汇总结果。
+
+<p align="center">
+  <img src="docs/readme/openyak-multi-agent-task-batch.png" width="900" alt="OpenYak 并行 multi-agent task batch，展示子会话链接和汇总结果" />
 </p>
 
 ### 长对话与自动压缩

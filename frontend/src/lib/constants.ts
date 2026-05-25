@@ -212,6 +212,7 @@ export function resolveApiUrl(path: string): string {
 export const API = {
   CHAT: {
     PROMPT: "/api/chat/prompt",
+    TASK_BATCH: "/api/chat/task-batch",
     EDIT: "/api/chat/edit",
     COMPACT: "/api/chat/compact",
     STREAM: (streamId: string) => {

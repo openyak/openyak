@@ -41,6 +41,7 @@ OpenYak is built for people who want an AI agent that lives on their machine ins
 | Analyze a workbook | Budget vs. actual variance, drivers, anomalies, and finance talking points |
 | Review a deck | Slide-by-slide story, evidence gaps, speaker notes, and decision ask |
 | Synthesize several files | One board brief that reconciles memo, budget, deck, and PDF context |
+| Split work across agents | Parallel child-agent tasks with links back to each focused session |
 | Continue the same thread | RACI, 30-day plan, agenda, and follow-up drafts without restating context |
 | Recover from an error | Clear next step when upload, auth, or file parsing fails |
 
@@ -72,6 +73,14 @@ OpenYak can synthesize several files in the same thread and open a right-side ar
 
 <p align="center">
   <img src="docs/readme/openyak-artifact-panel.png" width="900" alt="OpenYak artifact panel with a multi-file board brief" />
+</p>
+
+### Multi-Agent Task Batches
+
+Split a larger request into focused child-agent tasks, run them in parallel, and keep the parent thread as the place where progress, links, and the final aggregate result come back together.
+
+<p align="center">
+  <img src="docs/readme/openyak-multi-agent-task-batch.png" width="900" alt="OpenYak parallel multi-agent task batch with child session links and an aggregate result" />
 </p>
 
 ### Long Threads and Auto-Compress

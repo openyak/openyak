@@ -25,11 +25,20 @@ from app.dependencies import (
 )
 from app.models.todo import Todo
 from app.models.message import Message
-from app.schemas.chat import AbortRequest, CompactRequest, EditAndResendRequest, PromptRequest, PromptResponse, RespondRequest
+from app.schemas.chat import (
+    AbortRequest,
+    CompactRequest,
+    EditAndResendRequest,
+    PromptRequest,
+    PromptResponse,
+    RespondRequest,
+    TaskBatchRequest,
+)
 from app.session.compaction import run_compaction
 from app.session.manager import get_session
 from app.session.manager import delete_messages_after, update_message_file_parts, update_message_text
 from app.session.processor import run_generation
+from app.session.task_batch import run_task_batch
 from app.session.utils import (
     compute_usable_context_window,
     get_effective_context_window,
@@ -203,6 +212,42 @@ async def start_prompt(
     )
     task.add_done_callback(functools.partial(_on_task_done, job=job))
     job.task = task  # prevent GC from silently cancelling the task
+
+    return PromptResponse(stream_id=stream_id, session_id=session_id)
+
+
+@router.post("/chat/task-batch", response_model=PromptResponse)
+async def start_task_batch(
+    body: TaskBatchRequest,
+    sm: StreamManagerDep,
+    session_factory: SessionFactoryDep,
+    provider_registry: ProviderRegistryDep,
+    agent_registry: AgentRegistryDep,
+    tool_registry: ToolRegistryDep,
+    index_manager: IndexManagerDep,
+) -> PromptResponse:
+    """Start an explicit sequential or parallel multi-agent task batch."""
+    session_id = body.session_id or generate_ulid()
+    stream_id = generate_ulid()
+
+    job = sm.create_job(stream_id=stream_id, session_id=session_id)
+    job.interactive = True
+
+    coro = run_task_batch(
+        job,
+        body,
+        session_factory=session_factory,
+        provider_registry=provider_registry,
+        agent_registry=agent_registry,
+        tool_registry=tool_registry,
+        index_manager=index_manager,
+    )
+    task = asyncio.create_task(
+        _run_with_semaphore(sm, job, coro),
+        name=f"task-batch-{stream_id}",
+    )
+    task.add_done_callback(functools.partial(_on_task_done, job=job))
+    job.task = task
 
     return PromptResponse(stream_id=stream_id, session_id=session_id)
 

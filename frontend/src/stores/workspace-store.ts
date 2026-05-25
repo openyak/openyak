@@ -36,11 +36,29 @@ export interface WorkspaceFile {
   type: "instructions" | "generated" | "uploaded" | "referenced";
 }
 
+export interface WorkspaceAgentTask {
+  task_id: string;
+  session_id: string;
+  title: string;
+  agent: string;
+  model?: string | null;
+  provider_id?: string | null;
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  error?: string | null;
+}
+
+export interface WorkspaceTaskBatch {
+  batch_id: string;
+  mode: "sequential" | "parallel";
+  tasks: WorkspaceAgentTask[];
+}
+
 interface WorkspaceStore {
   isOpen: boolean;
   /** Per-section collapsed state (false / missing = expanded). */
   collapsedSections: Record<string, boolean>;
   todos: WorkspaceTodo[];
+  taskBatch: WorkspaceTaskBatch | null;
   workspaceFiles: WorkspaceFile[];
   scratchpadContent: string;
   /** Current session's workspace directory (set by ChatView on session load). */
@@ -53,6 +71,7 @@ interface WorkspaceStore {
   expandSection: (section: string) => void;
   collapseSection: (section: string) => void;
   setTodos: (todos: WorkspaceTodo[]) => void;
+  setTaskBatch: (batch: WorkspaceTaskBatch | null) => void;
   addWorkspaceFile: (file: WorkspaceFile) => void;
   setWorkspaceFiles: (files: WorkspaceFile[]) => void;
   setScratchpadContent: (content: string) => void;
@@ -68,6 +87,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     context: true,
   },
   todos: [],
+  taskBatch: null,
   workspaceFiles: [],
   scratchpadContent: "",
   activeWorkspacePath: null,
@@ -108,6 +128,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     })),
 
   setTodos: (todos) => set({ todos, ...(todos.length > 0 ? { isOpen: true } : {}) }),
+  setTaskBatch: (taskBatch) => set({ taskBatch, ...(taskBatch ? { isOpen: true } : {}) }),
 
   addWorkspaceFile: (file) => {
     const { workspaceFiles } = get();
@@ -122,6 +143,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   resetForSession: () =>
     set({
       todos: [],
+      taskBatch: null,
       workspaceFiles: [],
       scratchpadContent: "",
       collapsedSections: {
