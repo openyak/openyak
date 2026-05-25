@@ -29,6 +29,23 @@ export interface PromptResponse {
   session_id: string;
 }
 
+export type TaskBatchMode = "sequential" | "parallel";
+
+export interface TaskBatchTask {
+  title: string;
+  prompt: string;
+  agent: string;
+  model?: string | null;
+  provider_id?: string | null;
+}
+
+export interface TaskBatchRequest {
+  session_id?: string | null;
+  mode: TaskBatchMode;
+  tasks: TaskBatchTask[];
+  workspace?: string | null;
+}
+
 export interface EditAndResendRequest {
   session_id: string;
   message_id: string;

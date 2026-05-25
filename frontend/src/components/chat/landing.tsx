@@ -57,7 +57,7 @@ function pickRandomStarters(count: number): typeof FEATURED_STARTERS {
 
 export function Landing({ directoryParam = null }: LandingProps) {
   const { t } = useTranslation('chat');
-  const { sendMessage, isGenerating, stopGeneration, pendingUserText, pendingAttachments, streamingParts, streamingText, streamingReasoning } = useChat();
+  const { sendMessage, sendTaskBatch, isGenerating, stopGeneration, pendingUserText, pendingAttachments, streamingParts, streamingText, streamingReasoning } = useChat();
   const globalWorkspace = useSettingsStore((s) => s.workspaceDirectory);
   const workspaceName = workspaceBasename(globalWorkspace);
   const activeProvider = useSettingsStore((s) => s.activeProvider);
@@ -157,6 +157,7 @@ export function Landing({ directoryParam = null }: LandingProps) {
         <ChatForm
           isGenerating={isGenerating}
           onSend={sendMessage}
+          onSendTaskBatch={sendTaskBatch}
           onStop={stopGeneration}
           directory={globalWorkspace}
         />
@@ -210,6 +211,7 @@ export function Landing({ directoryParam = null }: LandingProps) {
           <ChatForm
             isGenerating={isGenerating}
             onSend={sendMessage}
+            onSendTaskBatch={sendTaskBatch}
             onStop={stopGeneration}
             directory={globalWorkspace}
           />

@@ -14,7 +14,7 @@ import { useActivityStore } from "@/stores/activity-store";
 import { useSSE } from "./use-sse";
 import { useRemoteGenerationSync } from "./use-remote-generation-sync";
 import type { InfiniteData } from "@tanstack/react-query";
-import type { FileAttachment, PromptResponse, RespondRequest } from "@/types/chat";
+import type { FileAttachment, PromptResponse, RespondRequest, TaskBatchRequest } from "@/types/chat";
 import type { PaginatedMessages } from "@/types/message";
 import type { SessionResponse } from "@/types/session";
 import type { ModelInfo } from "@/types/model";
@@ -55,6 +55,12 @@ function isUnsupportedImagesError(err: unknown): boolean {
     detail !== null &&
     (detail as { code?: unknown }).code === MODEL_DOES_NOT_SUPPORT_IMAGES
   );
+}
+
+function formatTaskBatchPrompt(batch: Pick<TaskBatchRequest, "mode" | "tasks">): string {
+  const heading = batch.mode === "parallel" ? "Run tasks in parallel" : "Run tasks sequentially";
+  const lines = batch.tasks.map((task, index) => `${index + 1}. ${task.title}`);
+  return [heading, ...lines].join("\n");
 }
 
 /**
@@ -209,6 +215,99 @@ export function useChat(currentSessionId?: string) {
         }
 
         toast.error("Failed to send message", { duration: 8000 });
+        return false;
+      }
+    },
+    [currentSessionId, router, queryClient],
+  );
+
+  const sendTaskBatch = useCallback(
+    async (batch: Pick<TaskBatchRequest, "mode" | "tasks">): Promise<boolean> => {
+      const chatState = useChatStore.getState();
+      const settingsState = useSettingsStore.getState();
+      const tasks = batch.tasks
+        .map((task) => ({
+          ...task,
+          title: task.title.trim(),
+          prompt: task.prompt.trim(),
+          agent: task.agent || settingsState.selectedAgent,
+          model: task.model || settingsState.selectedModel,
+          provider_id: task.provider_id || settingsState.selectedProviderId,
+        }))
+        .filter((task) => task.title && task.prompt);
+
+      if (chatState.isGenerating || chatState.isCompacting || tasks.length === 0) return false;
+
+      if (!currentSessionId) {
+        chatState.reset();
+      }
+
+      useActivityStore.getState().close();
+      try {
+        const { useArtifactStore } = require("@/stores/artifact-store");
+        useArtifactStore.getState().close();
+      } catch {}
+      try {
+        const { usePlanReviewStore } = require("@/stores/plan-review-store");
+        usePlanReviewStore.getState().close();
+      } catch {}
+
+      const optimisticText = formatTaskBatchPrompt({ mode: batch.mode, tasks });
+      chatState.beginSending(optimisticText);
+
+      try {
+        const res = await api.post<PromptResponse>(API.CHAT.TASK_BATCH, {
+          session_id: currentSessionId ?? null,
+          mode: batch.mode,
+          tasks,
+          workspace: settingsState.workspaceDirectory,
+        });
+
+        chatState.startGeneration(res.stream_id, res.session_id);
+
+        if (!currentSessionId) {
+          const tempSession: SessionResponse = {
+            id: res.session_id,
+            project_id: null,
+            parent_id: null,
+            slug: null,
+            directory: settingsState.workspaceDirectory || null,
+            title: tasks[0]?.title?.slice(0, 60) || "Multi-agent task batch",
+            version: 0,
+            summary_additions: 0,
+            summary_deletions: 0,
+            summary_files: 0,
+            summary_diffs: [],
+            is_pinned: false,
+            permission: {},
+            time_created: new Date().toISOString(),
+            time_updated: new Date().toISOString(),
+            time_compacting: null,
+            time_archived: null,
+          };
+          queryClient.setQueryData<InfiniteData<SessionResponse[]>>(
+            queryKeys.sessions.all,
+            (old) => {
+              if (!old) return { pages: [[tempSession]], pageParams: [0] };
+              return {
+                ...old,
+                pages: [[tempSession, ...old.pages[0]], ...old.pages.slice(1)],
+              };
+            },
+          );
+          router.push(getChatRoute(res.session_id));
+        }
+        return true;
+      } catch (err) {
+        console.error("Failed to start task batch:", err);
+        useChatStore.getState().reset();
+
+        if (err instanceof ApiError) {
+          toast.error(err.message, { duration: 8000 });
+          return false;
+        }
+
+        toast.error("Failed to start task batch", { duration: 8000 });
         return false;
       }
     },
@@ -469,6 +568,7 @@ export function useChat(currentSessionId?: string) {
 
   return {
     sendMessage,
+    sendTaskBatch,
     editAndResend,
     stopGeneration,
     respondToPermission,

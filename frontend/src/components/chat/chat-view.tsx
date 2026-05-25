@@ -28,6 +28,7 @@ interface ChatViewProps {
 export function ChatView({ sessionId }: ChatViewProps) {
   const {
     sendMessage,
+    sendTaskBatch,
     editAndResend,
     stopGeneration,
     respondToPermission,
@@ -230,6 +231,7 @@ export function ChatView({ sessionId }: ChatViewProps) {
           isGenerating={isGenerating}
           isCompacting={isCompacting || !!session?.time_compacting}
           onSend={sendMessage}
+          onSendTaskBatch={sendTaskBatch}
           onStop={stopGeneration}
           sessionId={sessionId}
           directory={session?.directory}
