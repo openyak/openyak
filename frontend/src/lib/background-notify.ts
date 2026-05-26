@@ -12,11 +12,19 @@
  * "in the background" — this helper does not check focus state.
  */
 
-let permissionRequestInFlight: Promise<NotificationPermission> | null = null;
+/**
+ * Custom event the registry dispatches when a notification is clicked.
+ * A top-level component (currently `StreamRegistryHydration`) listens for
+ * it and routes via the Next.js router so we do soft navigation instead of
+ * a full reload (which would tear down the in-memory stream registry).
+ */
+export const NAVIGATE_TO_SESSION_EVENT = "openyak:navigate-to-session";
 
-function getRoute(sessionId: string): string {
-  return `/c/${sessionId}`;
+export interface NavigateToSessionDetail {
+  sessionId: string;
 }
+
+let permissionRequestInFlight: Promise<NotificationPermission> | null = null;
 
 async function ensurePermission(): Promise<NotificationPermission> {
   if (typeof window === "undefined" || !("Notification" in window)) return "denied";
@@ -48,11 +56,11 @@ export async function notifyBackgroundFinish({ sessionId, title, body, kind }: N
     n.onclick = () => {
       try {
         window.focus();
-        if (typeof window !== "undefined") {
-          // history.pushState avoids a full reload — Next.js App Router picks
-          // it up via the popstate listener and renders the chat in place.
-          window.location.assign(getRoute(sessionId));
-        }
+        window.dispatchEvent(
+          new CustomEvent<NavigateToSessionDetail>(NAVIGATE_TO_SESSION_EVENT, {
+            detail: { sessionId },
+          }),
+        );
       } finally {
         n.close();
       }

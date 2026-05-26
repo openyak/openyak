@@ -221,7 +221,7 @@ export const useChatStore = create<ChatStore>((set) => ({
 
   resetAll: () => {
     SEEN_STEP_FINISH_IDS.clear();
-    set({ sessions: {}, draftSession: null });
+    set({ sessions: {}, draftSession: null, focusedSessionId: null });
   },
 
   beginSending: (sessionId, text, attachments) =>

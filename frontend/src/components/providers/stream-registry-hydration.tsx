@@ -1,10 +1,13 @@
 "use client";
 
 import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { API } from "@/lib/constants";
+import { getChatRoute } from "@/lib/routes";
 import { useChatStore } from "@/stores/chat-store";
 import { startStream, isStreamActive } from "@/lib/session-stream-registry";
+import { NAVIGATE_TO_SESSION_EVENT, type NavigateToSessionDetail } from "@/lib/background-notify";
 
 /**
  * On app boot, ask the backend which generations are still running and
@@ -16,6 +19,8 @@ import { startStream, isStreamActive } from "@/lib/session-stream-registry";
  * client missed while the registry was empty.
  */
 export function StreamRegistryHydration() {
+  const router = useRouter();
+
   useEffect(() => {
     let cancelled = false;
 
@@ -42,6 +47,20 @@ export function StreamRegistryHydration() {
       cancelled = true;
     };
   }, []);
+
+  // Soft-route to a session when the user clicks a background-finish
+  // notification. The notification handler dispatches a CustomEvent so the
+  // module-level registry stays decoupled from React, and we pick it up
+  // here where the Next router is available.
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<NavigateToSessionDetail>).detail;
+      if (!detail?.sessionId) return;
+      router.push(getChatRoute(detail.sessionId));
+    };
+    window.addEventListener(NAVIGATE_TO_SESSION_EVENT, handler);
+    return () => window.removeEventListener(NAVIGATE_TO_SESSION_EVENT, handler);
+  }, [router]);
 
   return null;
 }
