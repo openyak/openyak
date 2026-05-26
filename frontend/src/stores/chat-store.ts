@@ -586,7 +586,12 @@ export const useChatStore = create<ChatStore>((set) => ({
       })),
     ),
 
-  finishGeneration: (sessionId) =>
+  finishGeneration: (sessionId) => {
+    // Free the per-session dedup set — the stream is over, no more replays
+    // will arrive for these event ids. Without this the outer Map grows
+    // unbounded over the lifetime of an app session (one entry per chat the
+    // user generated in).
+    if (sessionId !== null) clearSeenStepFinishIds(sessionId);
     set((s) =>
       mutateBucket(s, sessionId, (prev) => {
         const { parts } = flushBuffers(
@@ -610,7 +615,8 @@ export const useChatStore = create<ChatStore>((set) => ({
           streamingReasoning: "",
         };
       }),
-    ),
+    );
+  },
 }));
 
 /**
@@ -645,15 +651,3 @@ export function useAnySessionGenerating(): boolean {
   });
 }
 
-/**
- * Reverse-lookup: which sessionId owns this streamId, if any? Used by SSE
- * handlers and the polling sync hook to dispatch events to the right bucket.
- */
-export function findSessionByStreamId(streamId: string): string | null {
-  const { sessions, draftSession } = useChatStore.getState();
-  if (draftSession?.streamId === streamId) return null;
-  for (const [sid, bucket] of Object.entries(sessions)) {
-    if (bucket.streamId === streamId) return sid;
-  }
-  return null;
-}
