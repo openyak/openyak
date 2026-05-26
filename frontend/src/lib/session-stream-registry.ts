@@ -97,6 +97,7 @@ let queryClientRef: QueryClient | null = null;
 let globalListenersInstalled = false;
 let unlistenBackendRestarting: (() => void) | null = null;
 let unlistenBackendRestarted: (() => void) | null = null;
+let unlistenVisibilityChange: (() => void) | null = null;
 
 /**
  * Inject the React Query client. Must be called once before any start().
@@ -724,6 +725,7 @@ function ensureGlobalListeners(): void {
     }
   };
   document.addEventListener("visibilitychange", handleVisibilityChange);
+  unlistenVisibilityChange = () => document.removeEventListener("visibilitychange", handleVisibilityChange);
 }
 
 function store_isGenerating(sessionId: string): boolean {
@@ -758,8 +760,10 @@ export function disposeAllStreams(): void {
   instances.clear();
   unlistenBackendRestarting?.();
   unlistenBackendRestarted?.();
+  unlistenVisibilityChange?.();
   unlistenBackendRestarting = null;
   unlistenBackendRestarted = null;
+  unlistenVisibilityChange = null;
   globalListenersInstalled = false;
 }
 

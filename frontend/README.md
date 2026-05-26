@@ -155,7 +155,6 @@ src/
 │
 ├── hooks/                        # Custom hooks (28)
 │   ├── use-chat.ts               #   Core chat hook (prompt → stream → assemble)
-│   ├── use-sse.ts                #   SSE connection + event dispatch to chatStore
 │   ├── use-sessions.ts           #   TanStack Query: session CRUD
 │   ├── use-messages.ts           #   TanStack Query: message fetching
 │   ├── use-models.ts             #   TanStack Query: model list
@@ -192,9 +191,10 @@ src/
 │   ├── plan-review-store.ts      #   Plan review state
 │   └── workspace-store.ts        #   Workspace panel state
 │
-├── lib/                          # Utilities (11 modules)
+├── lib/                          # Utilities (12 modules)
 │   ├── api.ts                    #   Typed fetch wrapper (type-safe, error handling)
 │   ├── sse.ts                    #   SSE client (reconnection, heartbeat timeout)
+│   ├── session-stream-registry.ts #  Module-level singleton owning one SSEClient per session
 │   ├── utils.ts                  #   cn(), formatRelativeTime(), truncate()
 │   ├── constants.ts              #   API route constants, query key factory
 │   ├── routes.ts                 #   Route definitions

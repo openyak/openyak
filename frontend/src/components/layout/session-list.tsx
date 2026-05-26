@@ -438,6 +438,17 @@ export function SessionList() {
     if (activeSessionId === id) {
       router.push(getChatRoute());
     }
+    // Archived chat shouldn't keep a background stream running — same
+    // reasoning as delete. If it later gets unarchived mid-generation, the
+    // /chat/active boot hydration would re-attach automatically.
+    const chatState = useChatStore.getState();
+    const bucket = chatState.sessions[id];
+    if (bucket && (bucket.isGenerating || bucket.isCompacting) && bucket.streamId) {
+      api.post(API.CHAT.ABORT, { stream_id: bucket.streamId }).catch(() => {});
+      stopStream(id);
+      chatState.finishGeneration(id);
+    }
+    chatState.removeSession(id);
     archiveSession.mutate(
       { id },
       {

@@ -155,7 +155,6 @@ src/
 │
 ├── hooks/                        # 自定义 Hooks（28 个）
 │   ├── use-chat.ts               #   核心聊天 Hook（prompt → stream → 组装）
-│   ├── use-sse.ts                #   SSE 连接 + 事件分发到 chatStore
 │   ├── use-sessions.ts           #   TanStack Query: 会话 CRUD
 │   ├── use-messages.ts           #   TanStack Query: 消息获取
 │   ├── use-models.ts             #   TanStack Query: 模型列表
@@ -192,9 +191,10 @@ src/
 │   ├── plan-review-store.ts      #   计划审查状态
 │   └── workspace-store.ts        #   工作区面板状态
 │
-├── lib/                          # 工具库（11 个模块）
+├── lib/                          # 工具库（12 个模块）
 │   ├── api.ts                    #   Fetch 封装（类型安全、错误处理）
 │   ├── sse.ts                    #   SSE 客户端（断线重连、心跳超时检测）
+│   ├── session-stream-registry.ts #  Module-level 单例，per-session 持有 SSEClient
 │   ├── utils.ts                  #   cn()、formatRelativeTime()、truncate()
 │   ├── constants.ts              #   API 路由常量、Query Key 工厂
 │   ├── routes.ts                 #   路由定义
