@@ -108,11 +108,18 @@ interface ChatStore {
    * startGeneration with a fresh sessionId it gets promoted into `sessions`.
    */
   draftSession: ChatSessionState | null;
+  /**
+   * The session the user is currently viewing. Null = Landing or any
+   * non-chat screen. The session stream registry uses this to decide
+   * whether a completed background generation deserves a notification.
+   */
+  focusedSessionId: string | null;
 
   // ─── Bucket lifecycle ───
   ensureSession: (sessionId: string) => void;
   removeSession: (sessionId: string) => void;
   resetSession: (sessionId: string | null) => void;
+  setFocusedSession: (sessionId: string | null) => void;
   /** Clear everything — only for logout / catastrophic reset. */
   resetAll: () => void;
 
@@ -187,12 +194,15 @@ function mutateBucket(
 export const useChatStore = create<ChatStore>((set) => ({
   sessions: {},
   draftSession: null,
+  focusedSessionId: null,
 
   ensureSession: (sessionId) =>
     set((s) => {
       if (s.sessions[sessionId]) return s;
       return { sessions: { ...s.sessions, [sessionId]: EMPTY_SESSION_STATE } };
     }),
+
+  setFocusedSession: (sessionId) => set({ focusedSessionId: sessionId }),
 
   removeSession: (sessionId) => {
     clearSeenStepFinishIds(sessionId);

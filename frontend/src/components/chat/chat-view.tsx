@@ -82,6 +82,7 @@ export function ChatView({ sessionId }: ChatViewProps) {
   // the background so the user can come back to it later.
   useEffect(() => {
     useChatStore.getState().ensureSession(sessionId);
+    useChatStore.getState().setFocusedSession(sessionId);
     useArtifactStore.getState().clearAll();
     useActivityStore.getState().close();
     useWorkspaceStore.getState().resetForSession();
@@ -110,6 +111,16 @@ export function ChatView({ sessionId }: ChatViewProps) {
         );
       }
     }).catch(() => {});
+
+    return () => {
+      // Only clear focus if we are still the focused session on unmount —
+      // a fast route swap to another ChatView would otherwise wipe the
+      // other view's focus claim on its way in.
+      const cur = useChatStore.getState().focusedSessionId;
+      if (cur === sessionId) {
+        useChatStore.getState().setFocusedSession(null);
+      }
+    };
   }, [sessionId]);
 
   // Copy last assistant message to clipboard
