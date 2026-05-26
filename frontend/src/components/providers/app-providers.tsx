@@ -4,6 +4,7 @@ import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { MotionConfig } from "framer-motion";
 import { ThemeProvider } from "./theme-provider";
 import { QueryProvider } from "./query-provider";
+import { StreamRegistryHydration } from "./stream-registry-hydration";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { Toaster } from "sonner";
 import { getBackendUrl, IS_DESKTOP } from "@/lib/constants";
@@ -71,6 +72,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
         <QueryProvider>
           <LanguageSync onReady={handleLanguageReady} />
           <AppearanceInjector />
+          <StreamRegistryHydration />
           <ErrorBoundary>{children}</ErrorBoundary>
           <Toaster
             position="top-right"
