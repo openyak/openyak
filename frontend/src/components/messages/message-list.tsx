@@ -307,6 +307,7 @@ export function MessageList({
           <div className="px-4 py-5">
             <div className="mx-auto max-w-3xl xl:max-w-4xl">
               <StreamingMessage
+                sessionId={sessionId ?? null}
                 parts={streamingParts}
                 streamingText={streamingText}
                 streamingReasoning={streamingReasoning}
@@ -461,6 +462,7 @@ export function MessageList({
               <div className="px-4 py-5">
                 <div className="mx-auto max-w-3xl xl:max-w-4xl">
                   <StreamingMessage
+                    sessionId={sessionId ?? null}
                     parts={streamingParts}
                     streamingText={streamingText}
                     streamingReasoning={streamingReasoning}

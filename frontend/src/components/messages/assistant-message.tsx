@@ -124,14 +124,19 @@ export function AssistantMessage({ message, combinedParts, onRegenerate, isNew =
  * Streaming assistant message — renders live parts being accumulated.
  */
 interface StreamingMessageProps {
+  /** The session this streaming message belongs to. Null = draft (Landing). */
+  sessionId: string | null;
   parts: PartData[];
   streamingText: string;
   streamingReasoning: string;
 }
 
-export const StreamingMessage = memo(function StreamingMessage({ parts, streamingText, streamingReasoning }: StreamingMessageProps) {
+export const StreamingMessage = memo(function StreamingMessage({ sessionId, parts, streamingText, streamingReasoning }: StreamingMessageProps) {
   const { t } = useTranslation("chat");
-  const isModelLoading = useChatStore((s) => s.isModelLoading);
+  const isModelLoading = useChatStore((s) => {
+    const bucket = sessionId === null ? s.draftSession : s.sessions[sessionId];
+    return bucket?.isModelLoading ?? false;
+  });
 
   // Track whether this component mounted with no existing stream content.
   // If it did, the fade-in is a genuine "new response appearing" cue. If the

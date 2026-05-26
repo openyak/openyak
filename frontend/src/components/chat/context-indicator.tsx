@@ -12,7 +12,8 @@ import { errorToMessage } from "@/lib/errors";
 import { API, queryKeys } from "@/lib/constants";
 import { useMessageStats } from "@/hooks/use-message-stats";
 import { useModels } from "@/hooks/use-models";
-import { useChatStore } from "@/stores/chat-store";
+import { useChatStore, useChatSession } from "@/stores/chat-store";
+import { startStream } from "@/lib/session-stream-registry";
 import { useSettingsStore } from "@/stores/settings-store";
 
 interface ContextIndicatorProps {
@@ -73,8 +74,9 @@ export function ContextIndicator({ sessionId }: ContextIndicatorProps) {
   const queryClient = useQueryClient();
   const { data: models } = useModels();
   const selectedModel = useSettingsStore((s) => s.selectedModel);
-  const isGenerating = useChatStore((s) => s.isGenerating);
-  const isChatCompacting = useChatStore((s) => s.isCompacting);
+  const session = useChatSession(sessionId);
+  const isGenerating = session.isGenerating;
+  const isChatCompacting = session.isCompacting;
   const startCompactionStream = useChatStore((s) => s.startCompactionStream);
   const selectedModelInfo = models?.find((m) => m.id === selectedModel);
   const effectiveContext = selectedModelInfo?.metadata?.effective_context_window;
@@ -102,7 +104,8 @@ export function ContextIndicator({ sessionId }: ContextIndicatorProps) {
         stream_id: string;
         session_id: string;
       }>(API.CHAT.COMPACT, { session_id: sessionId, model_id: selectedModel });
-      startCompactionStream(result.stream_id, result.session_id);
+      startCompactionStream(result.session_id, result.stream_id);
+      void startStream(result.session_id, result.stream_id);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.sessions.detail(sessionId) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all }),

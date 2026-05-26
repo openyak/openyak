@@ -5,19 +5,21 @@ import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { API, queryKeys } from "@/lib/constants";
 import { useChatStore } from "@/stores/chat-store";
+import { startStream, isStreamActive } from "@/lib/session-stream-registry";
 
 /**
  * Poll for active generations in the current session.
  *
- * When mobile (or another client) starts a generation in a session that the PC
- * is currently viewing, the PC has no way to discover the stream_id — it only
- * sets streamId when *it* initiates a prompt.
+ * When another client (e.g. mobile) starts a generation in a session the PC
+ * is viewing, the PC has no way to discover the stream_id — it only sets a
+ * streamId when *it* initiates a prompt.
  *
  * This hook polls `GET /api/chat/active` every few seconds. When it finds an
- * active generation for the current session that isn't already tracked locally,
- * it sets the chatStore's streamId so `useSSE` activates and streams events.
+ * active generation for the current session that the local stream registry
+ * isn't already tracking, it attaches a stream and flips the bucket into
+ * generating state.
  */
-const POLL_INTERVAL = 5_000; // 5 seconds
+const POLL_INTERVAL = 5_000;
 
 export function useRemoteGenerationSync(sessionId: string | undefined) {
   const queryClient = useQueryClient();
@@ -41,30 +43,29 @@ export function useRemoteGenerationSync(sessionId: string | undefined) {
 
         const match = jobs.find((j) => j.session_id === sessionId);
         const chatState = useChatStore.getState();
+        const bucket = chatState.sessions[sessionId];
 
         if (match) {
-          // Skip if the PC is already tracking this exact stream (local generation)
-          if (chatState.streamId === match.stream_id) {
+          // Skip if we're already tracking this exact stream (either locally
+          // initiated or attached on a previous poll).
+          if (bucket?.streamId === match.stream_id || isStreamActive(sessionId)) {
             knownStreamIdRef.current = match.stream_id;
           } else if (knownStreamIdRef.current !== match.stream_id) {
-            // New remote generation discovered — activate streaming
             knownStreamIdRef.current = match.stream_id;
 
-            // Refetch messages to show the new user message that mobile sent
             await queryClient.invalidateQueries({
               queryKey: queryKeys.messages.list(sessionId),
             });
 
-            // Activate streaming — this triggers useSSE to connect
-            chatState.startGeneration(match.stream_id, sessionId);
+            chatState.startGeneration(sessionId, match.stream_id);
+            void startStream(sessionId, match.stream_id);
           }
         } else {
-          // No active generation — if we were tracking one from a remote client,
-          // it has finished. Refetch messages to get the final state.
+          // No active generation server-side. If we were tracking one from a
+          // remote client, refetch messages to pick up the final state.
           if (knownStreamIdRef.current) {
             knownStreamIdRef.current = null;
-            // Only refetch if we're not in the middle of a local generation
-            if (!chatState.isGenerating) {
+            if (!bucket?.isGenerating) {
               queryClient.invalidateQueries({
                 queryKey: queryKeys.messages.list(sessionId),
               });
@@ -72,7 +73,7 @@ export function useRemoteGenerationSync(sessionId: string | undefined) {
           }
         }
       } catch {
-        // Silently ignore polling errors
+        // ignore polling errors
       }
 
       if (active) {
@@ -80,7 +81,6 @@ export function useRemoteGenerationSync(sessionId: string | undefined) {
       }
     };
 
-    // Start polling
     poll();
 
     return () => {

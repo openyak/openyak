@@ -2,22 +2,27 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
+import { setStreamRegistryQueryClient } from "@/lib/session-stream-registry";
 
 export function QueryProvider({ children }: { children: ReactNode }) {
-  const [queryClient] = useState(
-    () =>
-      new QueryClient({
-        defaultOptions: {
-          queries: {
-            staleTime: 60_000, // 60 seconds - increased from 30s for better caching
-            gcTime: 5 * 60 * 1000, // 5 minutes - retain frequently accessed data
-            retry: 1,
-            refetchOnWindowFocus: false,
-            structuralSharing: true, // Prevent unnecessary re-renders
-          },
+  const [queryClient] = useState(() => {
+    const qc = new QueryClient({
+      defaultOptions: {
+        queries: {
+          staleTime: 60_000,
+          gcTime: 5 * 60 * 1000,
+          retry: 1,
+          refetchOnWindowFocus: false,
+          structuralSharing: true,
         },
-      }),
-  );
+      },
+    });
+    // The session stream registry runs outside React but uses React Query
+    // for cache invalidation. It needs the same client instance the rest of
+    // the app subscribes to.
+    setStreamRegistryQueryClient(qc);
+    return qc;
+  });
 
   return (
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>

@@ -1,22 +1,17 @@
 "use client";
 
 import { create } from "zustand";
+import { useMemo } from "react";
 import type { CompactionPart, CompactionPhase, CompactionPhaseStatus, PartData, ToolPart } from "@/types/message";
 import type { PermissionRequest, QuestionRequest, PlanReviewRequest } from "@/types/streaming";
 import type { FileAttachment } from "@/types/chat";
 
 /**
- * Cumulative usage for the current chat session (across multiple generations).
- * Reset only on `reset()` (e.g., switching chats); preserved across `finishGeneration`.
+ * Cumulative usage for a chat session (across multiple generations).
+ * Reset only on `resetSession()`; preserved across `finishGeneration`.
  *
  * Named `LiveSessionUsage` to disambiguate from the persisted `SessionUsage`
- * row in `@/types/usage` (which models stored stats with `total_cost`,
- * `total_tokens`, `message_count`).
- *
- * - `cost` mirrors the backend-authoritative `total_cost` from the latest
- *   step_finish. `null` when no provider has reported pricing yet.
- * - Token fields are accumulated frontend-side from `step_finish.tokens`.
- *   Will reset on page refresh until Phase 2 wires backend persistence.
+ * row in `@/types/usage`.
  */
 export interface LiveSessionUsage {
   inputTokens: number;
@@ -37,533 +32,628 @@ const EMPTY_SESSION_USAGE: LiveSessionUsage = {
 };
 
 /**
- * Bounded LRU-ish set of step_finish event ids already applied to
- * sessionUsage, used to drop SSE replays after Last-Event-ID resume.
- * Lives outside the store so it does not trigger re-renders.
- *
- * SSE event ids in this codebase are numbers (auto-increment per stream),
- * not strings; callers pass them through unchanged.
+ * Per-session step_finish dedup, keyed by sessionId. Lives outside the store
+ * so reads/writes do not trigger re-renders. The inner set is bounded LRU-ish.
  */
-const SEEN_STEP_FINISH_IDS = new Set<number>();
+const SEEN_STEP_FINISH_IDS = new Map<string, Set<number>>();
 const SEEN_STEP_FINISH_LIMIT = 256;
-function rememberStepFinishId(id: number | null | undefined): boolean {
-  if (id === null || id === undefined) return false; // unknown id — skip dedup
-  if (SEEN_STEP_FINISH_IDS.has(id)) return true; // already seen
-  SEEN_STEP_FINISH_IDS.add(id);
-  if (SEEN_STEP_FINISH_IDS.size > SEEN_STEP_FINISH_LIMIT) {
-    // Drop the oldest entry — Set preserves insertion order.
-    const oldest = SEEN_STEP_FINISH_IDS.values().next().value;
-    if (oldest !== undefined) SEEN_STEP_FINISH_IDS.delete(oldest);
+function rememberStepFinishId(sessionId: string, id: number | null | undefined): boolean {
+  if (id === null || id === undefined) return false;
+  let seen = SEEN_STEP_FINISH_IDS.get(sessionId);
+  if (!seen) {
+    seen = new Set<number>();
+    SEEN_STEP_FINISH_IDS.set(sessionId, seen);
+  }
+  if (seen.has(id)) return true;
+  seen.add(id);
+  if (seen.size > SEEN_STEP_FINISH_LIMIT) {
+    const oldest = seen.values().next().value;
+    if (oldest !== undefined) seen.delete(oldest);
   }
   return false;
 }
-function clearSeenStepFinishIds(): void {
-  SEEN_STEP_FINISH_IDS.clear();
+function clearSeenStepFinishIds(sessionId: string): void {
+  SEEN_STEP_FINISH_IDS.delete(sessionId);
 }
 
-interface ChatStore {
-  // ─── Active generation ───
+/** Sentinel key for the draft session (Landing page, no sessionId yet). */
+const DRAFT_KEY = "__draft__";
+
+/**
+ * Per-session in-flight state. One bucket per chat. Independent sessions
+ * stream concurrently into their own bucket so navigation between chats does
+ * not stop or cross-contaminate any of them.
+ */
+export interface ChatSessionState {
   streamId: string | null;
-  sessionId: string | null;
   isGenerating: boolean;
   isCompacting: boolean;
-
-  // ─── Optimistic user message ───
-  /** Text shown as a pending user bubble before the API confirms creation. */
-  pendingUserText: string | null;
-  /** Attachments shown in the pending user bubble (cleared on startGeneration). */
-  pendingAttachments: FileAttachment[] | null;
-
-  // ─── Streaming message assembly ───
-  /** Accumulated parts for the current assistant message. */
-  streamingParts: PartData[];
-  /** Current text_delta buffer (flushed into a TextPart on step_finish or done). */
-  streamingText: string;
-  /** Current reasoning_delta buffer. */
-  streamingReasoning: string;
-
-  // ─── Model loading (Ollama cold start) ───
   isModelLoading: boolean;
 
-  // ─── Interactive prompts ───
+  pendingUserText: string | null;
+  pendingAttachments: FileAttachment[] | null;
+
+  streamingParts: PartData[];
+  streamingText: string;
+  streamingReasoning: string;
+
   pendingPermission: PermissionRequest | null;
   pendingQuestion: QuestionRequest | null;
   pendingPlanReview: PlanReviewRequest | null;
 
-  // ─── Session usage (Trust Surface — Phase 1) ───
-  /** Cumulative token + cost for the current chat. Resets on chat switch. */
   sessionUsage: LiveSessionUsage;
+}
 
-  // ─── Actions ───
-  /** Immediately show loading state + optimistic user message before API returns. */
-  beginSending: (text: string, attachments?: FileAttachment[]) => void;
-  startGeneration: (streamId: string, sessionId: string) => void;
-  startCompactionStream: (streamId: string, sessionId: string) => void;
-  appendTextDelta: (text: string) => void;
-  appendReasoningDelta: (text: string) => void;
-  addToolStart: (tool: string, callId: string, args: Record<string, unknown>, title?: string | null) => void;
-  setToolResult: (callId: string, output: string, title?: string | null, metadata?: Record<string, unknown> | null) => void;
-  setToolError: (callId: string, output: string) => void;
-  addStepStart: (step: number) => void;
+export const EMPTY_SESSION_STATE: ChatSessionState = {
+  streamId: null,
+  isGenerating: false,
+  isCompacting: false,
+  isModelLoading: false,
+  pendingUserText: null,
+  pendingAttachments: null,
+  streamingParts: [],
+  streamingText: "",
+  streamingReasoning: "",
+  pendingPermission: null,
+  pendingQuestion: null,
+  pendingPlanReview: null,
+  sessionUsage: EMPTY_SESSION_USAGE,
+};
+
+interface ChatStore {
+  /** Active per-session buckets, keyed by sessionId. */
+  sessions: Record<string, ChatSessionState>;
+  /**
+   * Bucket for an unsaved Landing-page chat (no sessionId yet). On
+   * startGeneration with a fresh sessionId it gets promoted into `sessions`.
+   */
+  draftSession: ChatSessionState | null;
+
+  // ─── Bucket lifecycle ───
+  ensureSession: (sessionId: string) => void;
+  removeSession: (sessionId: string) => void;
+  resetSession: (sessionId: string | null) => void;
+  /** Clear everything — only for logout / catastrophic reset. */
+  resetAll: () => void;
+
+  // ─── Actions (all take sessionId | null) ───
+  beginSending: (sessionId: string | null, text: string, attachments?: FileAttachment[]) => void;
+  startGeneration: (sessionId: string, streamId: string) => void;
+  startCompactionStream: (sessionId: string, streamId: string) => void;
+  appendTextDelta: (sessionId: string | null, text: string) => void;
+  appendReasoningDelta: (sessionId: string | null, text: string) => void;
+  addToolStart: (sessionId: string | null, tool: string, callId: string, args: Record<string, unknown>, title?: string | null) => void;
+  setToolResult: (sessionId: string | null, callId: string, output: string, title?: string | null, metadata?: Record<string, unknown> | null) => void;
+  setToolError: (sessionId: string | null, callId: string, output: string) => void;
+  addStepStart: (sessionId: string | null, step: number) => void;
   addStepFinish: (
+    sessionId: string | null,
     reason: string,
     tokens: Record<string, number>,
     cost: number,
     totalCost: number | null,
     /** SSE event id; used to drop replays after Last-Event-ID resume. */
     eventId?: number | null,
-    /** Session id from the SSE event payload; used to drop late events
-     *  arriving after the user switched chats. */
-    eventSessionId?: string | null,
   ) => void;
-  addCompaction: (auto: boolean) => void;
-  startCompaction: (phases: string[]) => void;
-  updateCompactionPhase: (phase: string, status: string) => void;
-  updateCompactionProgress: (phase: string, chars: number) => void;
-  addSubtask: (sessionId: string, title: string, description: string) => void;
-  setPermissionRequest: (req: PermissionRequest) => void;
-  clearPermissionRequest: () => void;
-  setQuestion: (req: QuestionRequest) => void;
-  clearQuestion: () => void;
-  setPlanReview: (req: PlanReviewRequest) => void;
-  clearPlanReview: () => void;
-  setModelLoading: (loading: boolean) => void;
-  setCompacting: (compacting: boolean) => void;
-  clearStreamingContent: () => void;
-  /**
-   * Mark a chat as the active one. Resets per-chat session usage and the
-   * step_finish dedup set; intended to be called from the sessionId-keyed
-   * effect in chat-view.tsx so direct route navigation (/c/A → /c/B) does
-   * not leak A's running totals onto B.
-   */
-  enterChat: (sessionId: string | null) => void;
-  finishGeneration: () => void;
-  reset: () => void;
+  addCompaction: (sessionId: string | null, auto: boolean) => void;
+  startCompaction: (sessionId: string | null, phases: string[]) => void;
+  updateCompactionPhase: (sessionId: string | null, phase: string, status: string) => void;
+  updateCompactionProgress: (sessionId: string | null, phase: string, chars: number) => void;
+  addSubtask: (sessionId: string | null, subtaskSessionId: string, title: string, description: string) => void;
+  setPermissionRequest: (sessionId: string | null, req: PermissionRequest) => void;
+  clearPermissionRequest: (sessionId: string | null) => void;
+  setQuestion: (sessionId: string | null, req: QuestionRequest) => void;
+  clearQuestion: (sessionId: string | null) => void;
+  setPlanReview: (sessionId: string | null, req: PlanReviewRequest) => void;
+  clearPlanReview: (sessionId: string | null) => void;
+  setModelLoading: (sessionId: string | null, loading: boolean) => void;
+  setCompacting: (sessionId: string | null, compacting: boolean) => void;
+  clearStreamingContent: (sessionId: string | null) => void;
+  finishGeneration: (sessionId: string | null) => void;
 }
 
-/**
- * Flush accumulated text/reasoning deltas into parts.
- * Called before step boundaries and on finish.
- */
 function flushBuffers(
   parts: PartData[],
   text: string,
   reasoning: string,
 ): { parts: PartData[]; text: string; reasoning: string } {
   const flushed = [...parts];
-  if (reasoning) {
-    flushed.push({ type: "reasoning", text: reasoning });
-  }
-  if (text) {
-    flushed.push({ type: "text", text });
-  }
+  if (reasoning) flushed.push({ type: "reasoning", text: reasoning });
+  if (text) flushed.push({ type: "text", text });
   return { parts: flushed, text: "", reasoning: "" };
 }
 
-export const useChatStore = create<ChatStore>((set) => ({
-  // State
-  streamId: null,
-  sessionId: null,
-  isGenerating: false,
-  isCompacting: false,
-  pendingUserText: null,
-  pendingAttachments: null,
-  streamingParts: [],
-  streamingText: "",
-  streamingReasoning: "",
-  isModelLoading: false,
-  pendingPermission: null,
-  pendingQuestion: null,
-  pendingPlanReview: null,
-  sessionUsage: EMPTY_SESSION_USAGE,
+/**
+ * Mutate one bucket. If sessionId is null, mutates draftSession. Otherwise
+ * looks up sessions[sessionId], auto-creating an empty bucket if missing.
+ * Returns the next store slice; callers should pass the return into `set`.
+ */
+function mutateBucket(
+  state: ChatStore,
+  sessionId: string | null,
+  mutate: (prev: ChatSessionState) => ChatSessionState,
+): Pick<ChatStore, "sessions" | "draftSession"> {
+  if (sessionId === null) {
+    const prev = state.draftSession ?? EMPTY_SESSION_STATE;
+    return { sessions: state.sessions, draftSession: mutate(prev) };
+  }
+  const prev = state.sessions[sessionId] ?? EMPTY_SESSION_STATE;
+  return {
+    sessions: { ...state.sessions, [sessionId]: mutate(prev) },
+    draftSession: state.draftSession,
+  };
+}
 
-  // Actions
-  beginSending: (text, attachments) =>
-    set({
-      isGenerating: true,
-      isCompacting: false,
-      isModelLoading: false,
-      pendingUserText: text,
-      pendingAttachments: attachments?.length ? attachments : null,
-      streamingParts: [],
-      streamingText: "",
-      streamingReasoning: "",
-      pendingPermission: null,
-      pendingQuestion: null,
-      pendingPlanReview: null,
+export const useChatStore = create<ChatStore>((set) => ({
+  sessions: {},
+  draftSession: null,
+
+  ensureSession: (sessionId) =>
+    set((s) => {
+      if (s.sessions[sessionId]) return s;
+      return { sessions: { ...s.sessions, [sessionId]: EMPTY_SESSION_STATE } };
     }),
 
-  startGeneration: (streamId, sessionId) => {
-    set({
-      streamId,
-      sessionId,
-      isGenerating: true,
-      isCompacting: false,
-      // Keep pendingUserText visible during streaming — it will be cleared
-      // in finishGeneration() when the DONE refetch brings the real DB message.
-      streamingParts: [],
-      streamingText: "",
-      streamingReasoning: "",
-      pendingPermission: null,
-      pendingQuestion: null,
-      pendingPlanReview: null,
+  removeSession: (sessionId) => {
+    clearSeenStepFinishIds(sessionId);
+    set((s) => {
+      if (!s.sessions[sessionId]) return s;
+      const next = { ...s.sessions };
+      delete next[sessionId];
+      return { sessions: next };
     });
   },
 
-  startCompactionStream: (streamId, sessionId) =>
-    set((s) => {
-      const { parts, text, reasoning } = flushBuffers(
-        s.streamingParts,
-        s.streamingText,
-        s.streamingReasoning,
-      );
-      return {
-        streamId,
-        sessionId,
-        isGenerating: false,
-        isCompacting: true,
-        isModelLoading: false,
-        pendingUserText: null,
-        pendingAttachments: null,
-        streamingParts: parts,
-        streamingText: text,
-        streamingReasoning: reasoning,
-        pendingPermission: null,
-        pendingQuestion: null,
-        pendingPlanReview: null,
-      };
-    }),
-
-  appendTextDelta: (text) =>
-    set((s) => ({ streamingText: s.streamingText + text })),
-
-  appendReasoningDelta: (text) =>
-    set((s) => ({ streamingReasoning: s.streamingReasoning + text })),
-
-  addToolStart: (tool, callId, args, title) =>
-    set((s) => {
-      // Flush text buffers before tool
-      const { parts, text, reasoning } = flushBuffers(
-        s.streamingParts,
-        s.streamingText,
-        s.streamingReasoning,
-      );
-      const toolPart: ToolPart = {
-        type: "tool",
-        tool,
-        call_id: callId,
-        state: {
-          status: "running",
-          input: args,
-          output: null,
-          metadata: null,
-          title: title ?? null,
-          time_start: new Date().toISOString(),
-          time_end: null,
-          time_compacted: null,
-        },
-      };
-      return {
-        streamingParts: [...parts, toolPart],
-        streamingText: text,
-        streamingReasoning: reasoning,
-      };
-    }),
-
-  setToolResult: (callId, output, title, metadata) =>
-    set((s) => ({
-      streamingParts: s.streamingParts.map((p) =>
-        p.type === "tool" && p.call_id === callId
-          ? {
-              ...p,
-              state: {
-                ...p.state,
-                status: "completed" as const,
-                output,
-                title: title ?? p.state.title,
-                metadata: metadata ?? p.state.metadata,
-                time_end: new Date().toISOString(),
-              },
-            }
-          : p,
-      ),
-    })),
-
-  setToolError: (callId, output) =>
-    set((s) => ({
-      streamingParts: s.streamingParts.map((p) =>
-        p.type === "tool" && p.call_id === callId
-          ? {
-              ...p,
-              state: {
-                ...p.state,
-                status: "error" as const,
-                output,
-                time_end: new Date().toISOString(),
-              },
-            }
-          : p,
-      ),
-    })),
-
-  addStepStart: (step) =>
-    set((s) => {
-      const { parts, text, reasoning } = flushBuffers(
-        s.streamingParts,
-        s.streamingText,
-        s.streamingReasoning,
-      );
-      return {
-        streamingParts: [
-          ...parts,
-          { type: "step-start", snapshot: { step } } as PartData,
-        ],
-        streamingText: text,
-        streamingReasoning: reasoning,
-      };
-    }),
-
-  addStepFinish: (reason, tokens, cost, totalCost, eventId, eventSessionId) =>
-    set((s) => {
-      const { parts, text, reasoning } = flushBuffers(
-        s.streamingParts,
-        s.streamingText,
-        s.streamingReasoning,
-      );
-      // The streaming part is always appended (it drives the UI step tracker
-      // regardless of whether the event is for this chat); the *usage*
-      // accumulator is what we guard.
-      const baseReturn = {
-        streamingParts: [
-          ...parts,
-          {
-            type: "step-finish",
-            reason,
-            tokens,
-            cost,
-          } as PartData,
-        ],
-        streamingText: text,
-        streamingReasoning: reasoning,
-      };
-
-      // Guard 1 — drop late SSE events arriving after a chat switch.
-      // If the event carries a session_id and we know our active session,
-      // both must match before we touch the usage counter.
-      if (eventSessionId && s.sessionId && eventSessionId !== s.sessionId) {
-        return baseReturn;
-      }
-
-      // Guard 2 — drop SSE replays from Last-Event-ID resume.
-      // Token accumulation is not idempotent; cost is mirrored from
-      // backend.total_cost so it would be safe even on a replay, but token
-      // counts would double. Only dedup when an id is provided.
-      if (eventId && rememberStepFinishId(eventId)) {
-        return baseReturn;
-      }
-
-      const prev = s.sessionUsage;
-      const inputDelta = tokens?.input ?? 0;
-      const outputDelta = tokens?.output ?? 0;
-      const reasoningDelta = tokens?.reasoning ?? 0;
-      const cacheReadDelta = tokens?.cache_read ?? 0;
-      const cacheWriteDelta = tokens?.cache_write ?? 0;
-      const tokenDelta =
-        inputDelta + outputDelta + reasoningDelta + cacheReadDelta + cacheWriteDelta;
-
-      // Cost reconciliation:
-      //   1. Backend `total_cost` is the authoritative running total.
-      //   2. Treat 0 as "not yet priced" so unpriced providers (local Ollama,
-      //      custom endpoints) don't show a misleading "≈$0.0000".
-      //   3. Fallback to previous-cost + per-step cost when backend doesn't
-      //      report total_cost yet (older backend / per-step-only emitter).
-      let nextCost: number | null;
-      if (totalCost !== null && totalCost > 0) {
-        nextCost = totalCost;
-      } else if (cost > 0) {
-        nextCost = (prev.cost ?? 0) + cost;
-      } else {
-        nextCost = prev.cost; // unchanged — preserves earlier known value if any
-      }
-
-      // Skip allocating a new sessionUsage object when nothing changed
-      // (e.g., non-terminal step_finish for tool_use carries tokens=null).
-      // Saves a re-render pulse for SessionStats during streaming.
-      if (tokenDelta === 0 && nextCost === prev.cost) {
-        return baseReturn;
-      }
-
-      const nextUsage: LiveSessionUsage = {
-        inputTokens: prev.inputTokens + inputDelta,
-        outputTokens: prev.outputTokens + outputDelta,
-        reasoningTokens: prev.reasoningTokens + reasoningDelta,
-        cacheReadTokens: prev.cacheReadTokens + cacheReadDelta,
-        cacheWriteTokens: prev.cacheWriteTokens + cacheWriteDelta,
-        cost: nextCost,
-      };
-      return { ...baseReturn, sessionUsage: nextUsage };
-    }),
-
-  addCompaction: (auto) =>
-    set((s) => {
-      const parts = [...s.streamingParts];
-      // Transition existing in-progress compaction part to completed
-      let found = false;
-      for (let i = parts.length - 1; i >= 0; i--) {
-        const p = parts[i];
-        if (
-          p.type === "compaction" &&
-          (p as CompactionPart).compactionStatus === "in_progress"
-        ) {
-          parts[i] = { ...(p as CompactionPart), compactionStatus: "completed" };
-          found = true;
-          break;
-        }
-      }
-      // Fallback: no in-progress part (e.g. SSE replay), push simple one
-      if (!found) {
-        parts.push({ type: "compaction", auto });
-      }
-      return { streamingParts: parts };
-    }),
-
-  startCompaction: (phases) =>
-    set((s) => {
-      // Guard: don't create duplicate if one is already in-progress
-      const hasExisting = s.streamingParts.some(
-        (p) => p.type === "compaction" && (p as CompactionPart).compactionStatus === "in_progress",
-      );
-      if (hasExisting) return s;
-
-      const { parts, text, reasoning } = flushBuffers(
-        s.streamingParts,
-        s.streamingText,
-        s.streamingReasoning,
-      );
-      const compactionPart: CompactionPart = {
-        type: "compaction",
-        auto: true,
-        compactionStatus: "in_progress",
-        phases: phases.map((p) => ({
-          phase: p as CompactionPhase,
-          status: "pending" as CompactionPhaseStatus,
-        })),
-      };
-      return {
-        isCompacting: true,
-        streamingParts: [...parts, compactionPart],
-        streamingText: text,
-        streamingReasoning: reasoning,
-      };
-    }),
-
-  updateCompactionPhase: (phase, status) =>
-    set((s) => {
-      const parts = [...s.streamingParts];
-      for (let i = parts.length - 1; i >= 0; i--) {
-        const p = parts[i];
-        if (p.type === "compaction" && (p as CompactionPart).phases) {
-          const cp = { ...(p as CompactionPart) };
-          cp.phases = cp.phases!.map((ph) =>
-            ph.phase === phase ? { ...ph, status: status as CompactionPhaseStatus } : ph,
-          );
-          parts[i] = cp;
-          break;
-        }
-      }
-      return { streamingParts: parts };
-    }),
-
-  updateCompactionProgress: (phase, chars) =>
-    set((s) => {
-      const parts = [...s.streamingParts];
-      for (let i = parts.length - 1; i >= 0; i--) {
-        const p = parts[i];
-        if (p.type === "compaction" && (p as CompactionPart).phases) {
-          const cp = { ...(p as CompactionPart) };
-          cp.phases = cp.phases!.map((ph) =>
-            ph.phase === phase ? { ...ph, chars } : ph,
-          );
-          parts[i] = cp;
-          break;
-        }
-      }
-      return { streamingParts: parts };
-    }),
-
-  addSubtask: (sessionId, title, description) =>
-    set((s) => ({
-      streamingParts: [
-        ...s.streamingParts,
-        { type: "subtask", session_id: sessionId, title, description },
-      ],
-    })),
-
-  setPermissionRequest: (req) => set({ pendingPermission: req }),
-  clearPermissionRequest: () => set({ pendingPermission: null }),
-
-  setQuestion: (req) => set({ pendingQuestion: req }),
-  clearQuestion: () => set({ pendingQuestion: null }),
-
-  setPlanReview: (req) => set({ pendingPlanReview: req }),
-  clearPlanReview: () => set({ pendingPlanReview: null }),
-
-  setModelLoading: (loading) => set({ isModelLoading: loading }),
-
-  setCompacting: (compacting) => set({ isCompacting: compacting }),
-
-  clearStreamingContent: () =>
-    set({
-      streamingParts: [],
-      streamingText: "",
-      streamingReasoning: "",
-    }),
-
-  enterChat: (sessionId) => {
-    clearSeenStepFinishIds();
-    set({ sessionId, sessionUsage: EMPTY_SESSION_USAGE });
+  resetSession: (sessionId) => {
+    if (sessionId !== null) clearSeenStepFinishIds(sessionId);
+    set((s) => mutateBucket(s, sessionId, () => EMPTY_SESSION_STATE));
   },
 
-  finishGeneration: () =>
-    set((s) => {
-      const { parts } = flushBuffers(
-        s.streamingParts,
-        s.streamingText,
-        s.streamingReasoning,
-      );
-      return {
-        streamId: null,
-        isGenerating: false,
+  resetAll: () => {
+    SEEN_STEP_FINISH_IDS.clear();
+    set({ sessions: {}, draftSession: null });
+  },
+
+  beginSending: (sessionId, text, attachments) =>
+    set((s) =>
+      mutateBucket(s, sessionId, (prev) => ({
+        ...prev,
+        isGenerating: true,
         isCompacting: false,
         isModelLoading: false,
-        pendingUserText: null,
-        pendingAttachments: null,
+        pendingUserText: text,
+        pendingAttachments: attachments?.length ? attachments : null,
+        streamingParts: [],
+        streamingText: "",
+        streamingReasoning: "",
         pendingPermission: null,
         pendingQuestion: null,
         pendingPlanReview: null,
-        streamingParts: parts,
+      })),
+    ),
+
+  startGeneration: (sessionId, streamId) =>
+    set((s) => {
+      // Seed sessions[sessionId] from the draft bucket if one exists (Landing
+      // flow just got a session id from the backend). The draft is left in
+      // place on purpose — Landing keeps reading from it until route
+      // navigation unmounts the page, which prevents the streaming view from
+      // flashing back to the empty landing layout. Landing's own mount
+      // effect resets the draft on the next fresh chat.
+      const draft = s.draftSession;
+      const existing = s.sessions[sessionId];
+      const base: ChatSessionState = draft ?? existing ?? EMPTY_SESSION_STATE;
+      const next: ChatSessionState = {
+        ...base,
+        streamId,
+        isGenerating: true,
+        isCompacting: false,
+        streamingParts: [],
         streamingText: "",
         streamingReasoning: "",
+        pendingPermission: null,
+        pendingQuestion: null,
+        pendingPlanReview: null,
       };
+      return { sessions: { ...s.sessions, [sessionId]: next } };
     }),
 
-  reset: () => {
-    clearSeenStepFinishIds();
-    set({
-      streamId: null,
-      sessionId: null,
-      isGenerating: false,
-      isCompacting: false,
-      isModelLoading: false,
-      pendingUserText: null,
-      pendingAttachments: null,
-      streamingParts: [],
-      streamingText: "",
-      streamingReasoning: "",
-      pendingPermission: null,
-      pendingQuestion: null,
-      pendingPlanReview: null,
-      sessionUsage: EMPTY_SESSION_USAGE,
-    });
-  },
+  startCompactionStream: (sessionId, streamId) =>
+    set((s) =>
+      mutateBucket(s, sessionId, (prev) => {
+        const { parts, text, reasoning } = flushBuffers(
+          prev.streamingParts,
+          prev.streamingText,
+          prev.streamingReasoning,
+        );
+        return {
+          ...prev,
+          streamId,
+          isGenerating: false,
+          isCompacting: true,
+          isModelLoading: false,
+          pendingUserText: null,
+          pendingAttachments: null,
+          streamingParts: parts,
+          streamingText: text,
+          streamingReasoning: reasoning,
+          pendingPermission: null,
+          pendingQuestion: null,
+          pendingPlanReview: null,
+        };
+      }),
+    ),
+
+  appendTextDelta: (sessionId, text) =>
+    set((s) =>
+      mutateBucket(s, sessionId, (prev) => ({
+        ...prev,
+        streamingText: prev.streamingText + text,
+      })),
+    ),
+
+  appendReasoningDelta: (sessionId, text) =>
+    set((s) =>
+      mutateBucket(s, sessionId, (prev) => ({
+        ...prev,
+        streamingReasoning: prev.streamingReasoning + text,
+      })),
+    ),
+
+  addToolStart: (sessionId, tool, callId, args, title) =>
+    set((s) =>
+      mutateBucket(s, sessionId, (prev) => {
+        const { parts, text, reasoning } = flushBuffers(
+          prev.streamingParts,
+          prev.streamingText,
+          prev.streamingReasoning,
+        );
+        const toolPart: ToolPart = {
+          type: "tool",
+          tool,
+          call_id: callId,
+          state: {
+            status: "running",
+            input: args,
+            output: null,
+            metadata: null,
+            title: title ?? null,
+            time_start: new Date().toISOString(),
+            time_end: null,
+            time_compacted: null,
+          },
+        };
+        return {
+          ...prev,
+          streamingParts: [...parts, toolPart],
+          streamingText: text,
+          streamingReasoning: reasoning,
+        };
+      }),
+    ),
+
+  setToolResult: (sessionId, callId, output, title, metadata) =>
+    set((s) =>
+      mutateBucket(s, sessionId, (prev) => ({
+        ...prev,
+        streamingParts: prev.streamingParts.map((p) =>
+          p.type === "tool" && p.call_id === callId
+            ? {
+                ...p,
+                state: {
+                  ...p.state,
+                  status: "completed" as const,
+                  output,
+                  title: title ?? p.state.title,
+                  metadata: metadata ?? p.state.metadata,
+                  time_end: new Date().toISOString(),
+                },
+              }
+            : p,
+        ),
+      })),
+    ),
+
+  setToolError: (sessionId, callId, output) =>
+    set((s) =>
+      mutateBucket(s, sessionId, (prev) => ({
+        ...prev,
+        streamingParts: prev.streamingParts.map((p) =>
+          p.type === "tool" && p.call_id === callId
+            ? {
+                ...p,
+                state: {
+                  ...p.state,
+                  status: "error" as const,
+                  output,
+                  time_end: new Date().toISOString(),
+                },
+              }
+            : p,
+        ),
+      })),
+    ),
+
+  addStepStart: (sessionId, step) =>
+    set((s) =>
+      mutateBucket(s, sessionId, (prev) => {
+        const { parts, text, reasoning } = flushBuffers(
+          prev.streamingParts,
+          prev.streamingText,
+          prev.streamingReasoning,
+        );
+        return {
+          ...prev,
+          streamingParts: [
+            ...parts,
+            { type: "step-start", snapshot: { step } } as PartData,
+          ],
+          streamingText: text,
+          streamingReasoning: reasoning,
+        };
+      }),
+    ),
+
+  addStepFinish: (sessionId, reason, tokens, cost, totalCost, eventId) =>
+    set((s) =>
+      mutateBucket(s, sessionId, (prev) => {
+        const { parts, text, reasoning } = flushBuffers(
+          prev.streamingParts,
+          prev.streamingText,
+          prev.streamingReasoning,
+        );
+        const baseNext: ChatSessionState = {
+          ...prev,
+          streamingParts: [
+            ...parts,
+            { type: "step-finish", reason, tokens, cost } as PartData,
+          ],
+          streamingText: text,
+          streamingReasoning: reasoning,
+        };
+
+        // Drop SSE replays from Last-Event-ID resume. Per-session dedup —
+        // cross-session collisions are impossible because each session has
+        // its own SSE stream and its own event-id namespace.
+        const dedupKey = sessionId ?? DRAFT_KEY;
+        if (eventId && rememberStepFinishId(dedupKey, eventId)) {
+          return baseNext;
+        }
+
+        const prevUsage = prev.sessionUsage;
+        const inputDelta = tokens?.input ?? 0;
+        const outputDelta = tokens?.output ?? 0;
+        const reasoningDelta = tokens?.reasoning ?? 0;
+        const cacheReadDelta = tokens?.cache_read ?? 0;
+        const cacheWriteDelta = tokens?.cache_write ?? 0;
+        const tokenDelta =
+          inputDelta + outputDelta + reasoningDelta + cacheReadDelta + cacheWriteDelta;
+
+        let nextCost: number | null;
+        if (totalCost !== null && totalCost > 0) {
+          nextCost = totalCost;
+        } else if (cost > 0) {
+          nextCost = (prevUsage.cost ?? 0) + cost;
+        } else {
+          nextCost = prevUsage.cost;
+        }
+
+        if (tokenDelta === 0 && nextCost === prevUsage.cost) {
+          return baseNext;
+        }
+
+        const nextUsage: LiveSessionUsage = {
+          inputTokens: prevUsage.inputTokens + inputDelta,
+          outputTokens: prevUsage.outputTokens + outputDelta,
+          reasoningTokens: prevUsage.reasoningTokens + reasoningDelta,
+          cacheReadTokens: prevUsage.cacheReadTokens + cacheReadDelta,
+          cacheWriteTokens: prevUsage.cacheWriteTokens + cacheWriteDelta,
+          cost: nextCost,
+        };
+        return { ...baseNext, sessionUsage: nextUsage };
+      }),
+    ),
+
+  addCompaction: (sessionId, auto) =>
+    set((s) =>
+      mutateBucket(s, sessionId, (prev) => {
+        const parts = [...prev.streamingParts];
+        let found = false;
+        for (let i = parts.length - 1; i >= 0; i--) {
+          const p = parts[i];
+          if (
+            p.type === "compaction" &&
+            (p as CompactionPart).compactionStatus === "in_progress"
+          ) {
+            parts[i] = { ...(p as CompactionPart), compactionStatus: "completed" };
+            found = true;
+            break;
+          }
+        }
+        if (!found) parts.push({ type: "compaction", auto });
+        return { ...prev, streamingParts: parts };
+      }),
+    ),
+
+  startCompaction: (sessionId, phases) =>
+    set((s) =>
+      mutateBucket(s, sessionId, (prev) => {
+        const hasExisting = prev.streamingParts.some(
+          (p) => p.type === "compaction" && (p as CompactionPart).compactionStatus === "in_progress",
+        );
+        if (hasExisting) return prev;
+        const { parts, text, reasoning } = flushBuffers(
+          prev.streamingParts,
+          prev.streamingText,
+          prev.streamingReasoning,
+        );
+        const compactionPart: CompactionPart = {
+          type: "compaction",
+          auto: true,
+          compactionStatus: "in_progress",
+          phases: phases.map((p) => ({
+            phase: p as CompactionPhase,
+            status: "pending" as CompactionPhaseStatus,
+          })),
+        };
+        return {
+          ...prev,
+          isCompacting: true,
+          streamingParts: [...parts, compactionPart],
+          streamingText: text,
+          streamingReasoning: reasoning,
+        };
+      }),
+    ),
+
+  updateCompactionPhase: (sessionId, phase, status) =>
+    set((s) =>
+      mutateBucket(s, sessionId, (prev) => {
+        const parts = [...prev.streamingParts];
+        for (let i = parts.length - 1; i >= 0; i--) {
+          const p = parts[i];
+          if (p.type === "compaction" && (p as CompactionPart).phases) {
+            const cp = { ...(p as CompactionPart) };
+            cp.phases = cp.phases!.map((ph) =>
+              ph.phase === phase ? { ...ph, status: status as CompactionPhaseStatus } : ph,
+            );
+            parts[i] = cp;
+            break;
+          }
+        }
+        return { ...prev, streamingParts: parts };
+      }),
+    ),
+
+  updateCompactionProgress: (sessionId, phase, chars) =>
+    set((s) =>
+      mutateBucket(s, sessionId, (prev) => {
+        const parts = [...prev.streamingParts];
+        for (let i = parts.length - 1; i >= 0; i--) {
+          const p = parts[i];
+          if (p.type === "compaction" && (p as CompactionPart).phases) {
+            const cp = { ...(p as CompactionPart) };
+            cp.phases = cp.phases!.map((ph) =>
+              ph.phase === phase ? { ...ph, chars } : ph,
+            );
+            parts[i] = cp;
+            break;
+          }
+        }
+        return { ...prev, streamingParts: parts };
+      }),
+    ),
+
+  addSubtask: (sessionId, subtaskSessionId, title, description) =>
+    set((s) =>
+      mutateBucket(s, sessionId, (prev) => ({
+        ...prev,
+        streamingParts: [
+          ...prev.streamingParts,
+          { type: "subtask", session_id: subtaskSessionId, title, description },
+        ],
+      })),
+    ),
+
+  setPermissionRequest: (sessionId, req) =>
+    set((s) => mutateBucket(s, sessionId, (prev) => ({ ...prev, pendingPermission: req }))),
+  clearPermissionRequest: (sessionId) =>
+    set((s) => mutateBucket(s, sessionId, (prev) => ({ ...prev, pendingPermission: null }))),
+
+  setQuestion: (sessionId, req) =>
+    set((s) => mutateBucket(s, sessionId, (prev) => ({ ...prev, pendingQuestion: req }))),
+  clearQuestion: (sessionId) =>
+    set((s) => mutateBucket(s, sessionId, (prev) => ({ ...prev, pendingQuestion: null }))),
+
+  setPlanReview: (sessionId, req) =>
+    set((s) => mutateBucket(s, sessionId, (prev) => ({ ...prev, pendingPlanReview: req }))),
+  clearPlanReview: (sessionId) =>
+    set((s) => mutateBucket(s, sessionId, (prev) => ({ ...prev, pendingPlanReview: null }))),
+
+  setModelLoading: (sessionId, loading) =>
+    set((s) => mutateBucket(s, sessionId, (prev) => ({ ...prev, isModelLoading: loading }))),
+
+  setCompacting: (sessionId, compacting) =>
+    set((s) => mutateBucket(s, sessionId, (prev) => ({ ...prev, isCompacting: compacting }))),
+
+  clearStreamingContent: (sessionId) =>
+    set((s) =>
+      mutateBucket(s, sessionId, (prev) => ({
+        ...prev,
+        streamingParts: [],
+        streamingText: "",
+        streamingReasoning: "",
+      })),
+    ),
+
+  finishGeneration: (sessionId) =>
+    set((s) =>
+      mutateBucket(s, sessionId, (prev) => {
+        const { parts } = flushBuffers(
+          prev.streamingParts,
+          prev.streamingText,
+          prev.streamingReasoning,
+        );
+        return {
+          ...prev,
+          streamId: null,
+          isGenerating: false,
+          isCompacting: false,
+          isModelLoading: false,
+          pendingUserText: null,
+          pendingAttachments: null,
+          pendingPermission: null,
+          pendingQuestion: null,
+          pendingPlanReview: null,
+          streamingParts: parts,
+          streamingText: "",
+          streamingReasoning: "",
+        };
+      }),
+    ),
 }));
+
+/**
+ * Subscribe to one session's bucket. Pass null to read the draft bucket.
+ * Returns EMPTY_SESSION_STATE when no bucket exists yet so callers can
+ * destructure without null checks.
+ *
+ * Uses a stable empty sentinel + useMemo to keep the returned reference
+ * stable when the bucket is absent — otherwise Zustand would render-loop on
+ * useEffect deps that include the returned object.
+ */
+export function useChatSession(sessionId: string | null): ChatSessionState {
+  const bucket = useChatStore((s) =>
+    sessionId === null
+      ? s.draftSession
+      : (s.sessions[sessionId] ?? null),
+  );
+  return useMemo(() => bucket ?? EMPTY_SESSION_STATE, [bucket]);
+}
+
+/**
+ * Subscribe to "is any session currently generating". Useful for global
+ * indicators that don't have a single session context.
+ */
+export function useAnySessionGenerating(): boolean {
+  return useChatStore((s) => {
+    if (s.draftSession?.isGenerating) return true;
+    for (const bucket of Object.values(s.sessions)) {
+      if (bucket.isGenerating) return true;
+    }
+    return false;
+  });
+}
+
+/**
+ * Reverse-lookup: which sessionId owns this streamId, if any? Used by SSE
+ * handlers and the polling sync hook to dispatch events to the right bucket.
+ */
+export function findSessionByStreamId(streamId: string): string | null {
+  const { sessions, draftSession } = useChatStore.getState();
+  if (draftSession?.streamId === streamId) return null;
+  for (const [sid, bucket] of Object.entries(sessions)) {
+    if (bucket.streamId === streamId) return sid;
+  }
+  return null;
+}

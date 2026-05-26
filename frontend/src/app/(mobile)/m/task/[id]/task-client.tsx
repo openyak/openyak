@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ChatView } from "@/components/chat/chat-view";
 import { isRemoteMode } from "@/lib/remote-connection";
 import { useChatStore } from "@/stores/chat-store";
+import { startStream, isStreamActive } from "@/lib/session-stream-registry";
 
 function TaskClientInner({ sessionId }: { sessionId: string }) {
   const router = useRouter();
@@ -21,13 +22,18 @@ function TaskClientInner({ sessionId }: { sessionId: string }) {
     : sessionId;
 
   // If navigated with a stream_id (e.g., from new task page), seed the
-  // chatStore immediately so useSSE activates without waiting for the poll.
+  // chatStore and attach the stream immediately so we don't wait for the
+  // periodic /chat/active poll to discover it.
   const streamIdParam = searchParams.get("stream_id");
   useEffect(() => {
     if (resolvedId && streamIdParam) {
       const chatState = useChatStore.getState();
-      if (!chatState.isGenerating || chatState.streamId !== streamIdParam) {
-        chatState.startGeneration(streamIdParam, resolvedId);
+      const bucket = chatState.sessions[resolvedId];
+      if (bucket?.streamId !== streamIdParam) {
+        chatState.startGeneration(resolvedId, streamIdParam);
+      }
+      if (!isStreamActive(resolvedId)) {
+        void startStream(resolvedId, streamIdParam);
       }
     }
   }, [resolvedId, streamIdParam]);

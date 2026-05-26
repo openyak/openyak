@@ -6,7 +6,7 @@ import { ChevronDown, Plug, Brain, Pencil, Check, X, Download, RefreshCw } from 
 import { toast } from "sonner";
 import { useConnectors } from "@/hooks/use-connectors";
 import { useSkills } from "@/hooks/use-plugins";
-import { useChatStore } from "@/stores/chat-store";
+import { useAnySessionGenerating } from "@/stores/chat-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import {
   useWorkspaceMemory,
@@ -94,7 +94,9 @@ function MemoryBlock() {
   const workspacePath = useWorkspaceStore((s) => s.activeWorkspacePath);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const refreshTimestampRef = useRef<string | null>(null);
-  const isGenerating = useChatStore((s) => s.isGenerating);
+  // Workspace-level indicator: refresh-after-generate triggers whenever ANY
+  // session finishes. Memory is per-workspace, not per-session.
+  const isGenerating = useAnySessionGenerating();
   const prevGeneratingRef = useRef(isGenerating);
 
   const { data, isLoading } = useWorkspaceMemory(workspacePath, {

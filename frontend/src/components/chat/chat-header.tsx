@@ -9,7 +9,7 @@ import { ContextIndicator } from "@/components/chat/context-indicator";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { useSidebarStore } from "@/stores/sidebar-store";
-import { useChatStore } from "@/stores/chat-store";
+import { useChatSession } from "@/stores/chat-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useActivityStore } from "@/stores/activity-store";
 import { useArtifactStore } from "@/stores/artifact-store";
@@ -64,8 +64,9 @@ export function ChatHeader({ sessionId }: ChatHeaderProps) {
       openWorkspace();
     }
   }, [workspaceVisible, openWorkspace, closeWorkspace]);
-  const isGenerating = useChatStore((s) => s.isGenerating);
-  const streamingParts = useChatStore((s) => s.streamingParts);
+  const session = useChatSession(sessionId ?? null);
+  const isGenerating = session.isGenerating;
+  const streamingParts = session.streamingParts;
 
   // Derive stream status label for remote mode
   const streamStatus = (() => {

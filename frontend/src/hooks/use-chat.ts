@@ -7,11 +7,11 @@ import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { API, queryKeys } from "@/lib/constants";
 import { getChatRoute } from "@/lib/routes";
-import { useChatStore } from "@/stores/chat-store";
+import { useChatStore, useChatSession } from "@/stores/chat-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useActivityStore } from "@/stores/activity-store";
-import { useSSE } from "./use-sse";
+import { startStream, stopStream } from "@/lib/session-stream-registry";
 import { useRemoteGenerationSync } from "./use-remote-generation-sync";
 import type { InfiniteData } from "@tanstack/react-query";
 import type { FileAttachment, PromptResponse, RespondRequest, TaskBatchRequest } from "@/types/chat";
@@ -64,41 +64,35 @@ function formatTaskBatchPrompt(batch: Pick<TaskBatchRequest, "mode" | "tasks">):
 }
 
 /**
- * Core chat hook — orchestrates the full prompt → stream → assemble cycle.
+ * Core chat hook — orchestrates the prompt → stream → assemble cycle for one
+ * session. When called from Landing without a sessionId, all state lives in
+ * the draft bucket until the backend assigns an id; from then on the keyed
+ * bucket takes over and the actual SSE stream is owned by the
+ * SessionStreamRegistry, not by this hook.
  */
 export function useChat(currentSessionId?: string) {
   const router = useRouter();
   const queryClient = useQueryClient();
 
-  // Subscribe only to the specific fields ChatView needs for rendering.
-  // Avoid `useChatStore()` without a selector — it subscribes to the entire
-  // store and causes re-renders on every streaming delta (~dozens/sec).
-  const isGenerating = useChatStore((s) => s.isGenerating);
-  const isCompacting = useChatStore((s) => s.isCompacting);
-  const streamId = useChatStore((s) => s.streamId);
-  const pendingUserText = useChatStore((s) => s.pendingUserText);
-  const pendingAttachments = useChatStore((s) => s.pendingAttachments);
-  const streamingParts = useChatStore((s) => s.streamingParts);
-  const streamingText = useChatStore((s) => s.streamingText);
-  const streamingReasoning = useChatStore((s) => s.streamingReasoning);
-  const pendingPermission = useChatStore((s) => s.pendingPermission);
-  const pendingQuestion = useChatStore((s) => s.pendingQuestion);
-  const pendingPlanReview = useChatStore((s) => s.pendingPlanReview);
+  // One subscription, one selector — re-renders only when the bucket reference
+  // changes (i.e. when this session's state mutates).
+  const session = useChatSession(currentSessionId ?? null);
 
-  // SSE connection — activates when streamId is set
-  useSSE(streamId);
-
-  // Detect generations started by other clients (e.g., mobile)
+  // Polling sync for streams started by other clients (e.g. mobile)
   useRemoteGenerationSync(currentSessionId);
 
   const sendMessage = useCallback(
     async (text: string, attachments?: FileAttachment[]): Promise<boolean> => {
-      // Read stores at call-time (not as reactive subscriptions) — this keeps
-      // the callback reference stable so downstream components don't re-render.
       const chatState = useChatStore.getState();
       const settingsState = useSettingsStore.getState();
+      const targetSessionId = currentSessionId ?? null;
+      const currentBucket = targetSessionId === null
+        ? chatState.draftSession
+        : chatState.sessions[targetSessionId];
 
-      if (chatState.isGenerating || chatState.isCompacting || (!text.trim() && (!attachments || attachments.length === 0))) return false;
+      if (currentBucket?.isGenerating || currentBucket?.isCompacting || (!text.trim() && (!attachments || attachments.length === 0))) {
+        return false;
+      }
       if (
         hasImageAttachments(attachments) &&
         !selectedModelSupportsVision(
@@ -111,14 +105,13 @@ export function useChat(currentSessionId?: string) {
         return false;
       }
 
-      // New chat must start from a clean per-session state to avoid
-      // leaking any transient stream/session context from previous chats.
+      // New chat must start from a clean draft.
       if (!currentSessionId) {
-        chatState.reset();
+        chatState.resetSession(null);
       }
 
-      // Starting a fresh generation invalidates any side panels that were
-      // showing the previous assistant response.
+      // Starting a fresh generation invalidates any side panels showing the
+      // previous assistant response.
       useActivityStore.getState().close();
       try {
         const { useArtifactStore } = require("@/stores/artifact-store");
@@ -129,11 +122,9 @@ export function useChat(currentSessionId?: string) {
         usePlanReviewStore.getState().close();
       } catch {}
 
-      // Show loading state + optimistic user bubble immediately
-      chatState.beginSending(text.trim(), attachments);
+      chatState.beginSending(targetSessionId, text.trim(), attachments);
 
       try {
-        // Convert camelCase presets to snake_case keys for the backend
         const presets = settingsState.permissionPresets;
         const permissionPresets = {
           file_changes: presets.fileChanges,
@@ -159,16 +150,13 @@ export function useChat(currentSessionId?: string) {
           workspace: settingsState.workspaceDirectory,
         });
 
-        chatState.startGeneration(res.stream_id, res.session_id);
+        // Seed the keyed bucket (carries over the draft contents if any) and
+        // attach the SSE stream. Order matters: store update first so the
+        // registry's handlers see a bucket they can write into.
+        chatState.startGeneration(res.session_id, res.stream_id);
+        void startStream(res.session_id, res.stream_id);
 
-        // Don't refetch messages here — the optimistic pendingUserText bubble
-        // stays visible during streaming. A mid-stream refetch can return
-        // partially-populated assistant messages that duplicate the StreamingMessage.
-        // Messages are refetched after DONE in the SSE handler.
-
-        // Navigate to session if this was a new conversation
         if (!currentSessionId) {
-          // Optimistically add the session to the sidebar with user text as temp title
           const tempSession: SessionResponse = {
             id: res.session_id,
             project_id: null,
@@ -203,7 +191,7 @@ export function useChat(currentSessionId?: string) {
         return true;
       } catch (err) {
         console.error("Failed to start generation:", err);
-        useChatStore.getState().reset();
+        chatState.resetSession(targetSessionId);
 
         if (err instanceof ApiError) {
           if (isUnsupportedImagesError(err)) {
@@ -225,6 +213,11 @@ export function useChat(currentSessionId?: string) {
     async (batch: Pick<TaskBatchRequest, "mode" | "tasks">): Promise<boolean> => {
       const chatState = useChatStore.getState();
       const settingsState = useSettingsStore.getState();
+      const targetSessionId = currentSessionId ?? null;
+      const currentBucket = targetSessionId === null
+        ? chatState.draftSession
+        : chatState.sessions[targetSessionId];
+
       const tasks = batch.tasks
         .map((task) => ({
           ...task,
@@ -236,10 +229,10 @@ export function useChat(currentSessionId?: string) {
         }))
         .filter((task) => task.title && task.prompt);
 
-      if (chatState.isGenerating || chatState.isCompacting || tasks.length === 0) return false;
+      if (currentBucket?.isGenerating || currentBucket?.isCompacting || tasks.length === 0) return false;
 
       if (!currentSessionId) {
-        chatState.reset();
+        chatState.resetSession(null);
       }
 
       useActivityStore.getState().close();
@@ -253,7 +246,7 @@ export function useChat(currentSessionId?: string) {
       } catch {}
 
       const optimisticText = formatTaskBatchPrompt({ mode: batch.mode, tasks });
-      chatState.beginSending(optimisticText);
+      chatState.beginSending(targetSessionId, optimisticText);
 
       try {
         const res = await api.post<PromptResponse>(API.CHAT.TASK_BATCH, {
@@ -263,7 +256,8 @@ export function useChat(currentSessionId?: string) {
           workspace: settingsState.workspaceDirectory,
         });
 
-        chatState.startGeneration(res.stream_id, res.session_id);
+        chatState.startGeneration(res.session_id, res.stream_id);
+        void startStream(res.session_id, res.stream_id);
 
         if (!currentSessionId) {
           const tempSession: SessionResponse = {
@@ -300,7 +294,7 @@ export function useChat(currentSessionId?: string) {
         return true;
       } catch (err) {
         console.error("Failed to start task batch:", err);
-        useChatStore.getState().reset();
+        chatState.resetSession(targetSessionId);
 
         if (err instanceof ApiError) {
           toast.error(err.message, { duration: 8000 });
@@ -315,17 +309,24 @@ export function useChat(currentSessionId?: string) {
   );
 
   const stopGeneration = useCallback(async () => {
-    const { streamId, sessionId, finishGeneration } = useChatStore.getState();
+    const chatState = useChatStore.getState();
+    const targetSessionId = currentSessionId ?? null;
+    const bucket = targetSessionId === null
+      ? chatState.draftSession
+      : chatState.sessions[targetSessionId];
+    const streamId = bucket?.streamId;
     if (!streamId) return;
     try {
       await api.post(API.CHAT.ABORT, { stream_id: streamId });
     } catch (err) {
       console.error("Failed to abort — backend may still be generating:", err);
     }
-    // Clean up frontend state immediately — don't wait for backend DONE event
-    // (the backend may delay DONE while running post-generation tasks like title generation)
-    finishGeneration();
-    // Stop workspace progress spinners — mark in_progress todos as pending
+    // Stop the SSE stream and clear local state immediately — don't wait for
+    // backend DONE (backend may delay DONE while doing post-generation work
+    // like title generation).
+    if (targetSessionId !== null) stopStream(targetSessionId);
+    chatState.finishGeneration(targetSessionId);
+
     const ws = useWorkspaceStore.getState();
     if (ws.todos.some((t) => t.status === "in_progress")) {
       ws.setTodos(
@@ -334,16 +335,22 @@ export function useChat(currentSessionId?: string) {
         ),
       );
     }
-    if (sessionId) {
-      queryClient.invalidateQueries({ queryKey: queryKeys.messages.list(sessionId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.sessions.detail(sessionId) });
+    if (targetSessionId) {
+      queryClient.invalidateQueries({ queryKey: queryKeys.messages.list(targetSessionId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.sessions.detail(targetSessionId) });
     }
     queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all });
-  }, [queryClient]);
+  }, [currentSessionId, queryClient]);
 
   const respondToPermission = useCallback(
     async (allow: boolean, remember = false) => {
-      const { pendingPermission: perm, streamId, clearPermissionRequest, setPermissionRequest } = useChatStore.getState();
+      const chatState = useChatStore.getState();
+      const targetSessionId = currentSessionId ?? null;
+      const bucket = targetSessionId === null
+        ? chatState.draftSession
+        : chatState.sessions[targetSessionId];
+      const perm = bucket?.pendingPermission;
+      const streamId = bucket?.streamId;
       if (!perm || !streamId) return;
 
       const req: RespondRequest = {
@@ -358,23 +365,24 @@ export function useChat(currentSessionId?: string) {
       };
 
       try {
-        clearPermissionRequest();
+        chatState.clearPermissionRequest(targetSessionId);
         await api.post(API.CHAT.RESPOND, req);
       } catch (err) {
-        setPermissionRequest(perm);
+        chatState.setPermissionRequest(targetSessionId, perm);
         console.error("Failed to respond to permission:", err);
         toast.error("Failed to respond");
       }
     },
-    [],
+    [currentSessionId],
   );
 
   const editAndResend = useCallback(
     async (messageId: string, newText: string, attachments?: FileAttachment[]): Promise<boolean> => {
       const chatState = useChatStore.getState();
       const settingsState = useSettingsStore.getState();
+      const bucket = currentSessionId ? chatState.sessions[currentSessionId] : null;
 
-      if (chatState.isGenerating || chatState.isCompacting || (!newText.trim() && (!attachments || attachments.length === 0)) || !currentSessionId) return false;
+      if (bucket?.isGenerating || bucket?.isCompacting || (!newText.trim() && (!attachments || attachments.length === 0)) || !currentSessionId) return false;
       if (
         hasImageAttachments(attachments) &&
         !selectedModelSupportsVision(
@@ -387,8 +395,6 @@ export function useChat(currentSessionId?: string) {
         return false;
       }
 
-      // Close any panels bound to the previous assistant response so resend
-      // doesn't keep showing stale "done" activity while the new run is live.
       useActivityStore.getState().close();
       try {
         const { useArtifactStore } = require("@/stores/artifact-store");
@@ -399,7 +405,7 @@ export function useChat(currentSessionId?: string) {
         usePlanReviewStore.getState().close();
       } catch {}
 
-      chatState.beginSending(newText.trim(), attachments);
+      chatState.beginSending(currentSessionId, newText.trim(), attachments);
 
       try {
         const presets = settingsState.permissionPresets;
@@ -428,20 +434,17 @@ export function useChat(currentSessionId?: string) {
           workspace: settingsState.workspaceDirectory,
         });
 
-        chatState.startGeneration(res.stream_id, res.session_id);
+        chatState.startGeneration(res.session_id, res.stream_id);
+        void startStream(res.session_id, res.stream_id);
 
-        // Reset workspace sidebar — old progress/files are stale after resend
         useWorkspaceStore.getState().setTodos([]);
         useWorkspaceStore.getState().setWorkspaceFiles([]);
 
-        // Optimistically trim cached messages: the backend already deleted
-        // everything after the edited message and updated its text.
         const trimmed = newText.trim();
         queryClient.setQueryData<InfiniteData<PaginatedMessages>>(
           queryKeys.messages.list(currentSessionId),
           (old) => {
             if (!old) return old;
-            // Find which page contains the edited message and trim
             const newPages = old.pages.map((page) => {
               const idx = page.messages.findIndex((m) => m.id === messageId);
               if (idx === -1) return page;
@@ -460,7 +463,6 @@ export function useChat(currentSessionId?: string) {
                 }),
               };
             });
-            // Remove pages after the one containing the edited message
             const pageIdx = newPages.findIndex((p) =>
               p.messages.some((m) => m.id === messageId),
             );
@@ -471,13 +473,23 @@ export function useChat(currentSessionId?: string) {
             };
           },
         );
-        // No pending bubble needed — the edited message is already in the cache
-        useChatStore.setState({ pendingUserText: null });
+        // No pending bubble needed — the edited message is already in cache.
+        // Clear it explicitly on this session's bucket.
+        useChatStore.setState((s) => {
+          const cur = s.sessions[currentSessionId];
+          if (!cur) return s;
+          return {
+            sessions: {
+              ...s.sessions,
+              [currentSessionId]: { ...cur, pendingUserText: null, pendingAttachments: null },
+            },
+          };
+        });
 
         return true;
       } catch (err) {
         console.error("Failed to edit and resend:", err);
-        useChatStore.getState().reset();
+        chatState.resetSession(currentSessionId);
 
         if (err instanceof ApiError) {
           if (isUnsupportedImagesError(err)) {
@@ -497,11 +509,15 @@ export function useChat(currentSessionId?: string) {
 
   const respondToQuestion = useCallback(
     async (answer: string | Record<string, string>) => {
-      const { pendingQuestion: question, streamId, clearQuestion } = useChatStore.getState();
+      const chatState = useChatStore.getState();
+      const targetSessionId = currentSessionId ?? null;
+      const bucket = targetSessionId === null
+        ? chatState.draftSession
+        : chatState.sessions[targetSessionId];
+      const question = bucket?.pendingQuestion;
+      const streamId = bucket?.streamId;
       if (!question || !streamId) return;
 
-      // Multi-question mode: answer is Record<string, string>, serialize to JSON
-      // Legacy mode: answer is a plain string
       const response =
         typeof answer === "string" ? answer.trim() : JSON.stringify(answer);
       if (!response) return;
@@ -514,18 +530,24 @@ export function useChat(currentSessionId?: string) {
 
       try {
         await api.post(API.CHAT.RESPOND, req);
-        clearQuestion();
+        chatState.clearQuestion(targetSessionId);
       } catch (err) {
         console.error("Failed to respond to question:", err);
         toast.error("Failed to respond");
       }
     },
-    [],
+    [currentSessionId],
   );
 
   const respondToPlanReview = useCallback(
     async (action: "accept" | "revise" | "stop", options?: { mode?: "auto" | "ask"; feedback?: string }) => {
-      const { pendingPlanReview: review, streamId, clearPlanReview } = useChatStore.getState();
+      const chatState = useChatStore.getState();
+      const targetSessionId = currentSessionId ?? null;
+      const bucket = targetSessionId === null
+        ? chatState.draftSession
+        : chatState.sessions[targetSessionId];
+      const review = bucket?.pendingPlanReview;
+      const streamId = bucket?.streamId;
       if (!review || !streamId) return;
 
       let response: Record<string, string>;
@@ -545,25 +567,21 @@ export function useChat(currentSessionId?: string) {
 
       try {
         await api.post(API.CHAT.RESPOND, req);
-        clearPlanReview();
+        chatState.clearPlanReview(targetSessionId);
 
         if (action === "accept") {
-          // Close panel and switch work mode
           try {
             const { usePlanReviewStore } = require("@/stores/plan-review-store");
             usePlanReviewStore.getState().close();
           } catch {}
           useSettingsStore.getState().setWorkMode(options?.mode ?? "auto");
         }
-        // For "stop": panel stays open with current plan data (plan is also saved to disk).
-        //   Note: opening an artifact/activity panel will close the plan panel via mutual exclusion.
-        // For "revise": panel stays open, AI will revise and call submit_plan again.
       } catch (err) {
         console.error("Failed to respond to plan review:", err);
         toast.error("Failed to respond");
       }
     },
-    [],
+    [currentSessionId],
   );
 
   return {
@@ -574,16 +592,16 @@ export function useChat(currentSessionId?: string) {
     respondToPermission,
     respondToQuestion,
     respondToPlanReview,
-    isGenerating,
-    isCompacting,
-    streamId,
-    pendingUserText,
-    pendingAttachments,
-    streamingParts,
-    streamingText,
-    streamingReasoning,
-    pendingPermission,
-    pendingQuestion,
-    pendingPlanReview,
+    isGenerating: session.isGenerating,
+    isCompacting: session.isCompacting,
+    streamId: session.streamId,
+    pendingUserText: session.pendingUserText,
+    pendingAttachments: session.pendingAttachments,
+    streamingParts: session.streamingParts,
+    streamingText: session.streamingText,
+    streamingReasoning: session.streamingReasoning,
+    pendingPermission: session.pendingPermission,
+    pendingQuestion: session.pendingQuestion,
+    pendingPlanReview: session.pendingPlanReview,
   };
 }

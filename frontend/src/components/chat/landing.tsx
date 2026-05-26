@@ -82,10 +82,10 @@ export function Landing({ directoryParam = null }: LandingProps) {
   }, []);
 
   useEffect(() => {
-    const state = useChatStore.getState();
-    if (!state.isGenerating) {
-      state.reset();
-    }
+    // Always reset the draft bucket on Landing mount — leftover frozen state
+    // from a previous send (kept around to bridge the navigation gap) gets
+    // wiped here so the next chat starts clean.
+    useChatStore.getState().resetSession(null);
     // Respect ?directory=... (used by "Add new project"); otherwise start unrestricted.
     useSettingsStore.getState().setWorkspaceDirectory(directoryParam || null);
     // Close right-side panels when landing page mounts (new chat / after delete)
@@ -145,6 +145,7 @@ export function Landing({ directoryParam = null }: LandingProps) {
           <div className="px-4 py-5">
             <div className="mx-auto max-w-3xl xl:max-w-4xl">
               <StreamingMessage
+                sessionId={null}
                 parts={streamingParts}
                 streamingText={streamingText}
                 streamingReasoning={streamingReasoning}

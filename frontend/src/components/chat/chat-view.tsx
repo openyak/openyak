@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useChat } from "@/hooks/use-chat";
@@ -47,10 +47,6 @@ export function ChatView({ sessionId }: ChatViewProps) {
     pendingPlanReview,
   } = useChat(sessionId);
 
-  // Ref to access latest stopGeneration in cleanup without re-triggering the effect
-  const stopRef = useRef(stopGeneration);
-  stopRef.current = stopGeneration;
-
   const { messages, isLoading, hasPreviousPage, isFetchingPreviousPage, fetchPreviousPage } = useMessages(sessionId);
 
   const { data: session } = useQuery({
@@ -80,33 +76,22 @@ export function ChatView({ sessionId }: ChatViewProps) {
     }).catch((e) => console.warn("[chat-view] Failed to auto-set title:", e));
   }, [session, messages, sessionId, qc]);
 
-  // Close right-side panels when switching sessions; abort generation if active.
-  // We use a ref to track whether we're truly leaving this session vs. React
-  // Strict Mode's dev-only double-invoke (mount → unmount → remount).
-  const sessionMountedRef = useRef(false);
+  // On session entry: hydrate this session's panels (artifact, activity,
+  // workspace todos/files). We intentionally do NOT abort the in-flight
+  // stream for any other session — the stream registry keeps it running in
+  // the background so the user can come back to it later.
   useEffect(() => {
-    // Reset per-chat session usage when navigating between existing chats
-    // so /c/A → /c/B does not leak A's running token/cost totals.
-    // Skip when a generation is in flight for this very session (prevents
-    // wiping the current run's accumulator on a StrictMode remount).
-    {
-      const chatState = useChatStore.getState();
-      if (!chatState.isGenerating || chatState.sessionId !== sessionId) {
-        chatState.enterChat(sessionId);
-      }
-    }
+    useChatStore.getState().ensureSession(sessionId);
     useArtifactStore.getState().clearAll();
     useActivityStore.getState().close();
     useWorkspaceStore.getState().resetForSession();
 
-    // Sync workspace directory for MemoryBlock
     api.get<SessionResponse>(API.SESSIONS.DETAIL(sessionId)).then((s) => {
       if (s.directory) {
         useWorkspaceStore.getState().setActiveWorkspacePath(s.directory);
       }
     }).catch(() => {});
 
-    // Load persisted todos and workspace files for this session
     api.get<{ todos: Array<{ content: string; status: string; activeForm?: string }> }>(
       API.SESSIONS.TODOS(sessionId),
     ).then((res) => {
@@ -114,9 +99,7 @@ export function ChatView({ sessionId }: ChatViewProps) {
         useWorkspaceStore.getState().setTodos(res.todos as WorkspaceTodo[]);
         useWorkspaceStore.getState().open();
       }
-    }).catch(() => {
-      // Non-critical — todos may not exist yet
-    });
+    }).catch(() => {});
 
     api.get<{ files: Array<{ name: string; path: string; type: string; tool: string }> }>(
       API.SESSIONS.FILES(sessionId),
@@ -126,27 +109,7 @@ export function ChatView({ sessionId }: ChatViewProps) {
           res.files.map((f) => ({ name: f.name, path: f.path, type: f.type as WorkspaceFile["type"] })),
         );
       }
-    }).catch(() => {
-      // Non-critical — files may not exist yet
-    });
-
-    sessionMountedRef.current = true;
-    return () => {
-      // Defer the abort check to the next microtask. If this is a React Strict
-      // Mode double-invoke, the component will remount synchronously and set
-      // sessionMountedRef back to true before the microtask runs. If it's a
-      // real unmount/session change, the ref stays false.
-      sessionMountedRef.current = false;
-      const capturedStopRef = stopRef.current;
-      const capturedSessionId = sessionId;
-      queueMicrotask(() => {
-        if (sessionMountedRef.current) return; // StrictMode remount — skip abort
-        const state = useChatStore.getState();
-        if ((state.isGenerating || state.isCompacting) && state.sessionId === capturedSessionId) {
-          capturedStopRef();
-        }
-      });
-    };
+    }).catch(() => {});
   }, [sessionId]);
 
   // Copy last assistant message to clipboard

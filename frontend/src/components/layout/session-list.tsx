@@ -9,6 +9,7 @@ import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { API, queryKeys } from "@/lib/constants";
 import { api } from "@/lib/api";
 import { useChatStore } from "@/stores/chat-store";
+import { stopStream } from "@/lib/session-stream-registry";
 import { useSidebarStore } from "@/stores/sidebar-store";
 import { useSessions, useDeleteSession, useRenameSession, usePinSession, useArchiveSession, useUnarchiveSession, useSearchSessions } from "@/hooks/use-sessions";
 import { useActiveSessionId } from "@/hooks/use-active-session-id";
@@ -352,12 +353,17 @@ export function SessionList() {
     if (!deleteTarget) return;
     const { id } = deleteTarget;
 
-    // If the session being deleted has active generation, abort it first
+    // If the session being deleted has an active generation (foreground OR
+    // background), abort it first. Multi-session safe: only this session's
+    // stream is closed.
     const chatState = useChatStore.getState();
-    if (chatState.sessionId === id && (chatState.isGenerating || chatState.isCompacting) && chatState.streamId) {
-      api.post(API.CHAT.ABORT, { stream_id: chatState.streamId }).catch(() => {});
-      chatState.finishGeneration();
+    const bucket = chatState.sessions[id];
+    if (bucket && (bucket.isGenerating || bucket.isCompacting) && bucket.streamId) {
+      api.post(API.CHAT.ABORT, { stream_id: bucket.streamId }).catch(() => {});
+      stopStream(id);
+      chatState.finishGeneration(id);
     }
+    chatState.removeSession(id);
 
     // Save the current cache so we can restore on undo
     const previousData = queryClient.getQueryData<InfiniteData<SessionResponse[]>>(

@@ -2,7 +2,7 @@
 
 import { memo } from "react";
 import { useTranslation } from "react-i18next";
-import { useChatStore } from "@/stores/chat-store";
+import { useChatSession } from "@/stores/chat-store";
 import {
   Tooltip,
   TooltipContent,
@@ -42,9 +42,15 @@ function formatCost(cost: number): string {
  *
  * Renders nothing until at least one usage signal has been observed.
  */
-function SessionStatsImpl() {
+interface SessionStatsProps {
+  /** The session whose usage to display. Null = draft (Landing). */
+  sessionId: string | null;
+}
+
+function SessionStatsImpl({ sessionId }: SessionStatsProps) {
   const { t } = useTranslation("chat");
-  const usage = useChatStore((s) => s.sessionUsage);
+  const session = useChatSession(sessionId);
+  const usage = session.sessionUsage;
 
   const totalTokens =
     usage.inputTokens +

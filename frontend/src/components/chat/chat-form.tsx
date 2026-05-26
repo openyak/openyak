@@ -16,7 +16,7 @@ import type { FileSearchResult } from "@/lib/upload";
 import { cn } from "@/lib/utils";
 import type { FileAttachment } from "@/types/chat";
 import { useArtifactStore } from "@/stores/artifact-store";
-import { useChatStore } from "@/stores/chat-store";
+import { useChatSession } from "@/stores/chat-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useProviderModels } from "@/hooks/use-provider-models";
 import { useIndexStatus } from "@/hooks/use-index-status";
@@ -283,9 +283,11 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onSendTas
   const globalWorkspace = useSettingsStore((s) => s.workspaceDirectory);
   const effectiveWorkspace = hasWorkspace ? directory : globalWorkspace;
   const { isIndexing } = useIndexStatus(effectiveWorkspace, sessionId);
-  const compactingLabel = useChatStore((s) => {
-    for (let i = s.streamingParts.length - 1; i >= 0; i -= 1) {
-      const part = s.streamingParts[i];
+  const formSession = useChatSession(sessionId ?? null);
+  const compactingLabel = (() => {
+    const streamingParts = formSession.streamingParts;
+    for (let i = streamingParts.length - 1; i >= 0; i -= 1) {
+      const part = streamingParts[i];
       if (part.type !== "compaction" || part.compactionStatus !== "in_progress") continue;
       const activePhase = part.phases?.find((phase) => phase.status === "started");
       if (!activePhase) return null;
@@ -296,7 +298,7 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onSendTas
       return "summarize";
     }
     return null;
-  });
+  })();
   const isInputDisabled = isGenerating || isCompacting || noModelsAvailable;
   const visibleAgents = useMemo(
     () => (agents ?? []).filter((agent) => agent.mode !== "hidden"),
