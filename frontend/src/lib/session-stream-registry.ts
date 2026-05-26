@@ -8,6 +8,7 @@ import { isRemoteMode } from "@/lib/remote-connection";
 import { desktopAPI } from "@/lib/tauri-api";
 import { api } from "@/lib/api";
 import { SSE_EVENTS } from "@/types/streaming";
+import { notifyBackgroundFinish } from "@/lib/background-notify";
 import { useChatStore } from "@/stores/chat-store";
 import { useConnectionStore } from "@/stores/connection-store";
 import { useArtifactStore } from "@/stores/artifact-store";
@@ -623,6 +624,7 @@ export async function startStream(sessionId: string, streamId: string): Promise<
       qc.invalidateQueries({ queryKey: queryKeys.sessions.all });
       qc.invalidateQueries({ queryKey: queryKeys.sessions.detail(sessionId) });
     }
+    maybeNotifyFinish(sessionId, "done");
     stopStream(sessionId);
   });
 
@@ -649,6 +651,7 @@ export async function startStream(sessionId: string, streamId: string): Promise<
       }, 500);
       qc.invalidateQueries({ queryKey: queryKeys.sessions.detail(sessionId) });
     }
+    maybeNotifyFinish(sessionId, "error", message);
     stopStream(sessionId);
   };
   client.on(SSE_EVENTS.AGENT_ERROR, handleAgentError);
@@ -725,6 +728,28 @@ function ensureGlobalListeners(): void {
 
 function store_isGenerating(sessionId: string): boolean {
   return useChatStore.getState().sessions[sessionId]?.isGenerating ?? false;
+}
+
+/**
+ * Fire a native notification when a session finishes, unless the user is
+ * currently looking at that session in the foreground — in that case the
+ * normal UI is the notification.
+ */
+function maybeNotifyFinish(sessionId: string, kind: "done" | "error", errorMessage?: string): void {
+  const focusedSessionId = useChatStore.getState().focusedSessionId;
+  if (focusedSessionId === sessionId && typeof document !== "undefined" && !document.hidden) {
+    return;
+  }
+  const qc = queryClientRef;
+  const session = qc?.getQueryData<SessionResponse>(queryKeys.sessions.detail(sessionId));
+  const sessionTitle = session?.title?.trim() || "Background task";
+  const title = kind === "done"
+    ? `${sessionTitle} finished`
+    : `${sessionTitle} stopped`;
+  const body = kind === "done"
+    ? "Click to open the conversation."
+    : (errorMessage ?? "Click to open the conversation.");
+  void notifyBackgroundFinish({ sessionId, title, body, kind });
 }
 
 /** Cleanup, for tests / hot reload. Not used in production app code. */
