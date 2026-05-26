@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Archive, MessageCircle, Pin, PinOff } from "lucide-react";
+import { Archive, Loader2, MessageCircle, Pin, PinOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { API, queryKeys } from "@/lib/constants";
@@ -322,9 +322,9 @@ export const SessionItem = memo(function SessionItem({
                     {title}
                   </span>
                   {isLive && (
-                    <span
+                    <Loader2
                       aria-label={t('sessionIsGenerating', { defaultValue: 'Generating in background' })}
-                      className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--brand-primary)] animate-pulse"
+                      className="h-3 w-3 shrink-0 animate-spin text-[var(--brand-primary)]"
                     />
                   )}
                 </p>
