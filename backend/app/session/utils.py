@@ -219,13 +219,27 @@ def sanitize_llm_messages_for_request(
                 m["content"] = trim_for_context(
                     content, max_request_chars, "user content"
                 )
+        # `reasoning_content` (echoed back to DeepSeek v4 / Kimi / Qwen3 etc.)
+        # is just as bulky as the assistant content and would otherwise slip
+        # past the per-message + cumulative budgets entirely.
+        reasoning = m.get("reasoning_content")
+        if isinstance(reasoning, str) and reasoning:
+            m["reasoning_content"] = trim_for_context(
+                reasoning, _cfg().max_assistant_content_chars, "reasoning",
+            )
         sanitized.append(m)
 
-    total_chars = 0
-    for m in sanitized:
+    def _msg_chars(m: dict[str, Any]) -> int:
+        n = 0
         c = m.get("content")
         if isinstance(c, str):
-            total_chars += len(c)
+            n += len(c)
+        r = m.get("reasoning_content")
+        if isinstance(r, str):
+            n += len(r)
+        return n
+
+    total_chars = sum(_msg_chars(m) for m in sanitized)
 
     if total_chars <= max_request_chars:
         return sanitized
@@ -233,11 +247,10 @@ def sanitize_llm_messages_for_request(
     trimmed: list[dict[str, Any]] = []
     running = 0
     for m in reversed(sanitized):
-        c = m.get("content")
-        c_len = len(c) if isinstance(c, str) else 0
-        if running + c_len <= max_request_chars:
+        m_len = _msg_chars(m)
+        if running + m_len <= max_request_chars:
             trimmed.append(m)
-            running += c_len
+            running += m_len
             continue
 
         remaining = max_request_chars - running
@@ -247,33 +260,39 @@ def sanitize_llm_messages_for_request(
             "assistant": "assistant content",
             "user": "user content",
         }.get(role, "message")
+        c = m.get("content")
 
         if isinstance(c, str) and remaining >= MIN_PARTIAL_MESSAGE_CHARS:
             partial = dict(m)
             partial["content"] = trim_for_context(c, remaining, kind)
+            # Drop the reasoning blob when budget is this tight — its purpose
+            # is multi-turn echo and the model can survive without it.
+            partial.pop("reasoning_content", None)
             trimmed.append(partial)
-            running += len(partial["content"])
+            running += _msg_chars(partial)
             continue
 
         if not trimmed:
             trimmed.append(m)
-            running += c_len
+            running += m_len
             continue
 
         # Budget exhausted but older turns remain. Preserve the message
         # envelope (and any tool_calls) so conversation shape survives, but
         # collapse large string content to a tiny "truncated" marker rather
         # than silently dropping the turn.
+        c_len = len(c) if isinstance(c, str) else 0
         if isinstance(c, str) and c_len > MIN_PARTIAL_MESSAGE_CHARS:
             stub = dict(m)
             stub["content"] = (
                 f"[{kind} truncated for context: original {c_len} chars, kept 0]"
             )
+            stub.pop("reasoning_content", None)
             trimmed.append(stub)
-            running += len(stub["content"])
+            running += _msg_chars(stub)
         else:
             trimmed.append(m)
-            running += c_len
+            running += m_len
     trimmed.reverse()
 
     logger.warning(

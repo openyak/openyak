@@ -261,7 +261,12 @@ async def _phase2_summarize(
 
     async with session_factory() as db:
         async with db.begin():
-            llm_messages = await get_message_history_for_llm(db, session_id)
+            llm_messages = await get_message_history_for_llm(
+                db,
+                session_id,
+                provider_id=provider.id,
+                model_id=model_id,
+            )
 
     if not llm_messages:
         return None

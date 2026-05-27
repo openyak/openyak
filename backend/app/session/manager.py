@@ -418,18 +418,19 @@ _REASONING_CONTENT_SKIP_PROVIDERS: frozenset[str] = frozenset({
 })
 
 # Models that explicitly REJECT `reasoning_content` on input. Echoing back 400s.
-# Currently only DeepSeek's legacy R1 line (`deepseek-reasoner`); list extends
-# easily if more turn up.
-_REASONING_CONTENT_REJECT_MODEL_PREFIXES: tuple[str, ...] = (
+# Currently only DeepSeek's legacy R1 (`deepseek-reasoner`). Use exact match —
+# a hypothetical future `deepseek-reasoner-v2` could revert to the v4 echo rule
+# and we don't want a prefix match to silently strip it.
+_REASONING_CONTENT_REJECT_MODELS: frozenset[str] = frozenset({
     "deepseek-reasoner",
-)
+})
 
 
 def _provider_uses_reasoning_content(provider_id: str | None, model_id: str | None) -> bool:
     """Decide whether to echo prior `reasoning_content` to the active provider."""
     if not provider_id or provider_id in _REASONING_CONTENT_SKIP_PROVIDERS:
         return False
-    if model_id and model_id.startswith(_REASONING_CONTENT_REJECT_MODEL_PREFIXES):
+    if model_id and model_id in _REASONING_CONTENT_REJECT_MODELS:
         return False
     return True
 
@@ -578,8 +579,23 @@ async def get_message_history_for_llm(
                             "content": output or "(no output)",
                         })
 
-            # Build assistant message
-            if text_parts or tool_calls:
+            # Build assistant message. A turn with only reasoning (no text and
+            # no tool_calls) is rare but legal — preserve it when reasoning is
+            # being echoed so the assistant entry doesn't go missing from the
+            # alternating role sequence.
+            reasoning_text = ""
+            if echo_reasoning and reasoning_parts:
+                joined = "\n".join(r for r in reasoning_parts if r)
+                if joined:
+                    # Reasoning blocks can be tens of thousands of chars per
+                    # turn — trim to the same per-message budget as the
+                    # assistant content so a single thinking-heavy turn cannot
+                    # consume the request budget by itself.
+                    reasoning_text = trim_for_context(
+                        joined, max_assistant_text_chars, "reasoning",
+                    )
+
+            if text_parts or tool_calls or reasoning_text:
                 assistant_content = "\n".join(text_parts) if text_parts else ""
                 if assistant_content:
                     assistant_content = trim_for_context(
@@ -593,10 +609,8 @@ async def get_message_history_for_llm(
                 }
                 if tool_calls:
                     assistant_msg["tool_calls"] = tool_calls
-                if echo_reasoning and reasoning_parts:
-                    reasoning_text = "\n".join(r for r in reasoning_parts if r)
-                    if reasoning_text:
-                        assistant_msg["reasoning_content"] = reasoning_text
+                if reasoning_text:
+                    assistant_msg["reasoning_content"] = reasoning_text
                 llm_messages.append(assistant_msg)
 
             # Append tool results
