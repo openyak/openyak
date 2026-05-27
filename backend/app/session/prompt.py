@@ -475,9 +475,15 @@ class SessionPrompt:
         from app.session.microcompact import microcompact_messages, apply_tool_result_budget
         from app.session.middleware import MiddlewareContext
 
+        provider_id = self.provider.id if self.provider else None
         async with self.session_factory() as db:
             async with db.begin():
-                llm_messages = await get_message_history_for_llm(db, self.job.session_id)
+                llm_messages = await get_message_history_for_llm(
+                    db,
+                    self.job.session_id,
+                    provider_id=provider_id,
+                    model_id=self.model_id,
+                )
         llm_messages = _sanitize_llm_messages_for_request(
             llm_messages,
             session_id=self.job.session_id,
