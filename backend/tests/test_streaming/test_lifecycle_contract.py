@@ -223,6 +223,9 @@ class TestChatStreamEndpointContract:
         assert response.status_code == 200
         assert [event["event"] for event in events] == [AGENT_ERROR]
         assert events[0]["data"]["error_message"] == "Job not found"
+        # Tagged so the client can recover quietly (e.g. after a backend restart)
+        # instead of surfacing the raw message as an alarming toast.
+        assert events[0]["data"]["code"] == "JOB_NOT_FOUND"
 
     @pytest.mark.asyncio
     async def test_active_jobs_exposes_terminal_step_without_done(self, app_client) -> None:

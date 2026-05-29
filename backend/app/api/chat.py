@@ -438,8 +438,12 @@ async def stream_events(
         # Return 200 (not 404) so that EventSource reads the body.
         # EventSource ignores response bodies on non-2xx status codes,
         # causing the frontend to never receive the agent_error event.
+        #
+        # Tag it JOB_NOT_FOUND: an absent in-memory job almost always means the
+        # backend restarted out from under an in-flight generation, which the
+        # client can recover from silently (the conversation is safe in the DB).
         return StreamingResponse(
-            _error_stream("Job not found"),
+            _error_stream("Job not found", code="JOB_NOT_FOUND"),
             media_type="text/event-stream",
         )
 
@@ -529,8 +533,16 @@ async def respond_to_prompt(request: Request, sm: StreamManagerDep, body: Respon
     return {"status": "submitted"}
 
 
-async def _error_stream(message: str):
-    """Yield a single error event."""
-    event = SSEEvent(AGENT_ERROR, {"error_message": message})
+async def _error_stream(message: str, code: str | None = None):
+    """Yield a single error event.
+
+    ``code`` is an optional machine-readable tag (e.g. ``"JOB_NOT_FOUND"``) so
+    the client can recover quietly from benign cases instead of surfacing the
+    raw message as an alarming toast.
+    """
+    data: dict[str, Any] = {"error_message": message}
+    if code is not None:
+        data["code"] = code
+    event = SSEEvent(AGENT_ERROR, data)
     event.id = 1
     yield event.encode()

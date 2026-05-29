@@ -81,6 +81,8 @@ export interface SSEEventData {
   // error
   error_type?: string | null;
   error_message?: string | null;
+  /** Machine-readable error tag (e.g. "JOB_NOT_FOUND") for quiet recovery. */
+  code?: string | null;
 
   // done
   finish_reason?: string | null;

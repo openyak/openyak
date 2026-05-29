@@ -35,6 +35,12 @@ import type { PaginatedMessages } from "@/types/message";
 
 const PROGRESSIVE_BUFFER_INTERVAL_MS = 60;
 
+// After a desktop backend restart, wait a beat before reconciling: the
+// companion onBackendRestart handler in constants.ts (registered at module
+// load, fires in the same event dispatch) must reset the URL/token caches
+// first, and the freshly-spawned backend needs a moment to bind its port.
+const RESTART_RECONCILE_DELAY_MS = 250;
+
 class ProgressiveBuffer {
   private pending = "";
   private timerId: ReturnType<typeof setTimeout> | null = null;
@@ -609,6 +615,10 @@ export async function startStream(sessionId: string, streamId: string): Promise<
   });
 
   client.on(SSE_EVENTS.DONE, async () => {
+    // Close synchronously before the awaits below: the stream ends right after
+    // DONE, so the dying EventSource must not schedule a reconnect to a job
+    // that is already complete (→ a spurious "Job not found").
+    client.close();
     cancelPendingStepFinish();
     textBuffer.flush();
     reasoningBuffer.flush();
@@ -629,10 +639,22 @@ export async function startStream(sessionId: string, streamId: string): Promise<
     stopStream(sessionId);
   });
 
-  const handleAgentError = async (data: { error_message?: string | null }) => {
+  const handleAgentError = async (data: { error_message?: string | null; code?: string | null }) => {
+    // Close the dead connection synchronously, before the awaits below. The
+    // server ends the response right after this single error event, so the
+    // EventSource would otherwise fire onerror mid-await and schedule a
+    // reconnect to a stream the backend no longer has.
+    client.close();
+
     const message = data.error_message ?? "Unknown stream error";
+    // A missing job almost always means the local backend restarted out from
+    // under an in-flight generation. The conversation is safe in the DB, so
+    // recover quietly rather than alarming the user with an opaque toast.
+    const streamGone = data.code === "JOB_NOT_FOUND" || message === "Job not found";
     const contextLimitError = /maximum context length|requested about/i.test(message);
-    if (contextLimitError) {
+    if (streamGone) {
+      // Silent — recovered from the DB below.
+    } else if (contextLimitError) {
       toast.error("Context too long for this model. Start a new chat or shorten the conversation.");
     } else {
       toast.error(message);
@@ -652,7 +674,7 @@ export async function startStream(sessionId: string, streamId: string): Promise<
       }, 500);
       qc.invalidateQueries({ queryKey: queryKeys.sessions.detail(sessionId) });
     }
-    maybeNotifyFinish(sessionId, "error", message);
+    if (!streamGone) maybeNotifyFinish(sessionId, "error", message);
     stopStream(sessionId);
   };
   client.on(SSE_EVENTS.AGENT_ERROR, handleAgentError);
@@ -698,7 +720,14 @@ function ensureGlobalListeners(): void {
       for (const inst of instances.values()) inst.client.pauseReconnect();
     });
     unlistenBackendRestarted = desktopAPI.onBackendRestart(() => {
-      for (const inst of instances.values()) inst.client.resumeReconnect();
+      // Stop every client's auto-reconnect immediately so none races to a
+      // stream_id the freshly-restarted backend no longer has — that race is
+      // exactly what produced the spurious "Job not found" toasts. Then
+      // reconcile against the new backend once its caches/port have settled.
+      for (const inst of instances.values()) inst.client.pauseReconnect();
+      setTimeout(() => {
+        void reconcileStreamsAfterRestart();
+      }, RESTART_RECONCILE_DELAY_MS);
     });
   }
 
@@ -730,6 +759,86 @@ function ensureGlobalListeners(): void {
 
 function store_isGenerating(sessionId: string): boolean {
   return useChatStore.getState().sessions[sessionId]?.isGenerating ?? false;
+}
+
+/**
+ * After a desktop backend restart the in-memory StreamManager is empty: every
+ * pre-restart stream_id is gone. Blindly reconnecting those dead ids is what
+ * surfaced "Job not found" to users. Instead, ask the new backend which
+ * generations are actually still running and reconcile each live stream:
+ *  - resume it if it survived (a health blip that didn't kill the process),
+ *  - re-attach if the backend now reports a different job for that session,
+ *  - otherwise finalize it from the DB (the generation died with the old
+ *    process; the conversation itself is safe).
+ */
+async function reconcileStreamsAfterRestart(): Promise<void> {
+  if (instances.size === 0) return;
+
+  let activeJobs: Array<{ stream_id: string; session_id: string }> | null = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      activeJobs = await api.get<Array<{ stream_id: string; session_id: string }>>(API.CHAT.ACTIVE);
+      break;
+    } catch {
+      // New backend not serving yet — back off and retry.
+      await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+    }
+  }
+
+  if (activeJobs === null) {
+    // Couldn't confirm backend state. Don't strand the UI in "generating":
+    // finalize each interrupted session from the DB so spinners clear and
+    // history is refetched. A later user action re-establishes streaming.
+    for (const inst of [...instances.values()]) {
+      await finalizeInterruptedStream(inst.sessionId);
+    }
+    return;
+  }
+
+  const liveStreamBySession = new Map(activeJobs.map((job) => [job.session_id, job.stream_id]));
+
+  // Sessions we already track are reconciled in the loop below; the final
+  // attach loop must skip them so it can't double-start one whose async
+  // startStream() has not yet re-registered its instance.
+  const handledSessions = new Set(instances.keys());
+
+  for (const inst of [...instances.values()]) {
+    const liveStreamId = liveStreamBySession.get(inst.sessionId);
+    if (liveStreamId === inst.streamId) {
+      inst.client.resumeReconnect();
+    } else if (liveStreamId) {
+      stopStream(inst.sessionId);
+      useChatStore.getState().startGeneration(inst.sessionId, liveStreamId);
+      void startStream(inst.sessionId, liveStreamId);
+    } else {
+      await finalizeInterruptedStream(inst.sessionId);
+    }
+  }
+
+  // Attach any still-running jobs we are not yet tracking (parity with boot
+  // hydration — e.g. a background session started just before the restart).
+  for (const job of activeJobs) {
+    if (handledSessions.has(job.session_id) || instances.has(job.session_id)) continue;
+    useChatStore.getState().startGeneration(job.session_id, job.stream_id);
+    void startStream(job.session_id, job.stream_id);
+  }
+}
+
+/**
+ * Wind down a stream whose backend job no longer exists: flush partial output,
+ * drop the dead client, clear the generating flag, and refetch authoritative
+ * state from the DB. No error toast — an interrupted local generation is a
+ * recoverable, expected event, not a failure the user must act on.
+ */
+async function finalizeInterruptedStream(sessionId: string): Promise<void> {
+  stopStream(sessionId); // disposeInstance flushes buffered text while still generating
+  useChatStore.getState().finishGeneration(sessionId);
+  const qc = queryClientRef;
+  if (qc) {
+    await qc.invalidateQueries({ queryKey: queryKeys.messages.list(sessionId) });
+    qc.invalidateQueries({ queryKey: queryKeys.sessions.all });
+    qc.invalidateQueries({ queryKey: queryKeys.sessions.detail(sessionId) });
+  }
 }
 
 /**
