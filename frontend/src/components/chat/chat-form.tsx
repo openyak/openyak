@@ -244,6 +244,7 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onSendTas
   // nothing happened. This warns the moment the image is added.
   const imageNeedsVisionModel =
     hasImageAttachments(attachments) &&
+    !!selectedModel &&
     !selectedModelSupportsVision(providerModels, selectedModel, selectedProviderId);
 
   const sendingRef = useRef(false);
