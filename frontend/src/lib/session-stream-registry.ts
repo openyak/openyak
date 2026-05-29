@@ -99,6 +99,13 @@ interface StreamInstance {
 
 const instances = new Map<string, StreamInstance>();
 
+// Sessions whose startStream() is mid-setup (parked on the async backend
+// url/token fetch). startStream only registers its instance *after* that await,
+// so without this guard a second concurrent start for the same session — e.g.
+// restart reconcile firing while a user prompt's start is still in flight —
+// would build a second SSEClient, duplicating deltas and leaking an EventSource.
+const pendingStarts = new Set<string>();
+
 let queryClientRef: QueryClient | null = null;
 let globalListenersInstalled = false;
 let unlistenBackendRestarting: (() => void) | null = null;
@@ -171,8 +178,18 @@ export async function startStream(sessionId: string, streamId: string): Promise<
     stopStream(sessionId);
   }
 
+  // Reserve this session across the one async gap below. Everything from here
+  // to instances.set() is synchronous, so this is enough to serialize starts.
+  if (pendingStarts.has(sessionId)) return;
+  pendingStarts.add(sessionId);
+
   if (IS_DESKTOP) {
-    await Promise.all([getBackendUrl(), getBackendToken()]);
+    try {
+      await Promise.all([getBackendUrl(), getBackendToken()]);
+    } catch (err) {
+      pendingStarts.delete(sessionId);
+      throw err;
+    }
   }
 
   ensureGlobalListeners();
@@ -706,6 +723,7 @@ export async function startStream(sessionId: string, streamId: string): Promise<
   }, IDLE_CHECK_INTERVAL_MS);
 
   instances.set(sessionId, instance);
+  pendingStarts.delete(sessionId);
 }
 
 // ─── Global cross-stream listeners (installed once on first start) ───
