@@ -6,6 +6,7 @@
   "noModelPlaceholder": "No model available — configure a provider in Settings first",
   "placeholderMention": " (@ to mention files)",
   "attachFile": "Attach file",
+  "imageNeedsVisionModel": "This model can't read images. Switch to a vision-capable model to send them.",
   "uploading": "Uploading...",
   "duplicateFilesSkipped": "{{count}} duplicate file skipped",
   "duplicateFilesSkipped_other": "{{count}} duplicate files skipped",

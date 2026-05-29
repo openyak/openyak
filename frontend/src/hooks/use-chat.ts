@@ -31,11 +31,11 @@ function isImageAttachment(attachment: FileAttachment): boolean {
   return IMAGE_EXTENSIONS.has(source.slice(dot).toLowerCase());
 }
 
-function hasImageAttachments(attachments?: FileAttachment[]): boolean {
+export function hasImageAttachments(attachments?: FileAttachment[]): boolean {
   return !!attachments?.some(isImageAttachment);
 }
 
-function selectedModelSupportsVision(
+export function selectedModelSupportsVision(
   models: ModelInfo[] | undefined,
   modelId: string | null,
   providerId: string | null,

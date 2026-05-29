@@ -6,6 +6,7 @@
   "noModelPlaceholder": "暂无可用模型 — 请先在设置中配置服务商",
   "placeholderMention": "（@ 提及文件）",
   "attachFile": "附加文件",
+  "imageNeedsVisionModel": "当前模型无法识别图片，请切换到支持视觉的模型后再发送。",
   "uploading": "上传中...",
   "duplicateFilesSkipped": "已跳过 {{count}} 个重复文件",
   "duplicateFilesSkipped_other": "已跳过 {{count}} 个重复文件",

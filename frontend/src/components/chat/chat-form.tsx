@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useTranslation } from 'react-i18next';
-import { Check, ChevronDown, GitBranch, Play, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, GitBranch, Play, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ChatTextarea } from "./chat-textarea";
@@ -21,6 +21,7 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { useProviderModels } from "@/hooks/use-provider-models";
 import { useIndexStatus } from "@/hooks/use-index-status";
 import { useAgents } from "@/hooks/use-agents";
+import { hasImageAttachments, selectedModelSupportsVision } from "@/hooks/use-chat";
 import { IS_DESKTOP } from "@/lib/constants";
 import type { TaskBatchMode, TaskBatchTask } from "@/types/chat";
 
@@ -237,6 +238,13 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onSendTas
   const selectedModel = useSettingsStore((s) => s.selectedModel);
   const selectedProviderId = useSettingsStore((s) => s.selectedProviderId);
   const noModelsAvailable = !activeProvider || providerModels.length === 0;
+  // Surface the vision constraint up front: an image is attached but the
+  // selected model can't read images. The send is also blocked server-side and
+  // in useChat, but that only fires on send — leaving the composer looking like
+  // nothing happened. This warns the moment the image is added.
+  const imageNeedsVisionModel =
+    hasImageAttachments(attachments) &&
+    !selectedModelSupportsVision(providerModels, selectedModel, selectedProviderId);
 
   const sendingRef = useRef(false);
   const taskDraftIdRef = useRef(0);
@@ -727,6 +735,13 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onSendTas
               </div>
             )}
 
+            {imageNeedsVisionModel && (
+              <div className="flex items-start gap-1.5 pb-2 text-xs text-[var(--color-warning)]">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
+                <span>{t('imageNeedsVisionModel')}</span>
+              </div>
+            )}
+
             <ChatTextarea
               ref={ref}
               value={input}
@@ -763,6 +778,7 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onSendTas
                 disabled={isInputDisabled}
                 className="shrink-0 flex items-center justify-center h-8 w-8 rounded-full hover:bg-[var(--surface-tertiary)] transition-colors text-[var(--text-secondary)]"
                 aria-label={t('attachFile')}
+                title={t('attachFile')}
                 onClick={handleBrowse}
               >
                 <Plus className="h-4 w-4" />
