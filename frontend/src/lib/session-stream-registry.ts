@@ -885,6 +885,7 @@ function maybeNotifyFinish(sessionId: string, kind: "done" | "error", errorMessa
 export function disposeAllStreams(): void {
   for (const inst of instances.values()) disposeInstance(inst);
   instances.clear();
+  pendingStarts.clear();
   unlistenBackendRestarting?.();
   unlistenBackendRestarted?.();
   unlistenVisibilityChange?.();
