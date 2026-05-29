@@ -71,6 +71,7 @@ export const SessionItem = memo(function SessionItem({
   const inputRef = useRef<HTMLInputElement>(null);
   const itemRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLParagraphElement>(null);
+  const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const rawTitle = session.title || t('newConversation');
   // Clean up ugly channel titles: "Channel: whatsapp:+1234567890" → "+1234567890"
@@ -146,6 +147,34 @@ export const SessionItem = memo(function SessionItem({
       }
     },
     [handleSubmitRename, handleCancelRename],
+  );
+
+  // Defer single-click navigation briefly so a double-click (which opens
+  // rename) doesn't also navigate into the session first. A double-click
+  // cancels the pending navigation. Keyboard Enter stays immediate.
+  const handleRowClick = useCallback(() => {
+    if (isEditing) return;
+    if (clickTimerRef.current) clearTimeout(clickTimerRef.current);
+    clickTimerRef.current = setTimeout(() => {
+      clickTimerRef.current = null;
+      router.push(getChatRoute(session.id));
+    }, 250);
+  }, [isEditing, router, session.id]);
+
+  const handleRowDoubleClick = useCallback(() => {
+    if (clickTimerRef.current) {
+      clearTimeout(clickTimerRef.current);
+      clickTimerRef.current = null;
+    }
+    if (!isEditing) onEditStart?.(session.id);
+  }, [isEditing, onEditStart, session.id]);
+
+  // Cancel a pending navigation if the row unmounts mid-debounce.
+  useEffect(
+    () => () => {
+      if (clickTimerRef.current) clearTimeout(clickTimerRef.current);
+    },
+    [],
   );
 
   const handleOpenDirectory = useCallback(async () => {
@@ -255,8 +284,8 @@ export const SessionItem = memo(function SessionItem({
           role="option"
           aria-selected={isActive}
           tabIndex={isFocused ? 0 : -1}
-          onClick={() => !isEditing && router.push(getChatRoute(session.id))}
-          onDoubleClick={() => !isEditing && onEditStart?.(session.id)}
+          onClick={handleRowClick}
+          onDoubleClick={handleRowDoubleClick}
           onKeyDown={(e) => !isEditing && e.key === "Enter" && router.push(getChatRoute(session.id))}
           onMouseEnter={() => {
             prefetch(() => {
