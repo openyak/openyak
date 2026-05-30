@@ -150,6 +150,7 @@ export function MessageList({
     if (anchoredSessionRef.current === sessionId) return;
     anchoredSessionRef.current = sessionId;
     setCanFetchOlderMessages(false);
+    streamedHandoffIdsRef.current = new Set();
   }, [sessionId]);
 
   useEffect(() => {
@@ -196,6 +197,14 @@ export function MessageList({
   // Messages that appear later are "new" — animate in.
   const knownIdsRef = useRef<Set<string>>(new Set());
   const initialLoadDoneRef = useRef(false);
+
+  // Message IDs whose content was already shown live by the StreamingMessage.
+  // When the stream ends, the persisted DB bubble replaces the live one in the
+  // same commit. Without this, the persisted bubble counts as "new" and fades
+  // in from opacity 0 — so the content jumps from the stream's opacity-1 down
+  // to 0 and fades back, reading as the message blinking out and flashing back.
+  // Recording these IDs lets us suppress that entry animation on handoff.
+  const streamedHandoffIdsRef = useRef<Set<string>>(new Set());
 
   // On first non-loading render with messages, seed the known IDs set
   useEffect(() => {
@@ -348,6 +357,40 @@ export function MessageList({
     );
   }
 
+  // The last assistant group is the live response while a stream is active for
+  // this session (streamId set) or during the brief post-finish fallback. Its
+  // content is shown by StreamingMessage throughout, so when the stream ends
+  // and the persisted DB bubble takes over, that bubble must NOT animate in —
+  // a fade would read as the just-finished response blinking out and flashing
+  // back. Record its IDs here (the moment it becomes the last group under an
+  // active stream, regardless of whether streaming content is "visible" yet)
+  // so the swap to the persisted bubble is always seamless. Skipped while
+  // showPendingBubble is true — then the last assistant group is a PREVIOUS
+  // turn that should stay untouched.
+  const lastGroupForCover = groups[groups.length - 1];
+  if (
+    (hasActiveStream || showStreamingFallback) &&
+    !showPendingBubble &&
+    lastGroupForCover?.kind === "assistant"
+  ) {
+    for (const m of lastGroupForCover.messages) {
+      streamedHandoffIdsRef.current.add(m.id);
+    }
+  }
+
+  // The most-recent user message must not animate in either: on send it hands
+  // off from the optimistic bubble (which already played the send animation),
+  // and otherwise it's known history. Keying off "latest user message" instead
+  // of pendingUserText avoids the same fast-turn race the assistant fix hit —
+  // the persisted copy can land AFTER pendingUserText is cleared.
+  let lastUserMessageId: string | null = null;
+  for (let i = groups.length - 1; i >= 0; i--) {
+    if (groups[i].kind === "user") {
+      lastUserMessageId = (groups[i] as { kind: "user"; message: MessageResponse }).message.id;
+      break;
+    }
+  }
+
   return (
     <div className="relative flex-1 overflow-hidden">
       <div
@@ -375,7 +418,7 @@ export function MessageList({
                   <MessageItem
                     key={group.message.id}
                     message={group.message}
-                    isNew={newMessageIds.has(group.message.id)}
+                    isNew={newMessageIds.has(group.message.id) && group.message.id !== lastUserMessageId}
                     onEditAndResend={onEditAndResend}
                     isGenerating={isGenerating}
                     directory={directory}
@@ -401,8 +444,21 @@ export function MessageList({
               const isLastOverall =
                 messages.length > 0 && lastMsg.id === messages[messages.length - 1].id;
 
-              // Check if any message in the group is new
-              const groupIsNew = group.messages.some((m) => newMessageIds.has(m.id));
+              // Assistant content always streams in live (via StreamingMessage)
+              // before it persists, so the persisted bubble must NOT also fade
+              // in — that double-appearance is the "blink out then flash back"
+              // seen at stream end. The last assistant group is always either
+              // the just-streamed response or known history, so it never
+              // animates. (The final reply can finalize as a fresh message id
+              // AFTER the stream ends — e.g. tool-call turns — so keying off the
+              // streamed id alone misses it; the isLastOverall guard catches
+              // every timing.) streamedHandoffIdsRef additionally covers a
+              // streamed reply that a later message, like a post-compaction
+              // summary, pushed out of last place.
+              const groupIsNew =
+                !isLastOverall &&
+                group.messages.some((m) => newMessageIds.has(m.id)) &&
+                !group.messages.some((m) => streamedHandoffIdsRef.current.has(m.id));
 
               if (
                 (hasActiveStream || showStreamingFallback) &&

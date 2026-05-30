@@ -156,14 +156,17 @@ export const StreamingMessage = memo(function StreamingMessage({ sessionId, part
     return result;
   }, [parts, streamingReasoning, streamingText]);
 
-  // No content yet — show blinking cursor to indicate "about to type"
+  // No content yet — show a SINGLE "Thinking" stage indicator (the same one
+  // the content phase renders at the top, so it carries over seamlessly).
+  //
+  // Deliberately render it WITHOUT the animate-fade-in wrapper: sending the
+  // first message navigates Landing → /c/{id}, which unmounts and remounts
+  // this component mid-think. Fading the bare indicator back in on that
+  // remount reads as a page "jolt" followed by a second thinking animation.
+  // (This phase also used to stack a separate StreamingIndicator dot-row on
+  // top of the stage, so two different thinking animations showed at once.)
   if (liveParts.length === 0) {
-    return (
-      <div className={freshMountRef.current ? "animate-fade-in" : undefined}>
-        <StreamingStage label={t("stageThinking")} />
-        <StreamingIndicator />
-      </div>
-    );
+    return <StreamingStage label={t("stageThinking")} />;
   }
 
   // Check if there's active text/reasoning streaming.
@@ -181,7 +184,12 @@ export const StreamingMessage = memo(function StreamingMessage({ sessionId, part
   const lastStepFinish = [...liveParts].reverse().find((p) => p.type === "step-finish") as
     | (PartData & { type: "step-finish"; reason?: string }) | undefined;
   const isGenerationDone = !!lastStepFinish && lastStepFinish.reason !== "tool_use";
-  const showTail = !isActivelyStreaming && !hasRunningTool && !isGenerationDone;
+  // Only trail the dot-row when there is actual activity (reasoning/tool)
+  // above it. Without this gate, an early step-start part (no visible content
+  // yet) renders the StreamingStage line AND the trailing dots at the same
+  // time — two different "thinking" animations stacked. The stage line already
+  // covers the no-activity case.
+  const showTail = hasAnyActivity && !isActivelyStreaming && !hasRunningTool && !isGenerationDone;
 
   let stageLabel = t("stageThinking");
   if (hasRunningTool) stageLabel = t("stageWorkingWithTools");

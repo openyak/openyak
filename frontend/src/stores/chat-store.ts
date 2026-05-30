@@ -244,15 +244,22 @@ export const useChatStore = create<ChatStore>((set) => ({
 
   startGeneration: (sessionId, streamId) =>
     set((s) => {
-      // Seed sessions[sessionId] from the draft bucket if one exists (Landing
-      // flow just got a session id from the backend). The draft is left in
-      // place on purpose — Landing keeps reading from it until route
-      // navigation unmounts the page, which prevents the streaming view from
-      // flashing back to the empty landing layout. Landing's own mount
-      // effect resets the draft on the next fresh chat.
+      // Seed sessions[sessionId] for this generation. Prefer an EXISTING
+      // bucket over the draft: a follow-up message calls
+      // beginSending(sessionId, ...) which just wrote the fresh pendingUserText
+      // (and attachments) onto sessions[sessionId]. The draft bucket lingers
+      // after the Landing → new-session handoff — it is intentionally not reset
+      // until the next fresh /c/new mount — so falling back to it here would
+      // clobber the follow-up's pendingUserText with stale draft state. That
+      // made the just-sent user bubble vanish during loading and, via
+      // showPendingBubble, also hid the previous assistant reply.
+      //
+      // The draft is only the correct seed for the Landing handoff itself,
+      // where the backend just assigned an id and sessions[newId] doesn't
+      // exist yet (existing === undefined) — so it still wins in that case.
       const draft = s.draftSession;
       const existing = s.sessions[sessionId];
-      const base: ChatSessionState = draft ?? existing ?? EMPTY_SESSION_STATE;
+      const base: ChatSessionState = existing ?? draft ?? EMPTY_SESSION_STATE;
       const next: ChatSessionState = {
         ...base,
         streamId,
