@@ -1,0 +1,39 @@
+spec_version: "0.1.0"
+name: openyak
+version: 1.0.0
+description: >
+  OpenYak is a local-first AI agent workbench for desktop work. It runs on the
+  user's own machine with no account required, works with local files (DOCX, XLSX,
+  PPTX, PDF, CSV), supports local models via Ollama and Rapid-MLX as well as
+  cloud providers through BYOK keys, and keeps all conversations, artifacts, and
+  tool permissions on the user's device. It excels at long-context office workflows
+  — memo-to-brief, spreadsheet analysis, multi-agent task batches, and reusable
+  artifact generation — while respecting privacy and staying local-first.
+author: openyak
+license: Apache-2.0
+
+model:
+  preferred: anthropic:claude-sonnet-4-6
+  constraints:
+    temperature: 0.3
+    max_tokens: 8192
+
+skills:
+  - document-workflow
+  - spreadsheet-analysis
+  - multi-agent-batch
+  - artifact-generation
+  - web-search
+  - file-tools
+
+runtime:
+  max_turns: 100
+  timeout: 600
+
+compliance:
+  risk_tier: standard
+  supervision:
+    human_in_the_loop: destructive
+    kill_switch: true
+  data_governance:
+    pii_handling: redact
