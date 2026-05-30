@@ -6,6 +6,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/), and this project
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-05-29
+
+### Added
+
+- **providers (vision):** Attaching an image to a model that can't read images now warns up front — an inline notice on the composer plus a clearer attach-file affordance — instead of silently failing at send time. (#136)
+
+### Fixed
+
+- **chat (display):** Fixed a cluster of chat-view glitches in the optimistic/streaming → persisted handoff: a follow-up message and the previous reply briefly vanishing while loading, two stacked "thinking" animations with a page jolt after the first message, the just-finished agent reply blinking out and flashing back at stream end, and the user's own bubble double-fading on follow-ups. The last assistant group and the most-recent user message no longer replay their entry animation — a timing-independent fix that also covers tool-call turns where the reply finalizes as a fresh message id after the stream ends. (#139)
+- **chat (streaming):** "Job not found" no longer appears mid-conversation after the local backend restarts. The SSE registry reconciles surviving streams against the restarted backend's `/chat/active` — resuming, re-attaching, or quietly finalizing from the DB — instead of blindly reconnecting to stream ids the new backend no longer has. (#134)
+- **sidebar (rename):** Renaming a chat is discoverable again — both the row's ••• overflow menu and double-click on the title open the rename field, with single-click navigation debounced so it doesn't fight the double-click. (#135)
+- **providers (thinking mode):** Reasoning from providers that stream `reasoning_content` is echoed back to the client again, so the model's thinking is visible instead of being silently dropped. (#128, fixes #126)
+
+### Validation
+
+- Frontend `tsc --noEmit` + ESLint clean; backend `pytest` green. The display fixes were verified in the web dev build with an instrumented opacity observer — zero spurious fades across the first message, follow-ups, and fast / slow / tool-call turns.
+
 ## [1.2.0] - 2026-05-26
 
 ### Added
