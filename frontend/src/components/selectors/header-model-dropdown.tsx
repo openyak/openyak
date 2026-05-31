@@ -138,6 +138,7 @@ export function HeaderModelDropdown() {
   const [open, setOpen] = useState(false);
   const {
     data: models,
+    allModels,
     isLoading,
     isError,
     activeProvider,
@@ -160,6 +161,13 @@ export function HeaderModelDropdown() {
 
   // Auto-select a sensible default when no model is selected or current model doesn't exist in the active provider
   useEffect(() => {
+    // Don't touch the selection until the models list has actually loaded. While
+    // the query is still loading/refetching `allModels` is undefined and
+    // `visibleModels` is transiently empty — running the reset below in that
+    // window would wipe the user's persisted model and then auto-pick the
+    // default, silently swapping their model out (cold load, or returning from
+    // settings while /models is stale/refetching). See #146.
+    if (!allModels) return;
     if (visibleModels.length === 0) {
       if (selectedModel) setSelectedModel(null);
       return;
@@ -185,6 +193,7 @@ export function HeaderModelDropdown() {
       setSelectedModel(chosen.id, chosen.provider_id);
     }
   }, [
+    allModels,
     visibleModels,
     selectedModel,
     selectedProviderId,

@@ -122,6 +122,43 @@ test.describe("OpenYak deep claimed-feature GUI surfaces", () => {
     await expectNoAppCrash(page);
   });
 
+  test("model selector workflow: a persisted model survives a slow models load and is not reset to the default (#146)", async ({ page }) => {
+    const state = await setupMockedApp(page);
+    // Persist an explicit, NON-default custom model. For the "custom" provider the
+    // fixture lists Qwen3 Coder Local first (the default) and Acme Coder second.
+    await page.addInitScript(() => {
+      const raw = window.localStorage.getItem("openyak-settings");
+      const settings = raw ? JSON.parse(raw) : { state: {}, version: 0 };
+      settings.state = {
+        ...settings.state,
+        hasCompletedOnboarding: true,
+        activeProvider: "custom",
+        selectedModel: "custom_acme/acme-coder",
+        selectedProviderId: "custom_acme",
+      };
+      window.localStorage.setItem("openyak-settings", JSON.stringify(settings));
+    });
+    // Widen the models-loading window so the persisted choice hydrates while the
+    // list is still empty — the exact race that used to wipe the selection and
+    // auto-pick the default. Fall back to the standard mock for the payload.
+    await page.route("**/api/models", async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      await route.fallback();
+    });
+
+    await page.goto("/c/new");
+
+    // The composer must keep the persisted model, not swap to the default
+    // (visibleModels[0] = "Qwen3 Coder Local").
+    await expect(page.getByRole("button", { name: /Acme Coder/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Qwen3 Coder Local/i })).toHaveCount(0);
+
+    // And the model actually sent matches the persisted choice.
+    await sendPrompt(page, "Confirm the persisted model survived the load");
+    expect(JSON.stringify(state.promptBodies[0])).toContain("custom_acme/acme-coder");
+    await expectNoAppCrash(page);
+  });
+
   test("sidebar workflow: pin, rename, export, delete confirmation, and undo are reachable from the real menu", async ({ page }) => {
     const state = await setupMockedApp(page);
 
