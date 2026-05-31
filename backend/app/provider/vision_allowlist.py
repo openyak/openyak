@@ -64,6 +64,7 @@ import re
 _DENY: list[str] = [
     r"o1-mini",            # o1 is vision; o1-mini is text-only
     r"o3-mini",            # o3 is vision; o3-mini is text-only
+    r"grok-[3-9]-mini",    # grok mini reasoning models are text-only (cf. o*-mini)
     r"gemma-?3-1b",        # the one text-only size in the multimodal gemma-3 line
     r"nova[\w-]*micro",    # Amazon Nova Micro (incl. nova-2-micro) is text-only
     r"audio",              # gpt-4o-audio-* etc. — speech in/out, not image
@@ -136,7 +137,7 @@ _ALLOW: list[str] = [
     r"mistral-medium-2[5-9]",     # date-named medium 3.x (2505, 2604, …)
     r"mistral-large-3",           # Large 3 sees (Large 2 did not)
     r"mistral-large-2[5-9]",      # Large 3 by date (2512+); excludes Large 2 (24xx)
-    r"ministral-3",               # Ministral 3 (named) sees
+    r"ministral-3\b",             # Ministral 3 (named); \b excludes 2024 ministral-3b
     r"ministral-\d+b-2[5-9]",     # Ministral 3 by date (…-2512); excludes 8B-2410
 
     # ---- Alibaba Qwen ----
@@ -145,7 +146,7 @@ _ALLOW: list[str] = [
     r"qwen-?3\.[567]",      # qwen3.5 / 3.6 / 3.7 flagships are natively multimodal
     r"qwen-?3-[567]\b",     # dash/date-stamped variants (qwen3-6, qwen3-5-02-15)
     r"qvq",                 # qvq visual reasoning
-    r"ovis",                # Alibaba Ovis VLM
+    r"\bovis",              # Alibaba Ovis VLM (anchored: not "provisional" etc.)
 
     # ---- Moonshot Kimi ----
     r"kimi-k2[._p-]?[56]",  # K2.5 / K2.6 (incl. k2_6, k2p6); base K2 is text-only
@@ -224,7 +225,7 @@ _ALLOW: list[str] = [
     r"aya-vision",
 
     # ---- Generic naming signals — broad but reliable for VLMs ----
-    r"vision",
+    r"\bvision",           # any *-vision id (anchored: not supervision/revision)
     r"multimodal",
     r"-vl\b",
     r"-vl-",

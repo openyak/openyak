@@ -111,6 +111,7 @@ VISION_MODELS = [
     "ui-tars-1.5",
     "grok-3",
     "grok-build-0.1",
+    "ministral-3-8b-instruct",     # named Ministral 3 (distinct from 2024 3b)
     "claude-sonnet-latest",
     # Capitalised display label only
     ("some-internal-id", "Internal Vision Model"),
@@ -155,10 +156,15 @@ NON_VISION_MODELS = [
     "moonshotai/kimi-k2-instruct",
     "step-3.5-flash",              # text-only; step-3.7 sees
     "ministral-8b-2410",           # 2024 Ministral text-only; Ministral 3 sees
+    "ministral-3b",                # 2024 Ministral 3B text-only (prefix trap)
+    "ministral-3b-2410",
     "mistral-large-2411",          # Large 2 text-only; Large 3 sees
     "deepseek-v3.2",               # text; deepseek-vl2 / -ocr see
     "qwen3-32b",                   # Qwen3 (3.0) base text-only; 3.5+ see
     "nova-micro-v1",               # Nova Micro text-only
+    "grok-3-mini",                 # grok mini reasoning is text-only
+    "grok-3-mini-beta",
+    "x-ai/grok-3-mini-fast",
     "gpt-4o-search-preview",       # text + web, no image input
     "gpt-4o-mini-search-preview",
     "gpt-4o-realtime-preview",     # audio/text realtime, no image input

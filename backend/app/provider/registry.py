@@ -33,7 +33,8 @@ def _promote_vision_capability(models: list[ModelInfo]) -> None:
     false "can't read images" gate. We OR in a curated allowlist here, at the
     one point every provider's models pass through — additive only, so a model
     a provider already flagged ``vision=True`` is never touched. Mutates in
-    place; the ``ModelInfo`` objects are freshly built each refresh.
+    place; providers rebuild their ``ModelInfo`` objects each refresh
+    (``clear_cache()`` runs before ``list_models()``) and the flip is idempotent.
     """
     for m in models:
         if not m.capabilities.vision and model_supports_vision(m.id, m.name):
