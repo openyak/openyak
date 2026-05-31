@@ -263,6 +263,12 @@ class SessionPrompt:
                         )
                         self.is_first_turn = True
 
+                    # Remember the model used for this session so the selector
+                    # can be restored when the user returns to it later
+                    # (per-session model memory).
+                    session.model_id = self.model_id
+                    session.provider_id = self.provider.id
+
                     user_msg = await create_message(
                         db,
                         session_id=session.id,

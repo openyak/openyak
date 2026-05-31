@@ -29,6 +29,13 @@ class Session(Base, TimestampMixin):
     title: Mapped[str] = mapped_column(String, nullable=False, default="New Session")
     version: Mapped[str] = mapped_column(String, nullable=False, default="0.0.1")
 
+    # Last-used model + provider for this session. Persisted on every prompt so
+    # the model selector can be restored when the user returns to the session
+    # (per-session model memory). Nullable: legacy sessions and sessions with no
+    # prompt yet fall back to the global default.
+    model_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    provider_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
     # Summary stats (updated after each LLM step)
     summary_additions: Mapped[int | None] = mapped_column(Integer, nullable=True)
     summary_deletions: Mapped[int | None] = mapped_column(Integer, nullable=True)

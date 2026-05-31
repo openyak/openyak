@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useChat } from "@/hooks/use-chat";
 import { useMessages } from "@/hooks/use-messages";
+import { useSessionModelRestore } from "@/hooks/use-session-model-restore";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { useChatStore } from "@/stores/chat-store";
 import { useArtifactStore } from "@/stores/artifact-store";
@@ -48,6 +49,9 @@ export function ChatView({ sessionId }: ChatViewProps) {
   } = useChat(sessionId);
 
   const { messages, isLoading, hasPreviousPage, isFetchingPreviousPage, fetchPreviousPage } = useMessages(sessionId);
+
+  // Per-session model memory — restore this session's last-used model on entry.
+  useSessionModelRestore(sessionId);
 
   const { data: session } = useQuery({
     queryKey: queryKeys.sessions.detail(sessionId),

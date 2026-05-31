@@ -73,6 +73,19 @@ class TestGetSession:
         resp = await app_client.get("/api/sessions/nonexistent")
         assert resp.status_code == 404
 
+    async def test_model_fields_present_and_null_for_fresh_session(self, app_client):
+        """Per-session model memory: the model_id/provider_id fields are part
+        of the session response, and null until a prompt sets them."""
+        create = await app_client.post("/api/sessions", json={"title": "M"})
+        body = create.json()
+        assert body["model_id"] is None
+        assert body["provider_id"] is None
+
+        resp = await app_client.get(f"/api/sessions/{body['id']}")
+        got = resp.json()
+        assert "model_id" in got and got["model_id"] is None
+        assert "provider_id" in got and got["provider_id"] is None
+
 
 class TestUpdateSession:
     async def test_update_title(self, app_client):

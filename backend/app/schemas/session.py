@@ -43,12 +43,18 @@ class SessionResponse(BaseModel):
     summary_diffs: list[Any] | None = None
     is_pinned: bool = False
     permission: dict[str, Any] | list[Any] | None = None
+    # Last-used model for this session (per-session model memory). Null for
+    # legacy sessions or sessions with no prompt yet.
+    model_id: str | None = None
+    provider_id: str | None = None
     time_created: datetime
     time_updated: datetime
     time_compacting: datetime | None = None
     time_archived: datetime | None = None
 
-    model_config = {"from_attributes": True}
+    # protected_namespaces=() — allow the ``model_id`` field without Pydantic's
+    # "model_" reserved-namespace warning (consistent with the rest of the app).
+    model_config = {"from_attributes": True, "protected_namespaces": ()}
 
 
 class SessionSearchResult(BaseModel):

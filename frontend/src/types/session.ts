@@ -34,6 +34,10 @@ export interface SessionResponse {
   summary_diffs: unknown[];
   is_pinned: boolean;
   permission: Record<string, unknown>;
+  /** Last-used model for this session (per-session model memory). Null for
+   *  legacy sessions or sessions with no prompt yet. */
+  model_id: string | null;
+  provider_id: string | null;
   time_created: string;
   time_updated: string;
   time_compacting: string | null;
