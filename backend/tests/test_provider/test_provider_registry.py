@@ -215,6 +215,48 @@ class TestRefreshProvider:
         assert "m1" in reg._model_index
 
 
+class TestVisionPromotion:
+    """The registry promotes vision-capable models whose provider reported
+    vision=False (missing/stale upstream metadata) via the curated allowlist."""
+
+    def _vision_model(self, mid: str, vision: bool) -> ModelInfo:
+        return ModelInfo(
+            id=mid,
+            name=mid,
+            provider_id="p1",
+            capabilities=ModelCapabilities(vision=vision),
+        )
+
+    @pytest.mark.asyncio
+    async def test_promotes_false_negative(self):
+        reg = ProviderRegistry()
+        reg.register(_make_provider("p1", [self._vision_model("gpt-4o", vision=False)]))
+        await reg.refresh_models()
+        resolved = reg.resolve_model("gpt-4o")
+        assert resolved is not None
+        assert resolved[1].capabilities.vision is True
+
+    @pytest.mark.asyncio
+    async def test_leaves_text_model_alone(self):
+        reg = ProviderRegistry()
+        reg.register(_make_provider("p1", [self._vision_model("gpt-3.5-turbo", vision=False)]))
+        await reg.refresh_models()
+        resolved = reg.resolve_model("gpt-3.5-turbo")
+        assert resolved is not None
+        assert resolved[1].capabilities.vision is False
+
+    @pytest.mark.asyncio
+    async def test_never_downgrades(self):
+        # A provider that already reports vision=True on something the allowlist
+        # would not match must keep it — promotion is additive only.
+        reg = ProviderRegistry()
+        reg.register(_make_provider("p1", [self._vision_model("some-private-vlm", vision=True)]))
+        await reg.refresh_models()
+        resolved = reg.resolve_model("some-private-vlm")
+        assert resolved is not None
+        assert resolved[1].capabilities.vision is True
+
+
 class TestResolveModel:
     @pytest.mark.asyncio
     async def test_existing(self):

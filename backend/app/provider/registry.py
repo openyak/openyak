@@ -6,6 +6,7 @@ import asyncio
 import logging
 
 from app.provider.base import BaseProvider
+from app.provider.vision_allowlist import model_supports_vision
 from app.schemas.provider import ModelInfo, ProviderStatus
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,23 @@ def _provider_priority(provider_id: str) -> int:
     if provider_id in _AGGREGATOR_PROVIDERS:
         return 1
     return 0
+
+
+def _promote_vision_capability(models: list[ModelInfo]) -> None:
+    """Rescue vision-capable models that upstream metadata reported as text-only.
+
+    Providers source ``capabilities.vision`` from metadata that's often missing
+    (a ``/v1/models`` listing has no modalities) or stale (models.dev lags new
+    releases), so genuinely multimodal models arrive ``vision=False`` and get a
+    false "can't read images" gate. We OR in a curated allowlist here, at the
+    one point every provider's models pass through — additive only, so a model
+    a provider already flagged ``vision=True`` is never touched. Mutates in
+    place; providers rebuild their ``ModelInfo`` objects each refresh
+    (``clear_cache()`` runs before ``list_models()``) and the flip is idempotent.
+    """
+    for m in models:
+        if not m.capabilities.vision and model_supports_vision(m.id, m.name):
+            m.capabilities.vision = True
 
 
 class ProviderRegistry:
@@ -176,6 +194,7 @@ class ProviderRegistry:
                 provider.list_models(),
                 timeout=MODEL_REFRESH_TIMEOUT_SECONDS,
             )
+            _promote_vision_capability(models)
             return pid, provider, models, None
         except Exception as e:
             if isinstance(e, TimeoutError):
