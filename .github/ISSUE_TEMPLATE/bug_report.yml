@@ -6,6 +6,7 @@ body:
     attributes:
       value: |
         Thanks for taking the time to report a bug! Please fill out the information below so we can investigate.
+        Please keep the discussion specific, respectful, and actionable. Spam, harassment, abuse, or automated low-quality reports may be closed, hidden, locked, or reported.
 
   - type: textarea
     id: description
@@ -91,3 +92,11 @@ body:
       label: Logs / Error Output
       description: Paste any relevant error messages, console logs, or stack traces.
       render: shell
+
+  - type: checkboxes
+    id: conduct
+    attributes:
+      label: Community Guidelines
+      options:
+        - label: I agree to follow the OpenYak Code of Conduct and keep this issue constructive, respectful, and relevant.
+          required: true

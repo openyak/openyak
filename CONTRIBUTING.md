@@ -6,8 +6,8 @@ Thanks for your interest in contributing! This guide covers the workflow and con
 
 ```bash
 # Clone and install
-git clone https://github.com/openyak/desktop.git
-cd desktop
+git clone https://github.com/openyak/openyak.git
+cd openyak
 npm install
 cd backend && pip install -e ".[dev]" && cd ..
 
@@ -21,7 +21,7 @@ See [README.md](README.md) for detailed setup instructions.
 
 ### 1. Pick an Issue
 
-- Browse [open issues](https://github.com/openyak/desktop/issues)
+- Browse [open issues](https://github.com/openyak/openyak/issues)
 - Issues labeled `good first issue` are great starting points
 - Comment on the issue to let others know you're working on it
 
@@ -100,6 +100,16 @@ Fixes #42
 - Keep the PR up to date with `main` via rebase
 - Once approved, a maintainer will merge
 
+## Community Guidelines
+
+OpenYak uses issue templates and moderation tools to keep project discussions useful for contributors and users.
+
+- Follow the [Code of Conduct](CODE_OF_CONDUCT.md)
+- Keep issues specific, respectful, and actionable
+- Do not post spam, advertising, harassment, abuse, or automated low-quality content
+- Do not report security vulnerabilities in public issues; follow [SECURITY.md](SECURITY.md)
+- Maintainers may close, hide, delete, lock, or report content that harms the project community
+
 ## Code Conventions
 
 ### Frontend (TypeScript / React)
@@ -127,7 +137,7 @@ Fixes #42
 
 ## Reporting Bugs
 
-Use the [Bug Report template](https://github.com/openyak/desktop/issues/new?template=bug_report.yml). A good bug report includes:
+Use the [Bug Report template](https://github.com/openyak/openyak/issues/new?template=bug_report.yml). A good bug report includes:
 
 1. Clear description of what happened
 2. Steps to reproduce
@@ -136,7 +146,7 @@ Use the [Bug Report template](https://github.com/openyak/desktop/issues/new?temp
 
 ## Requesting Features
 
-Use the [Feature Request template](https://github.com/openyak/desktop/issues/new?template=feature_request.yml). Explain the problem before the solution — understanding *why* helps us design the right approach.
+Use the [Feature Request template](https://github.com/openyak/openyak/issues/new?template=feature_request.yml). Explain the problem before the solution — understanding *why* helps us design the right approach.
 
 ## Project Structure
 

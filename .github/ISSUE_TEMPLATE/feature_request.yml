@@ -6,6 +6,7 @@ body:
     attributes:
       value: |
         Thanks for suggesting a feature! Please describe what you'd like and why it would be useful.
+        Please keep the discussion specific, respectful, and actionable. Spam, harassment, abuse, or automated low-quality requests may be closed, hidden, locked, or reported.
 
   - type: textarea
     id: problem
@@ -51,3 +52,11 @@ body:
     attributes:
       label: Additional Context
       description: Screenshots, mockups, links, or anything else that helps explain.
+
+  - type: checkboxes
+    id: conduct
+    attributes:
+      label: Community Guidelines
+      options:
+        - label: I agree to follow the OpenYak Code of Conduct and keep this issue constructive, respectful, and relevant.
+          required: true

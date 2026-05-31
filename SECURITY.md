@@ -38,7 +38,7 @@ OpenYak is designed as a local-first desktop agent:
 | Previous minor | Best effort |
 | Older | ❌ |
 
-We recommend always using the [latest release](https://github.com/openyak/desktop/releases/latest).
+We recommend always using the [latest release](https://github.com/openyak/openyak/releases/latest).
 
 ## Scope
 

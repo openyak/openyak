@@ -1,0 +1,54 @@
+name: Question
+description: Ask a focused question about using or contributing to OpenYak
+labels: ["question", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for focused questions about OpenYak. For open-ended discussion, ideas, or troubleshooting with many unknowns, please use Discussions instead.
+        Please keep the discussion specific, respectful, and actionable. Spam, harassment, abuse, or automated low-quality questions may be closed, hidden, locked, or reported.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What would you like to know?
+      placeholder: How do I...?
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What have you tried, and what relevant setup details should maintainers know?
+      placeholder: |
+        - OS:
+        - App version:
+        - Provider / model:
+        - Relevant logs or screenshots:
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - Chat / Conversation
+        - Tools / Agent capabilities
+        - Models / Providers
+        - Settings / Configuration
+        - Desktop integration
+        - Plugin / MCP system
+        - Installation / setup
+        - Other
+
+  - type: checkboxes
+    id: conduct
+    attributes:
+      label: Community Guidelines
+      options:
+        - label: I agree to follow the OpenYak Code of Conduct and keep this issue constructive, respectful, and relevant.
+          required: true
