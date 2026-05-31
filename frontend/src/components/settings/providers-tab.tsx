@@ -13,6 +13,7 @@ import { useTranslation } from "react-i18next";
 import { useSettingsStore } from "@/stores/settings-store";
 import { api } from "@/lib/api";
 import { API, queryKeys } from "@/lib/constants";
+import { isByokProviderId, isCustomEndpointProviderId } from "@/lib/providers";
 import { useModels } from "@/hooks/use-models";
 import type {
   ApiKeyStatus,
@@ -45,14 +46,7 @@ function pickModelForMode(
 ): ModelInfo | null {
   if (!models || models.length === 0) return null;
   if (mode === "byok") {
-    return (
-      models.find(
-        (m) =>
-          !["openai-subscription", "ollama", "rapid-mlx", "local"].includes(
-            m.provider_id,
-          ) && !m.provider_id?.startsWith("custom_"),
-      ) ?? null
-    );
+    return models.find((m) => isByokProviderId(m.provider_id)) ?? null;
   }
   if (mode === "chatgpt") {
     return (
@@ -66,12 +60,7 @@ function pickModelForMode(
     return models.find((m) => m.provider_id === "rapid-mlx") ?? null;
   }
   if (mode === "custom") {
-    return (
-      models.find(
-        (m) =>
-          m.provider_id === "local" || m.provider_id?.startsWith("custom_"),
-      ) ?? null
-    );
+    return models.find((m) => isCustomEndpointProviderId(m.provider_id)) ?? null;
   }
   return null;
 }

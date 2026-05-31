@@ -250,7 +250,15 @@ class SessionPrompt:
 
         # --- 3. Create/load session and persist user message ---
         if self.skip_user_message:
-            pass
+            # Edit-and-resend reuses the existing user message, so we skip the
+            # message write — but it can still change the model, so keep the
+            # session's remembered model in sync (per-session model memory).
+            async with self.session_factory() as db:
+                async with db.begin():
+                    session = await get_session(db, self.job.session_id)
+                    if session is not None:
+                        session.model_id = self.model_id
+                        session.provider_id = self.provider.id
         else:
             async with self.session_factory() as db:
                 async with db.begin():

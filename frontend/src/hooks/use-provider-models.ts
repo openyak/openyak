@@ -3,22 +3,7 @@
 import { useMemo } from "react";
 import { useModels } from "@/hooks/use-models";
 import { useSettingsStore } from "@/stores/settings-store";
-
-function isByokProviderId(providerId: string | undefined): boolean {
-  if (!providerId) return false;
-  if (
-    providerId === "openai-subscription" ||
-    providerId === "ollama" ||
-    providerId === "rapid-mlx" ||
-    providerId === "local"
-  )
-    return false;
-  return !providerId.startsWith("custom_");
-}
-
-function isCustomEndpointProviderId(providerId: string | undefined): boolean {
-  return providerId === "local" || !!providerId?.startsWith("custom_");
-}
+import { isByokProviderId, isCustomEndpointProviderId } from "@/lib/providers";
 
 export function useProviderModels() {
   const { data: allModels, isLoading, isError, error } = useModels();
