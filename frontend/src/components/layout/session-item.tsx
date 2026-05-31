@@ -430,14 +430,26 @@ export const SessionItem = memo(function SessionItem({
                   <EllipsisVertical className="h-3.5 w-3.5" />
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuContent
+                align="end"
+                className="w-48"
+                // Don't restore focus to the trigger on close: when "Rename" is
+                // selected it would steal focus from the just-opened inline input,
+                // blurring it and instantly committing+closing the rename ("一闪而过").
+                onCloseAutoFocus={(e) => e.preventDefault()}
+              >
                 <MenuItems Item={DropdownMenuItem} Separator={DropdownMenuSeparator} />
               </DropdownMenuContent>
             </DropdownMenu>
           )}
         </div>
       </ContextMenuTrigger>
-      <ContextMenuContent className="w-48">
+      <ContextMenuContent
+        className="w-48"
+        // See DropdownMenuContent above: prevent focus-restore so a "Rename"
+        // selection doesn't blur the inline input out of existence.
+        onCloseAutoFocus={(e) => e.preventDefault()}
+      >
         <MenuItems Item={ContextMenuItem} Separator={ContextMenuSeparator} />
       </ContextMenuContent>
     </ContextMenu>
