@@ -1583,11 +1583,6 @@ class FeishuChannel(BaseChannel):
                 if file_path:
                     media_paths.append(file_path)
 
-                if msg_type == "audio" and file_path:
-                    transcription = await self.transcribe_audio(file_path)
-                    if transcription:
-                        content_text = f"[transcription: {transcription}]"
-
                 content_parts.append(content_text)
 
             elif msg_type in (
