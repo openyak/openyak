@@ -137,13 +137,9 @@ OpenYak 可以在同一个线程里综合多份文件，并在右侧 artifact pa
 | Qwen | BYOK | 直连提供商密钥 |
 | Kimi | BYOK | Moonshot 模型 |
 | MiniMax | BYOK | 直连提供商密钥 |
-| Atlas Cloud | BYOK | OpenAI-compatible 多模型网关。[官网](https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=openyak) |
+| Atlas Cloud | BYOK | OpenAI-compatible 多模型网关。[官网](https://www.atlascloud.ai/) |
 | 智谱 | BYOK | 直连提供商密钥 |
 | ChatGPT | 订阅 | 在可用时使用现有 ChatGPT Plus、Pro、Team 或 Enterprise 方案 |
-
-<p align="center">
-  <img src="docs/readme/atlas-cloud-provider.png" width="900" alt="OpenYak 中的 Atlas Cloud provider 集成预览" />
-</p>
 
 <details>
 <summary>OpenYak 已验证 Atlas LLM 模型池（50 个）</summary>

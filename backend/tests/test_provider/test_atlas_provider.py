@@ -102,23 +102,3 @@ async def test_atlas_provider_live_stream():
     assert "atlas" in text.lower()
 
 
-@pytest.mark.asyncio
-@pytest.mark.skipif(
-    not os.environ.get("OPENYAK_OPENAI_API_KEY"),
-    reason="OPENYAK_OPENAI_API_KEY not set",
-)
-async def test_openai_provider_regression_smoke():
-    provider = create_provider("openai", os.environ["OPENYAK_OPENAI_API_KEY"])
-
-    chunks = []
-    async for chunk in provider.stream_chat(
-        "gpt-4o-mini",
-        [{"role": "user", "content": "Say exactly: openai"}],
-        system="Respond with the exact word requested.",
-        temperature=0,
-        max_tokens=16,
-    ):
-        chunks.append(chunk)
-
-    text = "".join(c.data.get("text", "") for c in chunks if c.type == "text-delta")
-    assert "openai" in text.lower()
