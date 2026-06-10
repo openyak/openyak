@@ -44,6 +44,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   cohere: "Cohere",
   perplexity: "Perplexity",
   fireworks: "Fireworks",
+  atlas: "Atlas Cloud",
   azure: "Azure",
   openrouter: "OpenRouter",
   qwen: "Qwen",

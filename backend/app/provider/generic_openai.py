@@ -14,6 +14,7 @@ import logging
 import re
 from typing import Any
 
+from app.provider.atlas_models import ATLAS_VALIDATED_MODELS
 from app.provider.openai_compat import OpenAICompatProvider
 from app.schemas.provider import (
     ModelCapabilities,
@@ -80,6 +81,11 @@ class GenericOpenAIProvider(OpenAICompatProvider):
                 )
                 for m in self._models_override
             ]
+            self._models_cache = models
+            return models
+
+        if self._provider_id == "atlas":
+            models = await self._load_validated_atlas_models()
             self._models_cache = models
             return models
 
@@ -201,6 +207,40 @@ class GenericOpenAIProvider(OpenAICompatProvider):
                 raise
             logger.info("Skipped fetching models from %s API: %s", self._provider_id, e)
             return []
+
+    async def _load_validated_atlas_models(self) -> list[ModelInfo]:
+        """Return Atlas models in the validated rollout order.
+
+        Prefer live API metadata when available so removed models disappear
+        naturally, but keep a constant fallback so Atlas still has a stable
+        model list if metadata sources are temporarily unavailable.
+        """
+        live_models = await self._fetch_api_models()
+        if live_models:
+            by_id = {model.id: model for model in live_models}
+            filtered = [by_id[model_id] for model_id in ATLAS_VALIDATED_MODELS if model_id in by_id]
+            missing = [model_id for model_id in ATLAS_VALIDATED_MODELS if model_id not in by_id]
+            if missing:
+                logger.warning(
+                    "Atlas validated model pool missing %d models from /v1/models: %s",
+                    len(missing),
+                    ", ".join(missing),
+                )
+            if filtered:
+                return filtered
+
+        return [
+            ModelInfo(
+                id=model_id,
+                name=model_id,
+                provider_id=self._provider_id,
+                capabilities=ModelCapabilities(
+                    function_calling=True,
+                    max_context=_infer_context_from_name(model_id),
+                ),
+            )
+            for model_id in ATLAS_VALIDATED_MODELS
+        ]
 
 
 # ---------------------------------------------------------------------------

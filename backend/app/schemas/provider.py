@@ -20,7 +20,7 @@ CUSTOM_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,49}$")
 RESERVED_CUSTOM_SLUGS = {
     "openrouter", "openai", "anthropic", "google", "groq", "deepseek",
     "mistral", "xai", "together", "deepinfra", "cerebras", "cohere",
-    "perplexity", "fireworks", "azure", "qwen", "kimi", "minimax",
+    "perplexity", "fireworks", "atlas", "azure", "qwen", "kimi", "minimax",
     "zhipu", "siliconflow", "xiaomi",
     "openai-subscription", "openai_subscription",
     "ollama", "rapid-mlx", "rapid_mlx", "local", "custom",

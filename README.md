@@ -146,6 +146,7 @@ Finally, write a follow-up email I can send to the team directly.
 | Qwen | BYOK | Direct provider key |
 | Kimi | BYOK | Moonshot models |
 | MiniMax | BYOK | Direct provider key |
+| Atlas Cloud | BYOK | OpenAI-compatible multi-model gateway. [Official site](https://www.atlascloud.ai/) |
 | Zhipu | BYOK | Direct provider key |
 | ChatGPT | Subscription | Use an existing ChatGPT Plus, Pro, Team, or Enterprise plan when available |
 

@@ -61,6 +61,7 @@
   "providerKeyPlaceholder_qwen": "sk-...",
   "providerKeyPlaceholder_kimi": "sk-...",
   "providerKeyPlaceholder_minimax": "...",
+  "providerKeyPlaceholder_atlas": "apikey-...",
   "providerKeyPlaceholder_zhipu": "...",
   "providerKeyPlaceholder_siliconflow": "sk-...",
   "providerKeyPlaceholder_xiaomi": "...",
