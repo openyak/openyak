@@ -224,7 +224,7 @@ export function GeneralTab() {
               </Button>
             )}
             {updateStatus === "up-to-date" && (
-              <Button variant="outline" size="sm" className="text-ui-caption h-7 text-green-500 border-green-500/30" disabled>
+              <Button variant="outline" size="sm" className="text-ui-caption h-7 text-[var(--color-success)] border-[var(--color-success)]/30" disabled>
                 <Check className="h-3 w-3 mr-1.5" />
                 {t('upToDate')}
               </Button>

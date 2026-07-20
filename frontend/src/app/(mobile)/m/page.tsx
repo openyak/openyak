@@ -16,10 +16,10 @@ function ConnectionDot({ status }: { status: RemoteHealthStatus }) {
   if (status === "unknown") return null;
   const color =
     status === "connected"
-      ? "bg-emerald-500"
+      ? "bg-[var(--color-success)]"
       : status === "limited"
-        ? "bg-amber-500"
-        : "bg-red-500";
+        ? "bg-[var(--color-warning)]"
+        : "bg-[var(--color-destructive)]";
   return (
     <span
       className={`inline-block h-2 w-2 rounded-full ${color} shrink-0`}
@@ -154,12 +154,12 @@ export default function MobileTaskListPage() {
                         {session.title || "Untitled task"}
                       </p>
                       {needsInputIds.has(session.id) ? (
-                        <span className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-500 text-[10px] font-medium">
+                        <span className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[var(--color-warning)]/10 text-[var(--color-warning)] text-[10px] font-medium">
                           <MessageCircle className="w-2.5 h-2.5" />
                           Needs input
                         </span>
                       ) : activeSessionIds.has(session.id) ? (
-                        <span className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 text-[10px] font-medium">
+                        <span className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[var(--color-success)]/10 text-[var(--color-success)] text-[10px] font-medium">
                           <Loader2 className="w-2.5 h-2.5 animate-spin" />
                           Running
                         </span>

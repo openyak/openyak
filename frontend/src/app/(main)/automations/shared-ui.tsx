@@ -45,10 +45,10 @@ export function StatusBadge({ status, sessionId, t }: { status: string | null; s
   if (!status) return null;
 
   const config: Record<string, { icon: React.ElementType; color: string; labelKey: string }> = {
-    running: { icon: Loader2, color: "text-amber-400", labelKey: "statusRunning" },
-    success: { icon: Check, color: "text-emerald-400", labelKey: "statusSuccess" },
-    error:   { icon: XCircle, color: "text-red-400", labelKey: "statusError" },
-    timeout: { icon: XCircle, color: "text-orange-400", labelKey: "statusTimeout" },
+    running: { icon: Loader2, color: "text-[var(--tool-pending)]", labelKey: "statusRunning" },
+    success: { icon: Check, color: "text-[var(--color-success)]", labelKey: "statusSuccess" },
+    error:   { icon: XCircle, color: "text-[var(--color-destructive)]", labelKey: "statusError" },
+    timeout: { icon: XCircle, color: "text-[var(--color-warning)]", labelKey: "statusTimeout" },
   };
 
   const normalizedStatus = status.startsWith("running") ? "running" : status;
@@ -87,11 +87,11 @@ export function StatusBadge({ status, sessionId, t }: { status: string | null; s
 
 export function TriggeredByBadge({ triggeredBy, t }: { triggeredBy: string; t: (key: string) => string }) {
   const map: Record<string, { label: string; color: string }> = {
-    schedule:         { label: t("triggerSchedule"), color: "bg-blue-500/10 text-blue-400" },
-    manual:           { label: t("triggerManual"), color: "bg-amber-500/10 text-amber-400" },
+    schedule:         { label: t("triggerSchedule"), color: "bg-[var(--brand-primary)]/10 text-[var(--brand-primary)]" },
+    manual:           { label: t("triggerManual"), color: "bg-[var(--color-warning)]/10 text-[var(--color-warning)]" },
     startup_catchup:  { label: t("triggerCatchup"), color: "bg-purple-500/10 text-purple-400" },
   };
-  const info = map[triggeredBy] || { label: triggeredBy, color: "bg-zinc-500/10 text-zinc-400" };
+  const info = map[triggeredBy] || { label: triggeredBy, color: "bg-[var(--text-tertiary)]/10 text-[var(--text-tertiary)]" };
   return <span className={`text-ui-3xs px-1.5 py-0.5 rounded ${info.color}`}>{info.label}</span>;
 }
 
@@ -152,7 +152,7 @@ export function DeleteConfirmDialog({ name, onConfirm, onCancel, isPending, t }:
       </div>
       <div className="flex justify-end gap-2 px-4 py-3 border-t border-[var(--border-default)]">
         <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={onCancel}>{t("cancel")}</Button>
-        <Button size="sm" className="h-7 text-xs bg-red-600 hover:bg-red-700 text-white" onClick={onConfirm} disabled={isPending}>
+        <Button variant="destructive" size="sm" className="h-7 text-xs" onClick={onConfirm} disabled={isPending}>
           {isPending && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />}
           {t("delete")}
         </Button>

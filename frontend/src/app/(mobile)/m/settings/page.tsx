@@ -217,8 +217,8 @@ export default function MobileSettingsPage() {
         <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--surface-secondary)] p-4">
           <div className="flex items-center gap-3">
             {isConnected ? (
-              <div className="h-10 w-10 rounded-full bg-emerald-500/10 flex items-center justify-center shrink-0">
-                <Wifi className="w-5 h-5 text-emerald-500" />
+              <div className="h-10 w-10 rounded-full bg-[var(--color-success)]/10 flex items-center justify-center shrink-0">
+                <Wifi className="w-5 h-5 text-[var(--color-success)]" />
               </div>
             ) : (
               <div className="h-10 w-10 rounded-full bg-[var(--surface-tertiary)] flex items-center justify-center shrink-0">
@@ -238,7 +238,7 @@ export default function MobileSettingsPage() {
             {isConnected && (
               <button
                 onClick={handleDisconnect}
-                className="h-8 w-8 flex items-center justify-center rounded-full hover:bg-red-500/10 text-[var(--text-tertiary)] hover:text-red-400 active:scale-[0.95] transition-all"
+                className="h-8 w-8 flex items-center justify-center rounded-full hover:bg-[var(--color-destructive)]/10 text-[var(--text-tertiary)] hover:text-[var(--color-destructive)] active:scale-[0.95] transition-all"
               >
                 <Trash2 className="w-4 h-4" />
               </button>
@@ -356,7 +356,7 @@ export default function MobileSettingsPage() {
                       </p>
                     </div>
                     {isActive && (
-                      <div className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
+                      <div className="h-2 w-2 rounded-full bg-[var(--color-success)] shrink-0" />
                     )}
                   </button>
                 );
@@ -397,7 +397,7 @@ function ChannelsStatusCard() {
       <div className="flex items-center justify-between">
         <p className="text-[13px] font-medium">Channels</p>
         <div className="flex items-center gap-1.5">
-          <span className={`h-2 w-2 rounded-full ${running ? "bg-emerald-500" : "bg-[var(--text-tertiary)]"}`} />
+          <span className={`h-2 w-2 rounded-full ${running ? "bg-[var(--color-success)]" : "bg-[var(--text-tertiary)]"}`} />
           <span className="text-[11px] text-[var(--text-tertiary)]">
             {running ? "Running" : "Stopped"}
           </span>
@@ -411,7 +411,7 @@ function ChannelsStatusCard() {
               className="inline-flex items-center gap-1.5 text-[11px] rounded-full border border-[var(--border-default)] px-2.5 py-1"
             >
               <span className={`h-1.5 w-1.5 rounded-full ${
-                ch.status === "connected" ? "bg-emerald-500" : "bg-[var(--text-tertiary)]"
+                ch.status === "connected" ? "bg-[var(--color-success)]" : "bg-[var(--text-tertiary)]"
               }`} />
               {ch.name}
             </span>

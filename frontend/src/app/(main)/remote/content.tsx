@@ -154,8 +154,8 @@ export function RemoteTabContent() {
 
       {/* Tunnel URL changed warning */}
       {tunnelChanged && status?.enabled && (
-        <div className="flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 animate-slide-up">
-          <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+        <div className="flex items-start gap-3 rounded-lg border border-[var(--color-warning)]/40 bg-[var(--color-warning)]/5 p-3 animate-slide-up">
+          <AlertTriangle className="h-4 w-4 text-[var(--color-warning)] shrink-0 mt-0.5" />
           <div className="flex-1">
             <p className="text-sm font-medium text-[var(--text-primary)]">{t("tunnelUrlChanged")}</p>
             <p className="text-xs text-[var(--text-secondary)] mt-0.5">
@@ -172,7 +172,7 @@ export function RemoteTabContent() {
       {/* Enable/Disable toggle */}
       <div className="flex items-center justify-between rounded-lg border border-[var(--border-default)] p-3">
         <div className="flex items-center gap-3">
-          {toggling ? <Loader2 className="h-4 w-4 animate-spin text-[var(--text-secondary)]" /> : status?.enabled ? <Wifi className="h-4 w-4 text-green-500" /> : <WifiOff className="h-4 w-4 text-[var(--text-tertiary)]" />}
+          {toggling ? <Loader2 className="h-4 w-4 animate-spin text-[var(--text-secondary)]" /> : status?.enabled ? <Wifi className="h-4 w-4 text-[var(--color-success)]" /> : <WifiOff className="h-4 w-4 text-[var(--text-tertiary)]" />}
           <div>
             <p className="text-sm font-medium text-[var(--text-primary)]">{toggling ? t("remoteStarting") : status?.enabled ? t("remoteActive") : t("remoteDisabled")}</p>
             {status?.enabled && status.tunnel_url && <p className="text-xs text-[var(--text-secondary)] truncate max-w-[280px]">{status.tunnel_url}</p>}
@@ -353,7 +353,7 @@ function ChannelsSection() {
       {/* Status indicator */}
       <div className="rounded-lg border border-[var(--border-default)] p-3">
         <div className="flex items-center gap-2">
-          <span className="h-2 w-2 rounded-full bg-emerald-500" />
+          <span className="h-2 w-2 rounded-full bg-[var(--color-success)]" />
           <span className="text-xs font-medium text-[var(--text-primary)]">Channel System</span>
           <span className="text-ui-3xs text-[var(--text-tertiary)]">
             Built-in &middot; {Object.keys(channels).length} active
@@ -368,13 +368,13 @@ function ChannelsSection() {
           const isExpanded = expandedPlatform === p.id;
           return (
             <div key={p.id} className={`rounded-lg border p-3 space-y-2 transition-colors ${
-              connected ? "border-emerald-500/30 bg-emerald-500/5" : "border-[var(--border-default)]"
+              connected ? "border-[var(--color-success)]/30 bg-[var(--color-success)]/5" : "border-[var(--border-default)]"
             } ${isExpanded ? "col-span-2" : ""}`}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className={p.color}>{p.icon}</span>
                   <span className="text-xs font-medium text-[var(--text-primary)]">{p.name}</span>
-                  {connected && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />}
+                  {connected && <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-success)]" />}
                 </div>
                 {!connected ? (
                   <Button variant="outline" size="sm" className="h-6 text-ui-3xs px-2"
@@ -467,7 +467,7 @@ function TokenForm({ platform, onDone }: { platform: PlatformDef; onDone: () => 
       )}
 
       {error && (
-        <p className="text-ui-2xs text-red-400">{error}</p>
+        <p className="text-ui-2xs text-[var(--color-destructive)]">{error}</p>
       )}
 
       <Button size="sm" className="h-7 text-ui-2xs w-full" onClick={handleSubmit}
@@ -551,7 +551,7 @@ function QrLoginFlow({ channel, onDone }: { channel: string; onDone: () => void 
   }, [channel, onDone, t]);
 
   if (error) {
-    return <p className="text-ui-2xs text-red-400 py-2">{error}</p>;
+    return <p className="text-ui-2xs text-[var(--color-destructive)] py-2">{error}</p>;
   }
 
   return (
@@ -602,7 +602,7 @@ function RemoveChannelButton({ channel, onRemoved }: { channel: string; onRemove
   };
 
   return (
-    <Button variant="outline" size="sm" className="h-6 text-ui-3xs px-2 text-red-400 border-red-400/30 hover:bg-red-400/10"
+    <Button variant="outline" size="sm" className="h-6 text-ui-3xs px-2 text-[var(--color-destructive)] border-[var(--color-destructive)]/30 hover:bg-[var(--color-destructive)]/10"
       disabled={removeChannel.isPending}
       onClick={handleRemove}>
       {removeChannel.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <><Unplug className="h-3 w-3" />{t("channelDisconnect")}</>}
