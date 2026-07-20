@@ -1154,6 +1154,22 @@ pre code {
     animation: none;
     -webkit-text-fill-color: var(--text-secondary);
   }
+
+  /* Functional loading indicators must keep indicating. WCAG reduced-motion
+     targets large/vestibular motion, not in-place status spinners — a frozen
+     spinner reads as a hung app. Restore each indicator's own timing (the
+     universal reset flattens duration to 0.01ms and iteration to 1). These
+     are Tailwind's built-in animate-spin (1s) and animate-pulse (2s); the
+     values are restated explicitly rather than via `revert`, which would roll
+     back past Tailwind's layer to the UA default of 0s and freeze them. */
+  .animate-spin {
+    animation-duration: 1s !important;
+    animation-iteration-count: infinite !important;
+  }
+  .animate-pulse {
+    animation-duration: 2s !important;
+    animation-iteration-count: infinite !important;
+  }
 }
 
 /* ─── Enter/exit animation utilities (P0 motion revival) ───
