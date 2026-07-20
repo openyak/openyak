@@ -13,11 +13,12 @@ interface KeyboardShortcutsOptions {
 }
 
 /**
- * Global keyboard shortcuts for the app
+ * Chat-scoped keyboard shortcuts. App-wide navigation bindings
+ * (sidebar, new chat, settings, session cycling) live in
+ * `use-global-shortcuts`, mounted once by the main layout.
  *
  * Shortcuts:
  * - Cmd/Ctrl + K: Toggle search command palette (handled globally by SearchCommandDialog)
- * - Cmd/Ctrl + Shift + K: New chat
  * - Esc: Stop generation
  * - Cmd/Ctrl + Shift + C: Copy last message
  */
@@ -52,13 +53,6 @@ export function useKeyboardShortcuts({
 
       // Don't process other shortcuts when typing
       if (isTyping) return;
-
-      // Cmd/Ctrl + Shift + K: New chat
-      if (modKey && e.shiftKey && (e.key === "k" || e.key === "K")) {
-        e.preventDefault();
-        router.push("/c/new");
-        return;
-      }
 
       // Cmd/Ctrl + Shift + C: Copy last message
       if (modKey && e.shiftKey && e.key === "C") {

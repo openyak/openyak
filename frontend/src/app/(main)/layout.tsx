@@ -34,6 +34,7 @@ import { useActivityStore } from "@/stores/activity-store";
 import { useArtifactStore } from "@/stores/artifact-store";
 import { IS_DESKTOP, TITLE_BAR_HEIGHT } from "@/lib/constants";
 import { useIsDesktop } from "@/hooks/use-is-desktop";
+import { useGlobalShortcuts } from "@/hooks/use-global-shortcuts";
 import { desktopAPI } from "@/lib/tauri-api";
 import { useTranslation } from "react-i18next";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
@@ -49,6 +50,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   const isMac = useIsMacOS();
   useAutoDetectProvider();
   useTraySync();
+  useGlobalShortcuts();
 
   const settingsHydrated = useSettingsHasHydrated();
 
