@@ -51,20 +51,6 @@ export const useActivityStore = create<ActivityStore>((set, get) => ({
   activeKey: null,
   activeData: null,
   openForMessage: (key, data) => {
-    // Mutual exclusion: close artifact panel when activity opens
-    try {
-      const { useArtifactStore } = require("@/stores/artifact-store");
-      useArtifactStore.getState().close();
-    } catch {
-      // Artifact store may not be available during SSR
-    }
-    // Mutual exclusion: close plan review panel
-    try {
-      const { usePlanReviewStore } = require("@/stores/plan-review-store");
-      usePlanReviewStore.getState().close();
-    } catch {
-      // Plan review store may not be available during SSR
-    }
     set({ isOpen: true, activeKey: key, activeData: data });
   },
   toggleForMessage: (key, data) => {
@@ -72,20 +58,6 @@ export const useActivityStore = create<ActivityStore>((set, get) => ({
     if (isOpen && activeKey === key) {
       set({ isOpen: false, activeKey: null });
     } else {
-      // Mutual exclusion: close artifact panel
-      try {
-        const { useArtifactStore } = require("@/stores/artifact-store");
-        useArtifactStore.getState().close();
-      } catch {
-        // Artifact store may not be available during SSR
-      }
-      // Mutual exclusion: close plan review panel
-      try {
-        const { usePlanReviewStore } = require("@/stores/plan-review-store");
-        usePlanReviewStore.getState().close();
-      } catch {
-        // Plan review store may not be available during SSR
-      }
       set({ isOpen: true, activeKey: key, activeData: data });
     }
   },

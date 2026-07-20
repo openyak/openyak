@@ -99,7 +99,6 @@
   "workspaceBrowse": "Browse",
   "workspaceClear": "Clear",
   "workspaceSet": "Set workspace",
-
   "analyzingRequest": "Analyzing your request...",
   "thoughtFor": "Thought for {{duration}}",
   "reasoning": "Reasoning",
@@ -111,12 +110,10 @@
   "showMore": "Show {{count}} more...",
   "done": "Done",
   "file": "file",
-
   "statusPending": "Pending",
   "statusRunning": "Running",
   "statusCompleted": "Completed",
   "statusError": "Error",
-
   "toolReading": "Reading {{name}}",
   "toolWriting": "Writing {{name}}",
   "toolEditing": "Editing {{name}}",
@@ -133,7 +130,6 @@
   "toolUpdated": "Updated {{name}}",
   "toolRewrote": "Rewrote {{name}}",
   "toolCreated": "Created {{name}}",
-
   "toolRead": "Read {{name}}",
   "toolWrite": "Write {{name}}",
   "toolEdit": "Edit {{name}}",
@@ -145,7 +141,6 @@
   "toolSubtask": "Subtask",
   "toolAskQuestionShort": "Asking question",
   "toolUpdateProgress": "Update progress",
-
   "preview": "Preview",
   "details": "Details",
   "result": "Result",
@@ -160,7 +155,6 @@
   "toolCallCount_one": "{{count}} tool call",
   "toolCallCount_other": "{{count}} tool calls",
   "moreItems": "+{{count}} more",
-
   "planReview": "Plan Review",
   "planReadyForReview": "Ready for review",
   "planAcceptPrompt": "Accept this plan?",
@@ -173,16 +167,18 @@
   "planFilesToModify": "Files to modify",
   "toolSubmittingPlan": "Submitting plan for review",
   "toolPlanSubmitted": "Plan submitted: {{title}}",
-
   "questionMultiHeader": "Agent has questions",
   "questionOther": "Other",
   "questionOtherPlaceholder": "Type your answer...",
   "questionSubmitAll": "Submit answers",
   "questionEscCancel": "Esc to cancel",
   "questionPreviewPlaceholder": "Select an option to see preview",
-
   "loadingModel": "Loading model into memory...",
   "setupProvider": "Choose a model source to start",
   "setupProviderDesc": "Use Rapid-MLX or Ollama locally, connect a local endpoint, or add your own provider key.",
-  "configureSettings": "Configure"
+  "configureSettings": "Configure",
+  "taskPanel": "Task panel",
+  "taskPanelArtifacts": "Artifacts",
+  "taskPanelActivity": "Activity",
+  "taskPanelWorkspace": "Workspace"
 }

@@ -99,7 +99,6 @@
   "workspaceBrowse": "浏览",
   "workspaceClear": "清除",
   "workspaceSet": "设置工作区",
-
   "analyzingRequest": "正在分析你的请求...",
   "thoughtFor": "思考了 {{duration}}",
   "reasoning": "推理",
@@ -111,12 +110,10 @@
   "showMore": "展开其余 {{count}} 条...",
   "done": "完成",
   "file": "文件",
-
   "statusPending": "等待中",
   "statusRunning": "运行中",
   "statusCompleted": "已完成",
   "statusError": "错误",
-
   "toolReading": "正在读取 {{name}}",
   "toolWriting": "正在写入 {{name}}",
   "toolEditing": "正在编辑 {{name}}",
@@ -133,7 +130,6 @@
   "toolUpdated": "已更新 {{name}}",
   "toolRewrote": "已重写 {{name}}",
   "toolCreated": "已创建 {{name}}",
-
   "toolRead": "读取 {{name}}",
   "toolWrite": "写入 {{name}}",
   "toolEdit": "编辑 {{name}}",
@@ -145,7 +141,6 @@
   "toolSubtask": "子任务",
   "toolAskQuestionShort": "正在提问",
   "toolUpdateProgress": "更新进度",
-
   "preview": "预览",
   "details": "详情",
   "result": "结果",
@@ -160,7 +155,6 @@
   "toolCallCount_one": "{{count}} 次工具调用",
   "toolCallCount_other": "{{count}} 次工具调用",
   "moreItems": "+{{count}} 更多",
-
   "planReview": "计划审查",
   "planReadyForReview": "等待审查",
   "planAcceptPrompt": "接受此计划？",
@@ -173,16 +167,18 @@
   "planFilesToModify": "待修改文件",
   "toolSubmittingPlan": "正在提交计划以供审查",
   "toolPlanSubmitted": "计划已提交：{{title}}",
-
   "questionMultiHeader": "AI 有几个问题",
   "questionOther": "其他",
   "questionOtherPlaceholder": "输入你的回答...",
   "questionSubmitAll": "提交回答",
   "questionEscCancel": "Esc 取消",
   "questionPreviewPlaceholder": "选择选项查看预览",
-
   "loadingModel": "正在加载模型到内存...",
   "setupProvider": "选择模型来源后开始对话",
   "setupProviderDesc": "优先使用 Rapid-MLX、Ollama 或本地 endpoint；需要云端模型时，再添加自己的 provider key。",
-  "configureSettings": "前往配置"
+  "configureSettings": "前往配置",
+  "taskPanel": "任务面板",
+  "taskPanelArtifacts": "产物",
+  "taskPanelActivity": "活动",
+  "taskPanelWorkspace": "工作区"
 }

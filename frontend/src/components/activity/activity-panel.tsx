@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   X,
   CheckCircle2,
@@ -23,8 +23,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { OpenYakLogo } from "@/components/ui/openyak-logo";
-import { IS_DESKTOP, TITLE_BAR_HEIGHT } from "@/lib/constants";
-import { useIsMacOS } from "@/hooks/use-platform";
+import { useIsDesktop } from "@/hooks/use-is-desktop";
 import {
   Sheet,
   SheetContent,
@@ -33,7 +32,6 @@ import {
 } from "@/components/ui/sheet";
 import * as VisuallyHidden from "@radix-ui/react-visually-hidden";
 import { useActivityStore, computeDuration, type ChainItem } from "@/stores/activity-store";
-import { ACTIVITY_PANEL_WIDTH } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { extractSourcesFromTool } from "@/lib/sources";
 import type { ToolPart, StepFinishPart } from "@/types/message";
@@ -315,19 +313,7 @@ function ToolRow({ tool }: { tool: ToolPart }) {
 
 // -- Main panel content --
 
-function useIsDesktop() {
-  const [isDesktop, setIsDesktop] = useState(false);
-  useEffect(() => {
-    const mq = window.matchMedia("(min-width: 1024px)");
-    const onChange = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
-    setIsDesktop(mq.matches);
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, []);
-  return isDesktop;
-}
-
-function ActivityPanelContent() {
+export function ActivityPanelContent() {
   const { t } = useTranslation("chat");
   const activeData = useActivityStore((s) => s.activeData);
   const close = useActivityStore((s) => s.close);
@@ -460,29 +446,17 @@ function ActivityPanelContent() {
   );
 }
 
+/**
+ * Mobile-only activity sheet. On desktop the timeline renders as a section of
+ * the unified task panel.
+ */
 export function ActivityPanel() {
   const { t } = useTranslation("chat");
   const isOpen = useActivityStore((s) => s.isOpen);
   const close = useActivityStore((s) => s.close);
   const isDesktop = useIsDesktop();
-  const isMac = useIsMacOS();
-  const topOffset = IS_DESKTOP && !isMac ? TITLE_BAR_HEIGHT : 0;
 
-  // Desktop: fixed right panel with smooth mount/unmount
-  if (isDesktop) {
-    return (
-      <motion.aside
-        className="fixed inset-y-0 right-0 z-[35] flex flex-col bg-[var(--surface-primary)] overflow-hidden"
-        style={{ width: ACTIVITY_PANEL_WIDTH, top: topOffset }}
-        initial={{ x: "100%" }}
-        animate={{ x: 0 }}
-        exit={{ x: "100%" }}
-        transition={{ type: "spring", damping: 30, stiffness: 300 }}
-      >
-        <ActivityPanelContent />
-      </motion.aside>
-    );
-  }
+  if (isDesktop) return null;
 
   // Mobile: Sheet overlay from right
   return (

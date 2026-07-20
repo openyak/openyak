@@ -11,7 +11,11 @@ import { MobileNav } from "@/components/layout/mobile-nav";
 import { ActivityPanel } from "@/components/activity/activity-panel";
 import { ArtifactPanel } from "@/components/artifacts/artifact-panel";
 import { PlanReviewPanel } from "@/components/plan-review/plan-review-panel";
-import { WorkspacePanel } from "@/components/workspace/workspace-panel";
+import {
+  TaskPanel,
+  useTaskPanelOpen,
+  useTaskPanelWidth,
+} from "@/components/task-panel/task-panel";
 import { usePlanReviewStore } from "@/stores/plan-review-store";
 import { SplashScreen } from "@/components/layout/splash-screen";
 import { TitleBar } from "@/components/desktop/title-bar";
@@ -28,28 +32,11 @@ import { useIsMacOS } from "@/hooks/use-platform";
 import { useTraySync } from "@/hooks/use-tray-sync";
 import { useActivityStore } from "@/stores/activity-store";
 import { useArtifactStore } from "@/stores/artifact-store";
-import { useWorkspaceStore } from "@/stores/workspace-store";
-import {
-  ACTIVITY_PANEL_WIDTH,
-  WORKSPACE_PANEL_WIDTH,
-  IS_DESKTOP,
-  TITLE_BAR_HEIGHT,
-} from "@/lib/constants";
+import { IS_DESKTOP, TITLE_BAR_HEIGHT } from "@/lib/constants";
+import { useIsDesktop } from "@/hooks/use-is-desktop";
 import { desktopAPI } from "@/lib/tauri-api";
 import { useTranslation } from "react-i18next";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
-
-function useIsDesktop() {
-  const [isDesktop, setIsDesktop] = useState(false);
-  useEffect(() => {
-    const mq = window.matchMedia("(min-width: 1024px)");
-    const onChange = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
-    setIsDesktop(mq.matches);
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, []);
-  return isDesktop;
-}
 
 export default function MainLayout({ children }: { children: React.ReactNode }) {
   const { t } = useTranslation("common");
@@ -58,12 +45,6 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   const isCollapsed = useSidebarStore((s) => s.isCollapsed);
   const toggleSidebar = useSidebarStore((s) => s.toggle);
   const sidebarWidth = useSidebarStore((s) => s.width);
-  const activityIsOpen = useActivityStore((s) => s.isOpen);
-  const artifactIsOpen = useArtifactStore((s) => s.isOpen);
-  const workspaceIsOpen = useWorkspaceStore((s) => s.isOpen);
-  const artifactWidth = useArtifactStore((s) => s.panelWidth);
-  const planReviewIsOpen = usePlanReviewStore((s) => s.isOpen);
-  const planReviewWidth = usePlanReviewStore((s) => s.panelWidth);
   const isDesktop = useIsDesktop();
   const isMac = useIsMacOS();
   useAutoDetectProvider();
@@ -155,17 +136,9 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   // Settings replaces the sidebar with its own; always keep the gutter.
   const marginLeft =
     isDesktop && (isSettingsPage || !isCollapsed) ? sidebarWidth : 0;
-  const showWorkspace = isDesktop && isActiveChat && workspaceIsOpen;
-  const overlayWidth = artifactIsOpen
-    ? artifactWidth
-    : planReviewIsOpen
-      ? planReviewWidth
-      : activityIsOpen
-        ? ACTIVITY_PANEL_WIDTH
-        : 0;
-  const marginRight = isDesktop
-    ? Math.max(showWorkspace ? WORKSPACE_PANEL_WIDTH : 0, overlayWidth)
-    : 0;
+  const taskPanelOpen = useTaskPanelOpen(isActiveChat);
+  const taskPanelWidth = useTaskPanelWidth();
+  const marginRight = isDesktop && taskPanelOpen ? taskPanelWidth : 0;
 
   // macOS uses native traffic lights overlay — page headers extend to the top.
   // Windows/Linux keep the custom title bar as a real 32px row.
@@ -282,16 +255,18 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
         {children}
       </motion.main>
 
-      {/* Workspace panel — only on active chat sessions */}
-      {showWorkspace && <WorkspacePanel />}
-
-      {/* Overlay panels (mutually exclusive, z-35) - cover workspace when open */}
+      {/* Unified right-hand task panel (desktop). Sections: pending plan
+          (pinned), artifact preview, activity timeline, workspace cards. */}
       <ErrorBoundary>
-        <AnimatePresence mode="wait">
-          {activityIsOpen && <ActivityPanel key="activity" />}
-          {artifactIsOpen && <ArtifactPanel key="artifact" />}
-          {planReviewIsOpen && <PlanReviewPanel key="plan-review" />}
+        <AnimatePresence>
+          {isDesktop && taskPanelOpen && (
+            <TaskPanel key="task-panel" isActiveChat={isActiveChat} />
+          )}
         </AnimatePresence>
+        {/* Mobile keeps the per-surface sheets (each renders null on desktop). */}
+        <ActivityPanel />
+        <ArtifactPanel />
+        <PlanReviewPanel />
       </ErrorBoundary>
 
     </div>

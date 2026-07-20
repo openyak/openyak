@@ -1,13 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { motion } from "framer-motion";
 import { X, ClipboardList, FileCode2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useTranslation } from "react-i18next";
-import { IS_DESKTOP, TITLE_BAR_HEIGHT } from "@/lib/constants";
-import { useIsMacOS } from "@/hooks/use-platform";
+import { useIsDesktop } from "@/hooks/use-is-desktop";
 import {
   Sheet,
   SheetContent,
@@ -17,20 +14,8 @@ import {
 import * as VisuallyHidden from "@radix-ui/react-visually-hidden";
 import { usePlanReviewStore } from "@/stores/plan-review-store";
 
-function useIsDesktop() {
-  const [isDesktop, setIsDesktop] = useState(false);
-  useEffect(() => {
-    const mq = window.matchMedia("(min-width: 1024px)");
-    const onChange = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
-    setIsDesktop(mq.matches);
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, []);
-  return isDesktop;
-}
-
 /** Read-only plan content viewer */
-function PlanReviewContent() {
+export function PlanReviewContent() {
   const { t } = useTranslation("chat");
   const planData = usePlanReviewStore((s) => s.planData);
 
@@ -98,37 +83,16 @@ function PlanReviewContent() {
   );
 }
 
+/**
+ * Mobile-only plan-review sheet. On desktop the pending plan renders as the
+ * pinned top section of the unified task panel.
+ */
 export function PlanReviewPanel() {
   const isOpen = usePlanReviewStore((s) => s.isOpen);
   const close = usePlanReviewStore((s) => s.close);
-  const panelWidth = usePlanReviewStore((s) => s.panelWidth);
-  const updateWidth = usePlanReviewStore((s) => s.updateWidth);
   const isDesktop = useIsDesktop();
-  const isMac = useIsMacOS();
-  const topOffset = IS_DESKTOP && !isMac ? TITLE_BAR_HEIGHT : 0;
 
-  // Keep panel width in sync with viewport on resize
-  useEffect(() => {
-    const handler = () => updateWidth();
-    window.addEventListener("resize", handler);
-    return () => window.removeEventListener("resize", handler);
-  }, [updateWidth]);
-
-  // Desktop: fixed right panel — 50% viewport
-  if (isDesktop) {
-    return (
-      <motion.aside
-        className="fixed inset-y-0 right-0 z-[35] flex flex-col bg-[var(--surface-primary)] border-l border-[var(--border-default)] overflow-hidden"
-        style={{ width: panelWidth, top: topOffset }}
-        initial={{ x: "100%" }}
-        animate={{ x: 0 }}
-        exit={{ x: "100%" }}
-        transition={{ type: "spring", damping: 30, stiffness: 300 }}
-      >
-        <PlanReviewContent />
-      </motion.aside>
-    );
-  }
+  if (isDesktop) return null;
 
   // Mobile: Sheet overlay from right
   return (
