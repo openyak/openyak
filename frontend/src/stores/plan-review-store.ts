@@ -26,19 +26,6 @@ export const usePlanReviewStore = create<PlanReviewStore>((set) => ({
   panelWidth: getHalfViewport(),
 
   openReview: (data) => {
-    // Mutual exclusion: close artifact and activity panels
-    try {
-      const { useArtifactStore } = require("@/stores/artifact-store");
-      useArtifactStore.getState().close();
-    } catch {
-      // May not be available during SSR
-    }
-    try {
-      const { useActivityStore } = require("@/stores/activity-store");
-      useActivityStore.getState().close();
-    } catch {
-      // May not be available during SSR
-    }
     set({ isOpen: true, planData: data, panelWidth: getHalfViewport() });
   },
 

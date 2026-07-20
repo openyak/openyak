@@ -2,28 +2,6 @@
 
 import { create } from "zustand";
 
-/** Close overlay panels (activity/artifact/plan-review) when workspace opens. */
-function closeOverlayPanels() {
-  try {
-    const { useActivityStore } = require("@/stores/activity-store");
-    useActivityStore.getState().close();
-  } catch {
-    // store may not be available during SSR
-  }
-  try {
-    const { useArtifactStore } = require("@/stores/artifact-store");
-    useArtifactStore.getState().close();
-  } catch {
-    // store may not be available during SSR
-  }
-  try {
-    const { usePlanReviewStore } = require("@/stores/plan-review-store");
-    usePlanReviewStore.getState().close();
-  } catch {
-    // store may not be available during SSR
-  }
-}
-
 export interface WorkspaceTodo {
   content: string;
   status: "pending" | "in_progress" | "completed";
@@ -94,11 +72,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
 
   toggle: () => {
     const willOpen = !get().isOpen;
-    if (willOpen) closeOverlayPanels();
     set({ isOpen: willOpen });
   },
   open: () => {
-    closeOverlayPanels();
     set({ isOpen: true });
   },
   close: () => set({ isOpen: false }),

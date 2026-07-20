@@ -54,19 +54,7 @@ export const useArtifactStore = create<ArtifactStore>((set, get) => ({
 
   openArtifact: (artifact) => {
     // Close the activity panel (mutual exclusion)
-    try {
-      const { useActivityStore } = require("@/stores/activity-store");
-      useActivityStore.getState().close();
-    } catch {
-      // Activity store may not be available during SSR
-    }
     // Close the plan review panel (mutual exclusion)
-    try {
-      const { usePlanReviewStore } = require("@/stores/plan-review-store");
-      usePlanReviewStore.getState().close();
-    } catch {
-      // Plan review store may not be available during SSR
-    }
 
     // Auto-size panel: 40% when sidebar is open, 50% when collapsed
     if (typeof window !== "undefined" && !get().isOpen) {
