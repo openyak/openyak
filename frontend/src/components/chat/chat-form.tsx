@@ -10,6 +10,13 @@ import { ChatActions } from "./chat-actions";
 import { WorkspaceToggle } from "./workspace-toggle";
 import { FileChip } from "./file-chip";
 import { FileMentionPopup } from "./file-mention-popup";
+import {
+  SlashCommandPopup,
+  SlashIcons,
+  type SlashCommand,
+} from "./slash-command-popup";
+import { useRouter } from "next/navigation";
+import { useSidebarStore } from "@/stores/sidebar-store";
 import { useAutoResize } from "@/hooks/use-auto-resize";
 import { uploadFile, browseFiles, attachByPath, ingestFiles } from "@/lib/upload";
 import type { FileSearchResult } from "@/lib/upload";
@@ -220,6 +227,21 @@ function detectMention(
   return { active: true, query, startIndex: atIndex };
 }
 
+/**
+ * A slash command is active only when the composer starts with "/" and the
+ * cursor is still inside that first token — so a "/" mid-sentence (a path, a
+ * fraction) never triggers it. Returns the text typed after the slash.
+ */
+function detectSlash(
+  text: string,
+  cursorPos: number,
+): { active: true; query: string } | { active: false } {
+  if (!text.startsWith("/")) return { active: false };
+  const firstToken = text.slice(0, cursorPos);
+  if (/\s/.test(firstToken)) return { active: false };
+  return { active: true, query: text.slice(1, cursorPos) };
+}
+
 export function ChatForm({ isGenerating, isCompacting = false, onSend, onSendTaskBatch, onStop, className, sessionId, directory }: ChatFormProps) {
   const { t } = useTranslation('chat');
   const [input, setInput] = useState("");
@@ -285,6 +307,9 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onSendTas
   // @mention state
   const [mentionActive, setMentionActive] = useState(false);
   const [mentionQuery, setMentionQuery] = useState("");
+  // Slash-command state
+  const [slashActive, setSlashActive] = useState(false);
+  const [slashQuery, setSlashQuery] = useState("");
   const [mentionStartIndex, setMentionStartIndex] = useState(-1);
 
   const hasWorkspace = !!directory && directory !== ".";
@@ -605,6 +630,62 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onSendTas
     setMentionActive(false);
   }, []);
 
+  // --- Slash commands ---
+  const router = useRouter();
+  const setSearchModalOpen = useSidebarStore((s) => s.setSearchModalOpen);
+  const setWorkModeForSlash = useSettingsStore((s) => s.setWorkMode);
+  const isMacForSlash =
+    typeof navigator !== "undefined" &&
+    navigator.platform.toUpperCase().includes("MAC");
+  const mod = isMacForSlash ? "⌘" : "Ctrl";
+
+  const slashCommands = useMemo<SlashCommand[]>(
+    () => [
+      {
+        id: "new",
+        label: t("slashNewChat"),
+        icon: SlashIcons.newChat,
+        shortcut: `${mod}N`,
+        run: () => router.push("/c/new"),
+      },
+      {
+        id: "plan",
+        label: t("slashPlanMode"),
+        hint: t("slashPlanModeHint"),
+        icon: SlashIcons.plan,
+        run: () => setWorkModeForSlash("plan"),
+      },
+      {
+        id: "search",
+        label: t("slashSearch"),
+        icon: SlashIcons.search,
+        shortcut: `${mod}K`,
+        run: () => setSearchModalOpen(true),
+      },
+      {
+        id: "settings",
+        label: t("slashSettings"),
+        icon: SlashIcons.settings,
+        shortcut: `${mod},`,
+        run: () => router.push("/settings"),
+      },
+    ],
+    [t, mod, router, setSearchModalOpen, setWorkModeForSlash],
+  );
+
+  const handleSlashRun = useCallback(
+    (command: SlashCommand) => {
+      // "/" is a command trigger, not message text — clear it before acting.
+      setInput("");
+      setSlashActive(false);
+      resize();
+      command.run();
+    },
+    [resize],
+  );
+
+  const handleSlashClose = useCallback(() => setSlashActive(false), []);
+
   // Handle input changes — detect @mention trigger
   const handleInputChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -612,6 +693,16 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onSendTas
       const cursorPos = e.target.selectionStart ?? value.length;
       setInput(value);
       resize();
+
+      const slash = detectSlash(value, cursorPos);
+      if (slash.active) {
+        setSlashActive(true);
+        setSlashQuery(slash.query);
+        if (mentionActive) setMentionActive(false);
+        return;
+      } else if (slashActive) {
+        setSlashActive(false);
+      }
 
       if (!hasWorkspace) {
         if (mentionActive) setMentionActive(false);
@@ -627,7 +718,7 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onSendTas
         if (mentionActive) setMentionActive(false);
       }
     },
-    [hasWorkspace, mentionActive, resize],
+    [hasWorkspace, mentionActive, slashActive, resize],
   );
 
   // Also check mention state on cursor movement (click, arrow keys)
@@ -636,6 +727,15 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onSendTas
       if (!hasWorkspace) return;
       const textarea = e.currentTarget;
       const cursorPos = textarea.selectionStart ?? 0;
+      const slash = detectSlash(textarea.value, cursorPos);
+      if (slash.active) {
+        setSlashActive(true);
+        setSlashQuery(slash.query);
+        if (mentionActive) setMentionActive(false);
+        return;
+      } else if (slashActive) {
+        setSlashActive(false);
+      }
       const mention = detectMention(textarea.value, cursorPos);
       if (mention.active) {
         setMentionActive(true);
@@ -645,7 +745,7 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onSendTas
         if (mentionActive) setMentionActive(false);
       }
     },
-    [hasWorkspace, mentionActive],
+    [hasWorkspace, mentionActive, slashActive],
   );
 
   // Watch for "Try fixing" requests from artifact renderers
@@ -711,6 +811,15 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onSendTas
             />
           )}
 
+          {/* Slash-command popup — positioned above the form */}
+          <SlashCommandPopup
+            query={slashQuery}
+            visible={slashActive}
+            commands={slashCommands}
+            onRun={handleSlashRun}
+            onClose={handleSlashClose}
+          />
+
           {/* Inner panel — lighter pill holding textarea + action bar.
               Fully rounded so the bottom corners curve inward, letting the
               darker outer frame the pill on all sides. */}
@@ -750,7 +859,7 @@ export function ChatForm({ isGenerating, isCompacting = false, onSend, onSendTas
               onPaste={handlePaste}
               onSelect={handleSelect}
               onSubmit={handleSend}
-              mentionActive={mentionActive}
+              mentionActive={mentionActive || slashActive}
               placeholder={noModelsAvailable ? t('noModelPlaceholder') : hasWorkspace ? t('placeholder') + t('placeholderMention') : t('placeholder')}
               className="min-h-[28px] max-h-[200px] py-1"
               disabled={isInputDisabled}
