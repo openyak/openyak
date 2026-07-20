@@ -29,16 +29,22 @@ async function sendPrompt(page: Page, text: string) {
   await promptResponse;
 }
 
-async function seedByokProvider(page: Page) {
+/**
+ * Seed the custom-endpoint bucket. Custom OpenAI-compatible endpoints are a
+ * provider bucket of their own (see src/lib/providers.ts) — they are
+ * deliberately NOT surfaced under "byok", so a test that switches to a
+ * custom-endpoint model has to start in this bucket.
+ */
+async function seedCustomEndpointProvider(page: Page) {
   await page.addInitScript(() => {
     const raw = window.localStorage.getItem("openyak-settings");
     const settings = raw ? JSON.parse(raw) : { state: {}, version: 0 };
     settings.state = {
       ...settings.state,
       hasCompletedOnboarding: true,
-      activeProvider: "byok",
-      selectedModel: "openrouter/anthropic/claude-sonnet-4.5",
-      selectedProviderId: "openrouter",
+      activeProvider: "custom",
+      selectedModel: "local/qwen3-coder",
+      selectedProviderId: "local",
     };
     window.localStorage.setItem("openyak-settings", JSON.stringify(settings));
   });
@@ -102,11 +108,11 @@ test.describe("OpenYak deep claimed-feature GUI surfaces", () => {
 
   test("model selector workflow: search, sort modes, model switch, and send payload stay aligned", async ({ page }) => {
     const state = await setupMockedApp(page);
-    await seedByokProvider(page);
+    await seedCustomEndpointProvider(page);
 
     await page.goto("/c/new");
-    await expect(page.getByRole("button", { name: /Claude Sonnet 4\.5/i })).toBeVisible();
-    await page.getByRole("button", { name: /Claude Sonnet 4\.5/i }).click();
+    await expect(page.getByRole("button", { name: /Qwen3 Coder Local/i })).toBeVisible();
+    await page.getByRole("button", { name: /Qwen3 Coder Local/i }).click();
     await expect(page.getByPlaceholder("Search models...")).toBeVisible();
 
     await page.getByRole("button", { name: /^Price$/i }).click();

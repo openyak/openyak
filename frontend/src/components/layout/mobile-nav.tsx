@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarHeader } from "./sidebar-header";
-import { SidebarNav } from "./sidebar-nav";
 import { SessionList } from "./session-list";
 import { SidebarFooter } from "./sidebar-footer";
 import { useSidebarStore } from "@/stores/sidebar-store";
@@ -37,7 +36,6 @@ export function MobileNav() {
         <TooltipProvider delayDuration={200}>
           <div className="flex flex-col h-full">
             <SidebarHeader />
-            <SidebarNav />
             <SessionList />
             <SidebarFooter />
           </div>

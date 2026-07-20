@@ -91,5 +91,7 @@
   "modelsUnavailableHint": "请检查服务商连接、防火墙或 VPN 设置。",
   "setupProvider": "配置服务商",
   "setUpProvider": "配置服务商",
-  "apiKey": "API 密钥"
+  "apiKey": "API 密钥",
+  "sessionNeedsApproval": "等待你的批准",
+  "sessionNeedsAnswer": "等待你的回答"
 }

@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Archive, EllipsisVertical, Loader2, MessageCircle, Pin, PinOff } from "lucide-react";
+import { Archive, CircleAlert, EllipsisVertical, Loader2, MessageCircle, Pin, PinOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { API, queryKeys } from "@/lib/constants";
@@ -84,6 +84,10 @@ export const SessionItem = memo(function SessionItem({
   // attached, including ones the user navigated away from.
   const liveBucket = useChatSession(session.id);
   const isLive = liveBucket.isGenerating || liveBucket.isCompacting;
+  // A background run that has stopped to ask the user something. Without this
+  // the row just goes quiet — the run looks finished when it is actually
+  // blocked, which is the whole failure mode of unattended automation.
+  const needsInput = !!liveBucket.pendingPermission || !!liveBucket.pendingQuestion;
   const hasDirectory = !!session.directory && session.directory !== ".";
   const deeplink = `openyak://chat?sessionId=${encodeURIComponent(session.id)}`;
   const pinLabel = session.is_pinned
@@ -366,12 +370,21 @@ export const SessionItem = memo(function SessionItem({
                   >
                     {title}
                   </span>
-                  {isLive && (
+                  {needsInput ? (
+                    <CircleAlert
+                      aria-label={
+                        liveBucket.pendingPermission
+                          ? t('sessionNeedsApproval', { defaultValue: 'Waiting for your approval' })
+                          : t('sessionNeedsAnswer', { defaultValue: 'Waiting for your answer' })
+                      }
+                      className="h-3 w-3 shrink-0 text-[var(--color-warning)]"
+                    />
+                  ) : isLive ? (
                     <Loader2
                       aria-label={t('sessionIsGenerating', { defaultValue: 'Generating in background' })}
                       className="h-3 w-3 shrink-0 animate-spin text-[var(--brand-primary)]"
                     />
-                  )}
+                  ) : null}
                 </p>
                 {snippet && (
                   <p className="mt-0.5 truncate text-ui-2xs leading-4 text-[var(--text-tertiary)]">

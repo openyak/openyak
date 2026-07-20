@@ -140,11 +140,21 @@ test.describe("OpenYak natural office GUI workflows", () => {
 
     await startOfficeWorkflow(page, [files.budgetSheet], prompt);
 
-    await expect(mainContent(page).getByText("Finance review").last()).toBeVisible({ timeout: 20_000 });
-    await expect(mainContent(page).getByText("Budget vs actuals").last()).toBeVisible();
-    await expect(mainContent(page).getByText("Biggest variance").last()).toBeVisible();
-    await expect(mainContent(page).getByText("Forecast").last()).toBeVisible();
-    await expect(mainContent(page).getByText("Owner questions").last()).toBeVisible();
+    // The Finance answer is rendered as a markdown table (see `naturalOfficeResponses.budget`
+    // in tests/ui/fixtures/openyak-api.ts). The prose-heading form this test used to assert
+    // ("Budget vs actuals" / "Biggest variance" / "Owner questions") was replaced in e76d3a8;
+    // openyak-readme-media-light.spec.ts:175 pins the current "Finance workbook review"
+    // heading and the README screenshots were regenerated from it, so the table is the
+    // intended shape. None of the strings below appear in the user prompt, so they can only
+    // be satisfied by the assistant answer itself.
+    await expect(mainContent(page).getByText("Finance workbook review").last()).toBeVisible({ timeout: 20_000 });
+    await expect(mainContent(page).getByText("Actual / forecast signal").last()).toBeVisible();
+    await expect(mainContent(page).getByText("Variance call").last()).toBeVisible();
+    await expect(mainContent(page).getByText("Owner question").last()).toBeVisible();
+    // The biggest variance line item, with its magnitude.
+    await expect(mainContent(page).getByText("Support contractors").last()).toBeVisible();
+    await expect(mainContent(page).getByText("18% over").last()).toBeVisible();
+    await expect(mainContent(page).getByText("Finance recommendation").last()).toBeVisible();
     expect(state.fileUploads).toEqual(["budget-review.xlsx"]);
     expect(JSON.stringify(state.promptBodies[0])).toContain(prompt);
     await expectNoAppCrash(page);
