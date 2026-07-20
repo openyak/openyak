@@ -147,9 +147,18 @@ OpenYak 可以在同一个线程里综合多份文件，并在右侧 artifact pa
 | Kimi | BYOK | Moonshot 模型 |
 | MiniMax | BYOK | 直连提供商密钥 |
 | 智谱 | BYOK | 直连提供商密钥 |
+| Together AI | BYOK | 直连提供商密钥 |
+| DeepInfra | BYOK | 直连提供商密钥 |
+| Cerebras | BYOK | 高速托管推理 |
+| Cohere | BYOK | Command 模型 |
+| Perplexity | BYOK | Sonar 模型 |
+| Fireworks AI | BYOK | 直连提供商密钥 |
+| Azure OpenAI | BYOK | 使用自己的 Azure 部署 |
+| SiliconFlow | BYOK | 直连提供商密钥 |
+| Xiaomi MiMo | BYOK | 直连提供商密钥 |
 | ChatGPT | 订阅 | 在可用时使用现有 ChatGPT Plus、Pro、Team 或 Enterprise 方案 |
 
-云端和订阅路径都是可选项。OpenYak 不提供内置模型账号，也不代理模型流量；请求会从你的桌面端直接发往你配置的 provider。
+未列入上表的 provider，仍可通过自定义 OpenAI 兼容端点接入。云端和订阅路径都是可选项。OpenYak 不提供内置模型账号，也不代理模型流量；请求会从你的桌面端直接发往你配置的 provider。
 
 ## 核心能力
 
