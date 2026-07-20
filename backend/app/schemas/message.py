@@ -153,6 +153,10 @@ class MessageResponse(BaseModel):
     session_id: str
     time_created: datetime
     data: dict[str, Any]
+    # Set when context collapse dropped this message from the prompt. The
+    # message is still part of the transcript — clients may render it dimmed
+    # or behind a "collapsed" marker, but must keep showing it.
+    collapsed_at: datetime | None = None
     parts: list[PartResponse] = []
 
     model_config = {"from_attributes": True}

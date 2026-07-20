@@ -150,6 +150,9 @@ export interface MessageResponse {
   session_id: string;
   time_created: string;
   data: MessageInfo;
+  /** Set when context collapse dropped this message from the prompt. The
+   * message remains part of the transcript and must still be rendered. */
+  collapsed_at?: string | null;
   parts: PartResponse[];
 }
 

@@ -12,11 +12,12 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import selectinload
 
 from app.agent.agent import AgentRegistry
 from app.agent.permission import (
@@ -574,26 +575,21 @@ class SessionPrompt:
         """
         from app.session.compaction import run_compaction
         from app.session.manager import get_message_history_for_llm
-        from app.session.microcompact import context_collapse
 
         # --- Layer 3: Try context collapse first (zero LLM cost) ---
         # Drop the oldest 1/3 of messages. If that frees enough tokens,
-        # skip the expensive LLM-based full compaction.
+        # skip the expensive LLM-based full compaction. The persistence layer
+        # is the single authority on which rows collapse, so the gate reads
+        # the tokens it actually freed — no separate LLM-side selection that
+        # could disagree with what got persisted.
         skip_full_compaction = False
         if not self._context_collapse_exhausted:
             try:
-                async with self.session_factory() as db:
-                    async with db.begin():
-                        collapse_msgs = await get_message_history_for_llm(
-                            db, self.job.session_id
-                        )
-                collapsed, tokens_saved = context_collapse(collapse_msgs)
+                tokens_saved = await _persist_context_collapse(
+                    self.job.session_id,
+                    session_factory=self.session_factory,
+                )
                 if tokens_saved > 0:
-                    await _persist_context_collapse(
-                        self.job.session_id,
-                        collapsed,
-                        session_factory=self.session_factory,
-                    )
                     logger.info(
                         "Context collapse freed ~%d tokens, "
                         "skipping full compaction",
@@ -931,65 +927,141 @@ class SessionPrompt:
         )
 
 
+def _collapsed_row_stats(rows: list[Message]) -> tuple[int, int, int, int]:
+    """(tokens_saved, users, assistants, tool_results) for collapsed rows.
+
+    Derived from the *stored* rows that are actually being collapsed so the
+    gate decision, the logged token count, and the user-visible boundary text
+    all describe the same trim. Counts mirror how ``get_message_history_for_llm``
+    expands a row: one entry per user/assistant row, plus one ``tool`` result
+    per tool part.
+    """
+    from app.utils.token import estimate_tokens
+
+    users = assistants = tool_results = 0
+    tokens = 0
+    for msg in rows:
+        role = str((msg.data or {}).get("role", "user"))
+        if role == "user":
+            users += 1
+        elif role == "assistant":
+            assistants += 1
+        for part in msg.parts:
+            pdata = part.data or {}
+            ptype = pdata.get("type")
+            if ptype == "text":
+                tokens += estimate_tokens(str(pdata.get("text", "")))
+            elif ptype == "reasoning":
+                tokens += estimate_tokens(str(pdata.get("text", "")))
+            elif ptype == "tool":
+                tool_results += 1
+                state = pdata.get("state", {}) or {}
+                tokens += estimate_tokens(str(state.get("input", "")))
+                tokens += estimate_tokens(str(state.get("output", "")))
+    return tokens, users, assistants, tool_results
+
+
 async def _persist_context_collapse(
     session_id: str,
-    collapsed_messages: list[dict[str, Any]],
     *,
     session_factory: async_sessionmaker[AsyncSession],
-) -> None:
-    """Persist context collapse by deleting old messages and inserting a boundary.
+) -> int:
+    """Collapse the oldest prompt-visible rows; return tokens freed.
 
-    The first message in ``collapsed_messages`` is expected to be the
-    synthetic boundary marker from ``context_collapse()``.
+    The trim is a *stored event*, not data loss: the collapsed Messages keep
+    their rows (and Parts) so the transcript stays viewable and export-safe,
+    and are merely stamped with ``collapsed_at`` so prompt assembly skips
+    them. See docs/adr/0005-compaction-is-a-persistent-part.md.
+
+    This function is the single authority on *which* rows collapse. The row
+    selection cannot be aligned by counting against the LLM-formatted history,
+    because one Message can expand into several LLM messages (an assistant turn
+    plus one entry per tool result). So the boundary text, the ``tokens_saved``
+    gate, and the logged counts are all derived here from the rows actually
+    collapsed — never from a separately-computed LLM-side list — otherwise the
+    gate could fire on a different set than the one persisted and the
+    user-visible numbers could disagree with reality.
+
+    Returns the estimated tokens freed (0 when nothing was collapsed).
     """
-    if not collapsed_messages:
-        return
-
-    boundary = collapsed_messages[0]
+    from app.session.manager import collapsible_messages
+    from app.session.microcompact import (
+        format_collapse_boundary,
+        select_collapse_boundary,
+    )
 
     async with session_factory() as db:
         async with db.begin():
-            # Get all existing messages ordered by time
+            # Get all existing messages ordered by time (id breaks ties so
+            # same-timestamp inserts order deterministically — ULIDs are
+            # monotonic by creation).
             stmt = (
                 select(Message)
                 .where(Message.session_id == session_id)
-                .order_by(Message.time_created.asc())
+                .options(selectinload(Message.parts))
+                .order_by(Message.time_created.asc(), Message.id.asc())
             )
             result = await db.execute(stmt)
             db_messages = list(result.scalars().all())
 
-            if not db_messages:
-                return
+            # Candidates are the prompt-visible rows minus the compaction
+            # anchor: already-collapsed rows stay collapsed, anything before
+            # the newest summary is already excluded by the anchor, and the
+            # anchor summary itself must NEVER collapse (collapsing it would
+            # make the anchor point at a hidden row and drop the summary — and
+            # all the history it stands for — from the prompt).
+            candidates = collapsible_messages(db_messages)
+            if not candidates:
+                return 0
 
-            # Calculate how many DB messages to delete.
-            # collapsed_messages = [boundary_marker] + kept_messages
-            # Original had len(db_messages) messages total.
-            # kept_messages count = len(collapsed_messages) - 1 (boundary marker)
-            kept_count = len(collapsed_messages) - 1
-            delete_count = len(db_messages) - kept_count
-            if delete_count <= 0:
-                return
+            cut = select_collapse_boundary(
+                [str((m.data or {}).get("role", "user")) for m in candidates]
+            )
+            if cut <= 0:
+                return 0
 
-            # Delete the oldest messages (and their parts via cascade)
-            for msg in db_messages[:delete_count]:
-                await db.delete(msg)
+            collapsed_rows = candidates[:cut]
+            tokens_saved, users, assistants, tool_results = _collapsed_row_stats(
+                collapsed_rows
+            )
 
-            # Insert the boundary marker as a synthetic user message
-            if boundary.get("content"):
-                boundary_msg = Message(
-                    session_id=session_id,
-                    data={"role": "user", "agent": "system", "system": True},
-                )
-                db.add(boundary_msg)
-                await db.flush()
+            now = datetime.now(timezone.utc)
+            for msg in collapsed_rows:
+                msg.collapsed_at = now
 
-                boundary_part = Part(
-                    message_id=boundary_msg.id,
-                    session_id=session_id,
-                    data={
-                        "type": "text",
-                        "text": boundary["content"],
-                        "synthetic": True,
-                    },
-                )
-                db.add(boundary_part)
+            # Insert the boundary marker as a synthetic user message, dated
+            # just before the oldest surviving message so it renders (and
+            # replays) at the point where the trim happened.
+            first_kept = candidates[cut]
+            boundary_text = format_collapse_boundary(
+                dropped=len(collapsed_rows),
+                users=users,
+                assistants=assistants,
+                tools=tool_results,
+                tokens_saved=tokens_saved,
+            )
+            boundary_msg = Message(
+                session_id=session_id,
+                data={
+                    "role": "user",
+                    "agent": "system",
+                    "system": True,
+                    "collapse_boundary": True,
+                },
+                time_created=first_kept.time_created - timedelta(microseconds=1),
+            )
+            db.add(boundary_msg)
+            await db.flush()
+
+            boundary_part = Part(
+                message_id=boundary_msg.id,
+                session_id=session_id,
+                data={
+                    "type": "text",
+                    "text": boundary_text,
+                    "synthetic": True,
+                },
+            )
+            db.add(boundary_part)
+
+    return tokens_saved
