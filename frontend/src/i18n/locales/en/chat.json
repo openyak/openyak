@@ -180,5 +180,12 @@
   "taskPanel": "Task panel",
   "taskPanelArtifacts": "Artifacts",
   "taskPanelActivity": "Activity",
-  "taskPanelWorkspace": "Workspace"
+  "taskPanelWorkspace": "Workspace",
+  "slashCommandsHeader": "Commands",
+  "slashCommandsEmpty": "No matching command",
+  "slashNewChat": "New chat",
+  "slashPlanMode": "Plan first",
+  "slashPlanModeHint": "Explore and plan before editing",
+  "slashSearch": "Search chats",
+  "slashSettings": "Settings"
 }

@@ -180,5 +180,12 @@
   "taskPanel": "任务面板",
   "taskPanelArtifacts": "产物",
   "taskPanelActivity": "活动",
-  "taskPanelWorkspace": "工作区"
+  "taskPanelWorkspace": "工作区",
+  "slashCommandsHeader": "命令",
+  "slashCommandsEmpty": "没有匹配的命令",
+  "slashNewChat": "新建会话",
+  "slashPlanMode": "先规划",
+  "slashPlanModeHint": "先探索规划,再动手编辑",
+  "slashSearch": "搜索会话",
+  "slashSettings": "设置"
 }
