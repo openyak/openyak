@@ -176,6 +176,7 @@ export function HeaderModelDropdown() {
         // subscription tier hasn't rolled it out yet, then to whatever the
         // backend did return.
         const preferred =
+          visibleModels.find((m) => m.id === "openai-subscription/gpt-5.6") ??
           visibleModels.find((m) => m.id === "openai-subscription/gpt-5.5") ??
           visibleModels.find((m) => m.id === "openai-subscription/gpt-5.4");
         chosen = preferred ?? visibleModels[0];

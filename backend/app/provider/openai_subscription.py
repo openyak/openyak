@@ -32,6 +32,18 @@ PROVIDER_ID = "openai-subscription"
 # Curated models available through ChatGPT subscription
 _SUBSCRIPTION_MODELS: list[dict[str, Any]] = [
     {
+        "id": "gpt-5.6",
+        "name": "GPT-5.6",
+        "capabilities": {
+            "function_calling": True,
+            "vision": True,
+            "reasoning": True,
+            "json_output": True,
+            "max_context": 1_050_000,
+            "max_output": 128_000,
+        },
+    },
+    {
         "id": "gpt-5.5",
         "name": "GPT-5.5",
         "capabilities": {
