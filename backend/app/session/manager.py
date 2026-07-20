@@ -381,8 +381,12 @@ async def get_messages(
     stmt = (
         select(Message)
         .where(Message.session_id == session_id)
+        # id breaks time_created ties deterministically: ULIDs are monotonic
+        # by creation, so same-flush inserts keep their real insertion order
+        # (and the collapse boundary marker, dated 1us before the first kept
+        # row, sorts unambiguously ahead of it).
         .options(selectinload(Message.parts))
-        .order_by(Message.time_created.asc())
+        .order_by(Message.time_created.asc(), Message.id.asc())
     )
     if limit is not None:
         if offset < 0:
@@ -435,6 +439,70 @@ def _provider_uses_reasoning_content(provider_id: str | None, model_id: str | No
     return True
 
 
+def is_compaction_summary(msg: Message) -> bool:
+    """True when ``msg`` is a full-compaction summary message.
+
+    A summary carries both a ``compaction`` part and the ``[Context Summary]``
+    text that stands in for the history it replaced. It is the load-bearing
+    anchor of everything that came before it, so it must never be dropped
+    from the prompt — see :func:`collapsible_messages`.
+    """
+    has_compaction_part = any(
+        p.data and p.data.get("type") == "compaction"
+        for p in msg.parts
+    )
+    has_summary_text = any(
+        p.data
+        and p.data.get("type") == "text"
+        and str(p.data.get("text", "")).startswith("[Context Summary]")
+        for p in msg.parts
+    )
+    return has_compaction_part and has_summary_text
+
+
+def find_compaction_anchor(messages: list[Message]) -> int:
+    """Index of the newest compaction summary in ``messages`` (0 if none).
+
+    After a compaction summary is written, that summary becomes the new
+    history anchor: everything before it has already been summarized and
+    should not be fed back to the model again.
+    """
+    anchor = 0
+    for i, msg in enumerate(messages):
+        if is_compaction_summary(msg):
+            anchor = i
+    return anchor
+
+
+def prompt_visible_messages(messages: list[Message]) -> list[Message]:
+    """Narrow a full transcript to the messages that still go to the model.
+
+    Two persistent trims are applied, both of which keep the underlying rows
+    intact (see docs/adr/0005-compaction-is-a-persistent-part.md):
+
+    * context collapse marks dropped messages with ``collapsed_at``;
+    * full compaction anchors the history at the newest summary.
+    """
+    live = [m for m in messages if m.collapsed_at is None]
+    anchor = find_compaction_anchor(live)
+    return live[anchor:] if anchor else live
+
+
+def collapsible_messages(messages: list[Message]) -> list[Message]:
+    """The prompt-visible messages that context collapse is allowed to drop.
+
+    This is :func:`prompt_visible_messages` minus the compaction anchor. The
+    anchor summary stands in for every message before it, so collapsing it
+    would make :func:`find_compaction_anchor` return a row that prompt
+    assembly then skips — the summary, and with it all the pre-compaction
+    history it represents, would silently vanish from the prompt.
+    """
+    visible = prompt_visible_messages(messages)
+    if visible and is_compaction_summary(visible[0]):
+        return visible[1:]
+    return visible
+
+
 async def get_message_history_for_llm(
     db: AsyncSession,
     session_id: str,
@@ -455,29 +523,8 @@ async def get_message_history_for_llm(
     `deepseek-reasoner` R1 model are skipped — see
     ``_provider_uses_reasoning_content``.
     """
-    messages = await get_messages(db, session_id)
+    messages = prompt_visible_messages(await get_messages(db, session_id))
     llm_messages = []
-
-    # After a compaction summary is written, that summary becomes the new
-    # history anchor. Everything before it has already been summarized and
-    # should not be fed back to the model again.
-    compaction_anchor = 0
-    for i, msg in enumerate(messages):
-        has_compaction_part = any(
-            p.data and p.data.get("type") == "compaction"
-            for p in msg.parts
-        )
-        has_summary_text = any(
-            p.data
-            and p.data.get("type") == "text"
-            and str(p.data.get("text", "")).startswith("[Context Summary]")
-            for p in msg.parts
-        )
-        if has_compaction_part and has_summary_text:
-            compaction_anchor = i
-
-    if compaction_anchor:
-        messages = messages[compaction_anchor:]
 
     echo_reasoning = _provider_uses_reasoning_content(provider_id, model_id)
 

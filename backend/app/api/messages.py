@@ -21,6 +21,7 @@ def _msg_to_response(msg: Message) -> MessageResponse:
         session_id=msg.session_id,
         time_created=msg.time_created,
         data=msg.data or {},
+        collapsed_at=msg.collapsed_at,
         parts=[
             PartResponse(
                 id=p.id,

@@ -238,6 +238,68 @@ def apply_tool_result_budget(
 # Layer 3: Context Collapse
 # ---------------------------------------------------------------------------
 
+def select_collapse_boundary(
+    roles: list[str],
+    *,
+    collapse_fraction: float = 0.33,
+    min_messages_to_keep: int = 6,
+) -> int:
+    """Return the index of the first message to keep, given message roles.
+
+    Shared by :func:`context_collapse` (which applies it to the LLM-formatted
+    history) and by the persistence layer (which applies it to the stored
+    Message rows) so both agree on where the collapse boundary falls.
+
+    Returns 0 when nothing should be collapsed.
+    """
+    total = len(roles)
+    if total <= min_messages_to_keep:
+        return 0
+
+    drop_count = int(total * collapse_fraction)
+
+    # Ensure we keep at least min_messages_to_keep
+    if total - drop_count < min_messages_to_keep:
+        drop_count = total - min_messages_to_keep
+    if drop_count <= 0:
+        return 0
+
+    # Find a safe boundary: don't split mid-turn.
+    # Walk forward from the target drop_count to find a user message
+    # boundary (so we don't leave orphaned tool results).
+    boundary = drop_count
+    while boundary < total - min_messages_to_keep:
+        if roles[boundary] == "user":
+            break
+        boundary += 1
+    else:
+        # Couldn't find a clean boundary — use the original count
+        boundary = drop_count
+
+    return boundary
+
+
+def format_collapse_boundary(
+    *,
+    dropped: int,
+    users: int,
+    assistants: int,
+    tools: int,
+    tokens_saved: int,
+) -> str:
+    """Render the synthetic boundary marker text for a context collapse.
+
+    Shared by :func:`context_collapse` and by the persistence layer so the
+    user-visible counts always describe the trim that was actually applied.
+    """
+    return (
+        f"[Context collapsed: {dropped} earlier messages removed "
+        f"({users} user, {assistants} assistant, "
+        f"{tools} tool results — ~{tokens_saved:,} tokens freed). "
+        f"If you need earlier context, ask the user or re-read relevant files.]"
+    )
+
+
 def context_collapse(
     messages: list[dict[str, Any]],
     *,
@@ -263,29 +325,17 @@ def context_collapse(
         A tuple of (new_messages, tokens_saved) where tokens_saved is an
         estimate of the tokens freed.
     """
-    if not messages or len(messages) <= min_messages_to_keep:
+    if not messages:
         return messages, 0
 
     total = len(messages)
-    drop_count = int(total * collapse_fraction)
-
-    # Ensure we keep at least min_messages_to_keep
-    if total - drop_count < min_messages_to_keep:
-        drop_count = total - min_messages_to_keep
-    if drop_count <= 0:
+    boundary = select_collapse_boundary(
+        [str(m.get("role", "")) for m in messages],
+        collapse_fraction=collapse_fraction,
+        min_messages_to_keep=min_messages_to_keep,
+    )
+    if boundary <= 0:
         return messages, 0
-
-    # Find a safe boundary: don't split mid-turn.
-    # Walk forward from the target drop_count to find a user message
-    # boundary (so we don't leave orphaned tool results).
-    boundary = drop_count
-    while boundary < total - min_messages_to_keep:
-        if messages[boundary].get("role") == "user":
-            break
-        boundary += 1
-    else:
-        # Couldn't find a clean boundary — use the original count
-        boundary = drop_count
 
     dropped = messages[:boundary]
     kept = messages[boundary:]
@@ -298,11 +348,12 @@ def context_collapse(
     dropped_assistant_msgs = [m for m in dropped if m.get("role") == "assistant"]
     dropped_tool_msgs = [m for m in dropped if m.get("role") == "tool"]
 
-    boundary_text = (
-        f"[Context collapsed: {len(dropped)} earlier messages removed "
-        f"({len(dropped_user_msgs)} user, {len(dropped_assistant_msgs)} assistant, "
-        f"{len(dropped_tool_msgs)} tool results — ~{tokens_saved:,} tokens freed). "
-        f"If you need earlier context, ask the user or re-read relevant files.]"
+    boundary_text = format_collapse_boundary(
+        dropped=len(dropped),
+        users=len(dropped_user_msgs),
+        assistants=len(dropped_assistant_msgs),
+        tools=len(dropped_tool_msgs),
+        tokens_saved=tokens_saved,
     )
 
     boundary_msg: dict[str, Any] = {

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import ForeignKey, Index, JSON, String
+from sqlalchemy import DateTime, ForeignKey, Index, JSON, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
@@ -29,6 +30,13 @@ class Message(Base, TimestampMixin):
         ForeignKey("session.id", ondelete="CASCADE"), nullable=False
     )
     data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    # Set when context collapse dropped this message from the prompt. The row
+    # stays in the transcript (viewable, exportable) but is skipped when the
+    # history is rebuilt for the model — see
+    # docs/adr/0005-compaction-is-a-persistent-part.md.
+    collapsed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
 
     # Relationships
     session: Mapped[Session] = relationship(back_populates="messages")
