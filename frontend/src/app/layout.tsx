@@ -1,13 +1,12 @@
 import type { Metadata } from "next";
-import { Inter, JetBrains_Mono, Noto_Sans_SC } from "next/font/google";
+import { JetBrains_Mono, Noto_Sans_SC } from "next/font/google";
 import { AppProviders } from "@/components/providers/app-providers";
 import "./globals.css";
 
-const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-sans",
-});
-
+// UI text intentionally uses the system font stack (see globals.css @layer
+// base) — Inter previously rode in via the `font-sans` utility and overrode
+// it, which also broke the --font-cjk fallback for Chinese text. JetBrains
+// Mono stays available as an opt-in code font via appearance settings.
 const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
   variable: "--font-mono",
@@ -35,7 +34,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${inter.variable} ${jetbrainsMono.variable} ${notoSansSC.variable} font-sans antialiased`}>
+      <body className={`${jetbrainsMono.variable} ${notoSansSC.variable} antialiased`}>
         <AppProviders>{children}</AppProviders>
       </body>
     </html>
