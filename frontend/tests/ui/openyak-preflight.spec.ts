@@ -197,8 +197,11 @@ test.describe("OpenYak UI preflight", () => {
 
     await page.getByRole("button", { name: /Auto-edit/i }).click();
     await page.getByRole("button", { name: /Plan first/i }).click();
+    // Exact match: during the popover's exit animation the "Plan first ..."
+    // menu option briefly coexists with the pill, and a broad regex would
+    // trip strict mode.
     await expect(
-      page.getByRole("button", { name: /Plan first/i }),
+      page.getByRole("button", { name: "Plan first", exact: true }),
     ).toBeVisible();
 
     await page.locator('input[type="file"]').setInputFiles({

@@ -144,7 +144,7 @@ export function ProgressCard() {
                         ? "border-[var(--text-accent)]/50 bg-[var(--text-accent)]/10 text-[var(--text-accent)]"
                         : item.status === "failed"
                           ? "border-[var(--tool-error)]/40 bg-[var(--tool-error)]/10 text-[var(--tool-error)]"
-                        : "border-white/15 text-[var(--text-quaternary)]",
+                        : "border-[var(--border-default)] text-[var(--text-quaternary)]",
                   )}
                 >
                   {item.status === "completed" ? (

@@ -367,7 +367,7 @@ export function PermissionDialog({ permission, onRespond }: PermissionDialogProp
   if (isMobile) {
     return (
       <div className="px-3 pb-[max(env(safe-area-inset-bottom),8px)]">
-        <div className="rounded-2xl border-2 border-[var(--color-warning)]/40 bg-[var(--surface-primary)] shadow-lg p-4 animate-slide-up">
+        <div className="rounded-2xl border-2 border-[var(--color-warning)]/40 bg-[var(--surface-primary)] shadow-[var(--shadow-lg)] p-4 animate-slide-up">
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">

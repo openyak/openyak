@@ -46,12 +46,12 @@ import type { PluginInfo, SkillInfo, StoreSkill } from "@/types/plugins";
 import type { ConnectorInfo } from "@/types/connectors";
 
 const SOURCE_COLORS: Record<string, string> = {
-  builtin: "bg-blue-500/10 text-blue-400",
-  global: "bg-amber-500/10 text-amber-400",
-  project: "bg-emerald-500/10 text-emerald-400",
-  plugin: "bg-purple-500/10 text-purple-400",
-  bundled: "bg-blue-500/10 text-blue-400",
-  custom: "bg-orange-500/10 text-orange-400",
+  builtin: "bg-[var(--brand-primary)]/10 text-[var(--brand-primary)]",
+  global: "bg-[var(--color-warning)]/10 text-[var(--color-warning)]",
+  project: "bg-[var(--color-success)]/10 text-[var(--color-success)]",
+  plugin: "bg-[var(--skill-accent)]/10 text-[var(--skill-accent)]",
+  bundled: "bg-[var(--brand-primary)]/10 text-[var(--brand-primary)]",
+  custom: "bg-[var(--color-warning)]/10 text-[var(--color-warning)]",
 };
 
 /** Derive i18n key from category slug: "dev-tools" → "category_dev_tools" */
@@ -120,9 +120,9 @@ export function PluginsTabContent() {
 /* ------------------------------------------------------------------ */
 
 const STATUS_COLORS: Record<string, string> = {
-  connected: "bg-emerald-500",
-  needs_auth: "bg-amber-500",
-  failed: "bg-red-500",
+  connected: "bg-[var(--color-success)]",
+  needs_auth: "bg-[var(--color-warning)]",
+  failed: "bg-[var(--color-destructive)]",
   disconnected: "bg-[var(--text-tertiary)]",
   disabled: "bg-[var(--text-tertiary)]",
 };
@@ -304,7 +304,7 @@ function ConnectorRow({
             {connector.name}
           </span>
           {connector.type === "local" && id !== "google-workspace" && (
-            <span className="text-ui-3xs px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400">
+            <span className="text-ui-3xs px-1.5 py-0.5 rounded-full bg-[var(--color-warning)]/10 text-[var(--color-warning)]">
               {t("localSetup")}
             </span>
           )}
@@ -966,7 +966,7 @@ function PluginCard({
 
         <span
           className={`h-2 w-2 rounded-full shrink-0 ${
-            plugin.enabled ? "bg-emerald-500" : "bg-[var(--text-tertiary)]"
+            plugin.enabled ? "bg-[var(--color-success)]" : "bg-[var(--text-tertiary)]"
           }`}
         />
 

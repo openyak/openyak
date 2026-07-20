@@ -244,7 +244,7 @@ export function UserMessage({ message, isNew = true, onEditAndResend, isGenerati
                 handleCancel();
               }
             }}
-            className="w-full resize-none bg-transparent text-[13px] text-[var(--text-primary)] leading-relaxed outline-none"
+            className="w-full resize-none bg-transparent text-[13px] text-[var(--text-primary)] leading-relaxed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
             rows={1}
           />
           {(editAttachments.length > 0 || uploading) && (
