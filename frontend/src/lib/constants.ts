@@ -352,6 +352,7 @@ export const API = {
     DELETE: (id: string) => `/api/automations/${id}` as const,
     RUN: (id: string) => `/api/automations/${id}/run` as const,
     RUNS: (id: string) => `/api/automations/${id}/runs` as const,
+    RECENT_RUNS: "/api/automations/runs/recent",
     TEMPLATES: "/api/automations/templates",
     FROM_TEMPLATE: "/api/automations/from-template",
     LOOP_PRESETS: "/api/automations/loop-presets",
@@ -417,6 +418,7 @@ export const queryKeys = {
     detail: (id: string) => ["automations", id] as const,
     runs: (id: string) => ["automations", id, "runs"] as const,
     templates: ["automations", "templates"] as const,
+    recentRuns: ["automations","recent-runs"] as const,
   },
   workspaceMemory: (workspace: string) =>
     ["workspaceMemory", workspace] as const,

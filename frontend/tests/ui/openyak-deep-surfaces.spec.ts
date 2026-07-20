@@ -251,7 +251,7 @@ test.describe("OpenYak deep claimed-feature GUI surfaces", () => {
     await onboarding.goto("/c/new");
     await expect(onboarding.getByRole("heading", { name: "Welcome to OpenYak" })).toBeVisible();
 
-    await onboarding.getByRole("button", { name: "Set Up Provider" }).click();
+    await onboarding.getByRole("button", { name: "Set up a model provider" }).click();
     await expect(onboarding).toHaveURL(/\/settings\?tab=providers$/);
     await expect(onboarding.getByRole("heading", { name: "Providers" })).toBeVisible();
     await expectNoAppCrash(onboarding);
