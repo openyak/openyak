@@ -8,19 +8,22 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
+        // Text colors use the explicit `color:` hint — a bare var() in
+        // text-[...] is ambiguous to tailwind-merge and can be dropped as a
+        // font-size conflict.
         default:
-          "bg-[var(--ink-solid)] text-[var(--ink-solid-text)] hover:bg-[var(--ink-solid-hover)] shadow-[var(--shadow-sm)]",
+          "bg-[var(--ink-solid)] text-[color:var(--ink-solid-text)] hover:bg-[var(--ink-solid-hover)] shadow-[var(--shadow-sm)]",
         brand:
-          "bg-[var(--brand-primary)] text-[var(--brand-primary-text)] hover:bg-[var(--brand-primary-hover)] shadow-[var(--shadow-sm)]",
+          "bg-[var(--brand-primary)] text-[color:var(--brand-primary-text)] hover:bg-[var(--brand-primary-hover)] shadow-[var(--shadow-sm)]",
         destructive:
           "bg-[var(--color-destructive)] text-white hover:opacity-90",
         outline:
-          "border border-[var(--border-default)] bg-transparent hover:bg-[var(--surface-secondary)] text-[var(--text-primary)]",
+          "border border-[var(--border-default)] bg-transparent hover:bg-[var(--surface-secondary)] text-[color:var(--text-primary)]",
         secondary:
-          "bg-[var(--surface-secondary)] text-[var(--text-primary)] hover:bg-[var(--surface-tertiary)]",
+          "bg-[var(--surface-secondary)] text-[color:var(--text-primary)] hover:bg-[var(--surface-tertiary)]",
         ghost:
-          "hover:bg-[var(--surface-secondary)] text-[var(--text-primary)]",
-        link: "text-[var(--brand-primary)] underline-offset-4 hover:underline",
+          "hover:bg-[var(--surface-secondary)] text-[color:var(--text-primary)]",
+        link: "text-[color:var(--brand-primary)] underline-offset-4 hover:underline",
       },
       size: {
         default: "h-9 px-4 py-2",
