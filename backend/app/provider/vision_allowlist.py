@@ -104,6 +104,8 @@ _ALLOW: list[str] = [
     # ---- Anthropic ----
     r"claude-3",                       # claude-3 / 3.5 / 3.7
     r"claude-(?:opus|sonnet|haiku)",   # every modern tier (incl. -4-x and -latest)
+    r"claude-(?:fable|mythos)",        # 2026 Mythos-class tier — claude-fable-5
+                                       # verified attachment=true on live models.dev
     r"claude-[4-9]",                   # legacy claude-4* style ids
 
     # ---- Google Gemini / Gemma ----

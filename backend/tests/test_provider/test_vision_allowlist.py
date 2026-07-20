@@ -33,6 +33,12 @@ VISION_MODELS = [
     "claude-3-5-sonnet-20241022",
     "claude-3.7-sonnet",
     "claude-sonnet-4-5",
+    "claude-sonnet-5",
+    "claude-opus-4-8",
+    "claude-fable-5",
+    "anthropic/claude-fable-5",
+    "gpt-5.6",
+    "gpt-5.6-sol",
     "claude-opus-4-1",
     "anthropic/claude-3.5-sonnet",
     # Google
