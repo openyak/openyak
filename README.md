@@ -147,9 +147,18 @@ Finally, write a follow-up email I can send to the team directly.
 | Kimi | BYOK | Moonshot models |
 | MiniMax | BYOK | Direct provider key |
 | Zhipu | BYOK | Direct provider key |
+| Together AI | BYOK | Direct provider key |
+| DeepInfra | BYOK | Direct provider key |
+| Cerebras | BYOK | Fast hosted inference |
+| Cohere | BYOK | Command models |
+| Perplexity | BYOK | Sonar models |
+| Fireworks AI | BYOK | Direct provider key |
+| Azure OpenAI | BYOK | Your own Azure deployment |
+| SiliconFlow | BYOK | Direct provider key |
+| Xiaomi MiMo | BYOK | Direct provider key |
 | ChatGPT | Subscription | Use an existing ChatGPT Plus, Pro, Team, or Enterprise plan when available |
 
-Cloud and subscription paths are optional. OpenYak does not provide hosted model accounts and does not proxy model traffic; requests go directly from your desktop to the provider you configure.
+Any provider not listed above can still be used through a custom OpenAI-compatible endpoint. Cloud and subscription paths are optional. OpenYak does not provide hosted model accounts and does not proxy model traffic; requests go directly from your desktop to the provider you configure.
 
 ## Core Capabilities
 
