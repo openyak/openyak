@@ -9,8 +9,25 @@ import type {
   AutomationCreate,
   AutomationUpdate,
   TaskRunResponse,
+  RecentRun,
   TemplateResponse,
 } from "@/types/automation";
+
+/** Cross-task recent-run feed (the automations inbox). */
+export function useRecentRuns() {
+  return useQuery({
+    queryKey: queryKeys.automations.recentRuns,
+    queryFn: () => api.get<RecentRun[]>(API.AUTOMATIONS.RECENT_RUNS),
+    staleTime: 5_000,
+    refetchInterval: (query) => {
+      const data = query.state.data as RecentRun[] | undefined;
+      const hasRunning = data?.some(
+        (r) => r.status === "running" || r.status === "pending",
+      );
+      return hasRunning ? 3_000 : 30_000;
+    },
+  });
+}
 
 export function useAutomations() {
   return useQuery({

@@ -40,7 +40,7 @@
   "workspace": "工作区",
   "workspaceNone": "不限制（全局）",
   "triggerSchedule": "定时",
-  "triggerManual": "手动",
+  "triggerManual": "手动运行",
   "triggerCatchup": "补执行",
   "presetDaily8am": "每天 8:00",
   "presetWeekdays9am": "工作日 9:00",
@@ -69,5 +69,12 @@
     "everyday": "每天",
     "weekdays": "工作日",
     "weekends": "周末"
-  }
+  },
+  "activity": "活动",
+  "activityEmpty": "还没有自动化运行记录",
+  "runStatus_success": "已完成",
+  "runStatus_error": "失败",
+  "runStatus_running": "运行中",
+  "runStatus_pending": "排队中",
+  "runStatus_skipped": "已跳过"
 }

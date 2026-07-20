@@ -73,6 +73,19 @@ export interface TaskRunResponse {
   time_created: string;
 }
 
+export interface RecentRun {
+  id: string;
+  task_id: string;
+  task_name: string;
+  session_id: string | null;
+  status: string;
+  error_message: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  triggered_by: string;
+  time_created: string;
+}
+
 export interface TemplateResponse {
   id: string;
   name: string;

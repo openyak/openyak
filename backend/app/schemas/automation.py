@@ -116,6 +116,22 @@ class TaskRunResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class RecentRunResponse(BaseModel):
+    """A task run enriched with its parent task's name, for the global inbox
+    feed across all automations."""
+
+    id: str
+    task_id: str
+    task_name: str
+    session_id: str | None
+    status: str
+    error_message: str | None
+    started_at: datetime | None
+    finished_at: datetime | None
+    triggered_by: str
+    time_created: datetime
+
+
 class TemplateResponse(BaseModel):
     id: str
     name: str

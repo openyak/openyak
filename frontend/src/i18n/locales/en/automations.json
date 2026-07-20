@@ -40,7 +40,7 @@
   "workspace": "Workspace",
   "workspaceNone": "Unrestricted (global)",
   "triggerSchedule": "Scheduled",
-  "triggerManual": "Manual",
+  "triggerManual": "run manually",
   "triggerCatchup": "Catchup",
   "presetDaily8am": "Daily 8:00",
   "presetWeekdays9am": "Weekdays 9:00",
@@ -69,5 +69,12 @@
     "everyday": "Daily",
     "weekdays": "Weekdays",
     "weekends": "Weekends"
-  }
+  },
+  "activity": "Activity",
+  "activityEmpty": "No automation runs yet",
+  "runStatus_success": "Completed",
+  "runStatus_error": "Failed",
+  "runStatus_running": "Running",
+  "runStatus_pending": "Queued",
+  "runStatus_skipped": "Skipped"
 }

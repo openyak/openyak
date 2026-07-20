@@ -2277,6 +2277,34 @@ export async function mockOpenYakApi(
       automationList.unshift(automation);
       return fulfillJson(route, automation);
     }
+    if (path === "/api/automations/runs/recent") {
+      return fulfillJson(route, [
+        {
+          id: "run-2",
+          task_id: "task-b",
+          task_name: "Invoice sweep",
+          session_id: "session-alpha",
+          status: "error",
+          error_message: "Provider timed out",
+          started_at: "2026-04-26T08:00:00Z",
+          finished_at: "2026-04-26T08:01:00Z",
+          triggered_by: "manual",
+          time_created: "2026-04-26T08:00:00Z",
+        },
+        {
+          id: "run-1",
+          task_id: "task-a",
+          task_name: "Morning brief",
+          session_id: "session-artifacts",
+          status: "success",
+          error_message: null,
+          started_at: "2026-04-26T07:00:00Z",
+          finished_at: "2026-04-26T07:02:00Z",
+          triggered_by: "schedule",
+          time_created: "2026-04-26T07:00:00Z",
+        },
+      ]);
+    }
     if (path === "/api/automations/templates") {
       return fulfillJson(route, [
         {

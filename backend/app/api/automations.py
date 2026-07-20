@@ -15,6 +15,7 @@ from app.schemas.automation import (
     AutomationCreate,
     AutomationResponse,
     AutomationUpdate,
+    RecentRunResponse,
     TaskRunResponse,
     TemplateResponse,
 )
@@ -261,6 +262,41 @@ async def run_automation_now(
         name=f"automation-run-{task_id[:12]}",
     )
     return {"status": "started"}
+
+
+@router.get("/automations/runs/recent", response_model=list[RecentRunResponse])
+async def list_recent_runs(
+    db: AsyncSession = Depends(get_db),
+    limit: int = 30,
+) -> list[RecentRunResponse]:
+    """Recent runs across ALL automations, newest first — the inbox feed.
+
+    Joins each run to its task so the caller gets the task name without an
+    N+1 lookup. Runs whose task was deleted are excluded by the inner join.
+    """
+    limit = max(1, min(limit, 100))
+    result = await db.execute(
+        select(TaskRun, ScheduledTask.name)
+        .join(ScheduledTask, TaskRun.task_id == ScheduledTask.id)
+        .order_by(TaskRun.time_created.desc())
+        .limit(limit)
+    )
+    rows = result.all()
+    return [
+        RecentRunResponse(
+            id=run.id,
+            task_id=run.task_id,
+            task_name=name,
+            session_id=run.session_id,
+            status=run.status,
+            error_message=run.error_message,
+            started_at=run.started_at,
+            finished_at=run.finished_at,
+            triggered_by=run.triggered_by,
+            time_created=run.time_created,
+        )
+        for run, name in rows
+    ]
 
 
 @router.get("/automations/{task_id}/runs", response_model=list[TaskRunResponse])
