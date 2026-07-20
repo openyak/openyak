@@ -40,8 +40,14 @@ test.describe("OpenYak complete GUI workflows", () => {
         name: /What should (OpenYak help you do|we do in)/i,
       }),
     ).toBeVisible();
+    // The header model dropdown renders the selected model's display name
+    // (header-model-dropdown.tsx: `selectedLabel = selectedInfo?.name ?? …`).
+    // The seeded default is the first fixture model, "Claude Sonnet 4.5". The
+    // old "Best Free" (openyak/best-free, provider openyak-proxy) was removed
+    // along with the whole OpenYak proxy/billing surface in eeef3c2 — it no
+    // longer exists in the fixture model list or in backend/app/provider.
     await expect(
-      page.getByRole("button", { name: /Best Free/i }),
+      page.getByRole("button", { name: /Claude Sonnet 4\.5/i }),
     ).toBeVisible();
 
     await page.locator('input[type="file"]').setInputFiles({
@@ -151,9 +157,12 @@ test.describe("OpenYak complete GUI workflows", () => {
     await expect(
       page.getByText("http://localhost:11434/v1", { exact: true }),
     ).toBeVisible();
-    await page
-      .getByPlaceholder("Endpoint Name (e.g. My Local Model)")
-      .fill("Workflow Endpoint");
+    // The custom-endpoint form is the slug-based "Custom provider" form added
+    // in 82b5416 (opencode-style custom provider): Provider ID + Display name +
+    // Base URL, submitted with "Submit". Provider ID and Base URL are required
+    // (see `submitDisabled` in src/components/settings/providers/custom-endpoint-form.tsx).
+    await page.getByPlaceholder("myprovider").fill("workflow-endpoint");
+    await page.getByPlaceholder("My AI Provider").fill("Workflow Endpoint");
     await page
       .getByPlaceholder(
         "http://localhost:1234/v1 or https://api.example.com/v1",
@@ -165,9 +174,10 @@ test.describe("OpenYak complete GUI workflows", () => {
         res.request().method() === "POST" &&
         res.status() === 200,
     );
-    await page.getByRole("button", { name: "Add Endpoint" }).click();
+    await page.getByRole("button", { name: "Submit" }).click();
     await customSave;
     expect(JSON.stringify(state.providerSaves)).toContain("Workflow Endpoint");
+    expect(JSON.stringify(state.providerSaves)).toContain("workflow-endpoint");
     expect(JSON.stringify(state.providerSaves)).toContain(
       "http://localhost:1234/v1",
     );

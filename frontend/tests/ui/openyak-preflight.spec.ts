@@ -811,9 +811,10 @@ test.describe("OpenYak UI preflight", () => {
       page.getByText("http://localhost:11434/v1", { exact: true }),
     ).toBeVisible();
     await expect(page.getByText("Acme Local Proxy")).toBeVisible();
-    await page
-      .getByPlaceholder("Endpoint Name (e.g. My Local Model)")
-      .fill("Preflight Endpoint");
+    // Slug-based "Custom provider" form (82b5416): Provider ID + Base URL are
+    // required, Display name / API key optional, submitted with "Submit".
+    await page.getByPlaceholder("myprovider").fill("preflight-endpoint");
+    await page.getByPlaceholder("My AI Provider").fill("Preflight Endpoint");
     await page
       .getByPlaceholder(
         "http://localhost:1234/v1 or https://api.example.com/v1",
@@ -822,7 +823,15 @@ test.describe("OpenYak UI preflight", () => {
     await page
       .getByPlaceholder("API Key (Leave blank if not required)")
       .fill("sk-custom-preflight");
-    await page.getByRole("button", { name: "Add Endpoint" }).click();
+    const customSave = page.waitForRequest(
+      (req) =>
+        req.url().includes("/api/config/custom") && req.method() === "POST",
+    );
+    await page.getByRole("button", { name: "Submit" }).click();
+    const saved = JSON.parse((await customSave).postData() ?? "{}");
+    expect(saved.slug).toBe("preflight-endpoint");
+    expect(saved.name).toBe("Preflight Endpoint");
+    expect(saved.base_url).toBe("http://localhost:1234/v1");
   });
 
   test("automations path: create dialog, required fields, templates", async ({

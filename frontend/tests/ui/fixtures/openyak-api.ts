@@ -851,7 +851,13 @@ function compactMessagePage(compacted: boolean) {
     "assistant-1",
     "assistant",
     "This conversation is above the manual compaction threshold.",
-    { input: 90000, output: 500, reasoning: 60, cache_read: 0, cache_write: 0 },
+    // The manual-compaction control unlocks at >= 50% of the *usable* context
+    // window, which the app computes as
+    //   max_context - max_output - min(20_000, max_output)
+    // (src/components/chat/context-indicator.tsx). For the seeded model
+    // (max_context 200_000, max_output 8_192) that is 183_616 usable tokens, so
+    // the old 90_000 snapshot sat at 49.0% and left the button locked.
+    { input: 150000, output: 500, reasoning: 60, cache_read: 0, cache_write: 0 },
   );
 
   if (compacted) {

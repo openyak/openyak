@@ -10,6 +10,7 @@ const workers = Number(process.env.OPENYAK_UI_WORKERS ?? 2);
 
 export default defineConfig({
   testDir: "./tests/ui",
+  globalSetup: "./tests/ui/global-setup.ts",
   timeout: 60_000,
   expect: { timeout: 10_000 },
   fullyParallel: false,
