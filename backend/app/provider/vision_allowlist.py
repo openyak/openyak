@@ -71,6 +71,8 @@ _DENY: list[str] = [
     r"4o-(?:mini-)?realtime",  # gpt-4o(-mini)-realtime — audio/text, not image input
     r"search-preview",     # gpt-4o(-mini)-search-preview — text + web, no image input
     r"transcribe",         # gpt-4o-transcribe — speech-to-text
+    r"qwen-?3[._][56]-(?:plus|max)",  # qwen3.5-plus / 3.6-plus / 3.6-max-preview
+                                      # are text-only per official alibaba rows
     r"\btts\b",            # text-to-speech
     r"whisper",            # speech-to-text
     r"embed",              # embedding models (incl. multimodal embeddings)
@@ -145,13 +147,17 @@ _ALLOW: list[str] = [
     # ---- Alibaba Qwen ----
     r"qwen[\w.-]*-vl",      # qwen-vl, qwen2-vl, qwen2.5-vl, qwen3-vl
     r"qwen[\w.-]*-omni",    # qwen2.5-omni / qwen3-omni
-    r"qwen-?3\.[567]",      # qwen3.5 / 3.6 / 3.7 flagships are natively multimodal
-    r"qwen-?3-[567]\b",     # dash/date-stamped variants (qwen3-6, qwen3-5-02-15)
+    r"qwen-?3[._][56]",     # qwen3.5 / 3.6 sizes see (incl. Qwen3_5 quant ids);
+                            # 3.7-max/-plus are text-only per the official
+                            # alibaba rows on models.dev (checked 2026-07-20)
+    r"qwen-?3-[56]\b",      # dash/date-stamped variants (qwen3-6, qwen3-5-02-15)
     r"qvq",                 # qvq visual reasoning
     r"\bovis",              # Alibaba Ovis VLM (anchored: not "provisional" etc.)
 
     # ---- Moonshot Kimi ----
-    r"kimi-k2[._p-]?[56]",  # K2.5 / K2.6 (incl. k2_6, k2p6); base K2 is text-only
+    r"kimi-k2[._p-]?[67]",  # K2.6 / K2.7(-code); K2.5 and base K2 are text-only
+                            # per the official moonshotai rows on models.dev
+    r"kimi-k[3-9]\b",       # K3 (2026-07-16) and future majors — multimodal
     r"kimi-latest",         # alias now points to a multimodal K2.x
     r"kimi-vl",
 
@@ -167,8 +173,8 @@ _ALLOW: list[str] = [
     r"grok[\w.-]*vision",
 
     # ---- Xiaomi MiMo ----
-    r"mimo-v2\.5",
-    r"mimo-v2-5",
+    r"mimo-v2\.5(?!-pro)", # mimo-v2.5 sees; -pro / -pro-ultraspeed are text-only
+    r"mimo-v2-5(?!-pro)",
     r"mimo-v2-omni",
     r"mimo-vl",
 
@@ -192,6 +198,9 @@ _ALLOW: list[str] = [
     # ---- DeepSeek ----
     r"deepseek-vl",
     r"deepseek-ocr",
+    r"deepseek-chat\b",     # alias -> V3.2; image input per official deepseek rows
+    r"deepseek-reasoner\b",
+    r"deepseek-v3\.[2-9]",  # V3.2+ chat line; V4 flash/pro are text-only
     r"\bjanus\b",           # DeepSeek Janus multimodal
 
     # ---- StepFun ----
@@ -209,6 +218,11 @@ _ALLOW: list[str] = [
     # ---- Other multimodal labs ----
     r"minimax-vl",
     r"minimax[\w.-]*vl",
+    r"minimax-m[3-9]",           # M3 (2026-06) and later see; M2.x are text-only
+    r"command-a-plus",           # Cohere Command A+ (05-2026) is multimodal
+    r"muse-spark",               # Meta Muse Spark 1.x (2026) is multimodal
+    r"\binkling\b",             # Thinking Machines Inkling (2026-07)
+    r"\bfugu\b",                # Sakana Fugu / Fugu Ultra (2026-06)
     r"perceptron",               # Perceptron Mk1 VLM
     r"reka-(?:edge|flash|core|spark)",
 

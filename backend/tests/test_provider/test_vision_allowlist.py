@@ -81,13 +81,26 @@ VISION_MODELS = [
     # ---- 2026 families (verified against the live models.dev catalog +
     # provider release notes; many are mislabeled text-only by resellers) ----
     "qwen3.6-27b",
-    "qwen3.7-max",
+    "qwen3.6-flash",
     "qwen3.5-397b-a17b",
+    "Qwen3_5-9B-MLX-4bit",
     "qwen3-omni-realtime",
     "moonshotai/kimi-k2.6",
-    "kimi-k2.5-thinking",
+    "kimi-k2.7-code",
+    "moonshotai/Kimi-K2.7-Code",
+    "accounts/fireworks/models/kimi-k2p7-code",
+    "kimi-k3",
     "Kimi-K2_6",
     "kimi-latest",
+    "minimax-m3",
+    "MiniMaxAI/MiniMax-M3",
+    "deepseek-chat",
+    "deepseek-v3.2",
+    "command-a-plus-05-2026",
+    "muse-spark-1.1",
+    "thinkingmachines/inkling",
+    "sakana/fugu-ultra",
+    "mimo-v2.5",
     "google/gemma-4-31b-it",
     "gemma3:27b",
     "gemma-3n-e4b-it",
@@ -97,7 +110,6 @@ VISION_MODELS = [
     "mistral-large-2512",
     "mistralai/ministral-14b-2512",
     "mistral-small-2603",
-    "xiaomimimo/mimo-v2.5-pro",
     "doubao-seed-2-0-lite-260215",
     "doubao-seed-1.6-vision-250815",
     "amazon/nova-pro-v1",
@@ -150,7 +162,6 @@ NON_VISION_MODELS = [
     "mistral-large-latest",
     "codestral-latest",
     "qwen2.5-coder-32b-instruct",
-    "deepseek-chat",
     "deepseek-r1",
     "text-moderation-stable",
     # ---- 2026 text-only flagships with a separate vision sibling (the guards
@@ -165,8 +176,15 @@ NON_VISION_MODELS = [
     "ministral-3b",                # 2024 Ministral 3B text-only (prefix trap)
     "ministral-3b-2410",
     "mistral-large-2411",          # Large 2 text-only; Large 3 sees
-    "deepseek-v3.2",               # text; deepseek-vl2 / -ocr see
+    "deepseek-v4-pro",             # V4 flash/pro are text-only; V3.2 aliases see
     "qwen3-32b",                   # Qwen3 (3.0) base text-only; 3.5+ see
+    "qwen3.7-max",                 # 3.7 max/plus text-only per official alibaba rows
+    "qwen3.7-plus",
+    "qwen3.5-plus",                # the text-only tier of the 3.5 line
+    "kimi-k2.5-thinking",          # K2.5 text-only per official moonshotai rows
+    "MiniMax-M2.7",                # M2.x text-only; M3 sees
+    "mimo-v2.5-pro-ultraspeed",    # -pro tiers text-only; base v2.5 sees
+    "glm-5.2",                     # GLM text line stays text-only; glm-5v sees
     "nova-micro-v1",               # Nova Micro text-only
     "grok-3-mini",                 # grok mini reasoning is text-only
     "grok-3-mini-beta",
