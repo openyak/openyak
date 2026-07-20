@@ -30,15 +30,17 @@ export const RAPID_MLX_ALIAS_REPOS: Record<string, string> = {
   "deepseek-r1-32b": "mlx-community/DeepSeek-R1-Distill-Qwen-32B-4bit",
   "deepseek-r1-8b": "mlx-community/DeepSeek-R1-0528-Qwen3-8B-4bit",
   "devstral-v2-24b": "mlx-community/Devstral-Small-2-24B-Instruct-2512-4bit",
+  "gemma-4-12b": "mlx-community/gemma-4-12B-it-4bit",
   "gemma-4-26b": "mlx-community/gemma-4-26b-a4b-it-4bit",
   "gemma-4-31b": "mlx-community/gemma-4-31b-it-4bit",
-  "gpt-oss-20b": "mlx-community/GPT-OSS-20B-4bit",
+  "gpt-oss-20b": "mlx-community/gpt-oss-20b-MXFP4-Q8",
+  "glm-4.7-flash": "mlx-community/GLM-4.7-Flash-4bit",
   "mistral-24b": "mlx-community/Mistral-Small-3.1-24B-Instruct-2503-4bit",
   "nemotron-30b": "lmstudio-community/NVIDIA-Nemotron-3-Nano-30B-A3B-MLX-4bit",
   "qwen3-coder": "lmstudio-community/Qwen3-Coder-Next-MLX-4bit",
   "qwen3-coder-30b": "mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit",
   "qwen3-vl-30b": "mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit",
-  "qwen3-vl-4b": "mlx-community/Qwen3-VL-4B-Instruct-MLX-4bit",
+  "qwen3-vl-4b": "mlx-community/Qwen3-VL-4B-Instruct-4bit",
   "qwen3-vl-8b": "mlx-community/Qwen3-VL-8B-Instruct-4bit",
   "qwen3.5-122b": "nightmedia/Qwen3.5-122B-A10B-Text-mxfp4-mlx",
   "qwen3.5-122b-8bit": "mlx-community/Qwen3.5-122B-A10B-8bit",
@@ -59,6 +61,16 @@ export function canonicalRapidMlxModel(value: string | undefined): string {
 }
 
 export const LOCAL_MODEL_RECOMMENDATIONS: LocalModelRecommendation[] = [
+  {
+    id: "glm-4.7-flash",
+    name: "GLM-4.7 Flash",
+    category: "general",
+    memory: "48GB Mac",
+    description: "Zhipu's efficient flagship; strong Chinese + tool use.",
+    ollamaTag: "glm-4.7-flash",
+    rapidMlxAlias: "glm-4.7-flash",
+    variants: [v("Default", "4-bit", "glm-4.7-flash", "glm-4.7-flash")],
+  },
   {
     id: "qwen3.5-4b",
     name: "Qwen3.5 4B",
