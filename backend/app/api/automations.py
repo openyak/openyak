@@ -20,6 +20,7 @@ from app.schemas.automation import (
 )
 from app.scheduler.templates import get_template_by_id, get_templates
 from app.utils.id import generate_ulid
+from app.utils.timezone import merge_schedule_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +81,7 @@ async def create_from_template(
         name=template["name"],
         description=template["description"],
         prompt=template["prompt"],
-        schedule_config=template["schedule_config"] or {},
+        schedule_config=merge_schedule_timezone(template["schedule_config"] or {}),
         template_id=template_id,
         loop_max_iterations=template.get("loop_max_iterations"),
         loop_preset=template.get("loop_preset"),
@@ -120,7 +121,11 @@ async def create_automation(
     db: AsyncSession = Depends(get_db),
 ) -> AutomationResponse:
     """Create a new scheduled task."""
-    schedule_data = body.schedule_config.model_dump(exclude_none=True) if body.schedule_config else {}
+    schedule_data = (
+        merge_schedule_timezone(body.schedule_config.model_dump(exclude_none=True))
+        if body.schedule_config
+        else {}
+    )
     task = ScheduledTask(
         id=generate_ulid(),
         name=body.name,
@@ -180,7 +185,10 @@ async def update_automation(
     update_data = body.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         if field == "schedule_config" and value is not None:
-            setattr(task, field, value.model_dump(exclude_none=True) if hasattr(value, "model_dump") else value)
+            incoming = value.model_dump(exclude_none=True) if hasattr(value, "model_dump") else dict(value)
+            # A PATCH that omits `timezone` must keep the zone already stored
+            # on the task rather than silently adopting the server's zone.
+            setattr(task, field, merge_schedule_timezone(incoming, task.schedule_config))
         else:
             setattr(task, field, value)
 

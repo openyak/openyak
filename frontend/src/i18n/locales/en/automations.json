@@ -13,6 +13,7 @@
   "promptPlaceholder": "Describe what this automation should do...",
   "schedule": "Schedule",
   "interval": "Interval",
+  "runsInTimezone": "Runs in {{tz}}",
   "cronHelp": "Format: minute hour day month weekday",
   "every": "Every",
   "hours": "hours",

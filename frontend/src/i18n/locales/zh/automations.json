@@ -13,6 +13,7 @@
   "promptPlaceholder": "描述此自动化任务的执行内容...",
   "schedule": "调度规则",
   "interval": "固定间隔",
+  "runsInTimezone": "按 {{tz}} 时区运行",
   "cronHelp": "格式：分 时 日 月 星期",
   "every": "每",
   "hours": "小时",
