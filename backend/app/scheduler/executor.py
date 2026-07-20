@@ -256,7 +256,9 @@ async def _execute_loop(
         )
 
         # Extract output for progress tracking
-        output = _extract_session_output(app_state, session_id)
+        output = await _extract_session_output(
+            session_id, session_factory=session_factory,
+        )
         summary = output[:500] if len(output) > 500 else output
         progress_entries.append(summary if summary else f"[{status}]")
 
@@ -284,7 +286,11 @@ async def _execute_loop(
         if status == "error":
             logger.warning("Loop iteration %d failed, stopping", iteration_num)
             break
-        if stop_marker and stop_marker in output:
+        # Only a cleanly-finished iteration may declare the loop done. A
+        # timed-out run is killed mid-stream, so whatever assistant text it
+        # managed to persist is partial and may quote the marker from the
+        # prompt or a half-written conclusion — that must not end the loop.
+        if status == "success" and stop_marker and stop_marker in output:
             logger.info("Loop stop marker found at iteration %d", iteration_num)
             break
 
@@ -351,21 +357,50 @@ async def _run_session(
         return "error", str(e)
 
 
-def _extract_session_output(app_state: Any, session_id: str) -> str:
-    """Extract text output from a completed session's job events."""
-    stream_mgr = getattr(app_state, "stream_manager", None)
-    if not stream_mgr:
+async def _extract_session_output(
+    session_id: str,
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> str:
+    """Extract the final assistant text of a finished session.
+
+    Reads the persisted Message/Part rows — the single source of truth. There
+    is deliberately no in-memory "fast path" off ``GenerationJob.events``:
+
+      * ``GenerationJob.publish`` caps the replay buffer at 5000 events and
+        drops the OLDEST on overflow, so a long session yields a *truncated*
+        but still non-empty string — which would mask this read rather than
+        fall back to it.
+      * Concatenating every text-delta returns the whole session's narration,
+        not the final answer. The stop marker and the progress-log summary
+        both want the concluding assistant message, so the two sources would
+        disagree and make loop termination depend on buffer state.
+    """
+    try:
+        from app.session.manager import get_messages
+
+        async with session_factory() as db:
+            messages = await get_messages(db, session_id)
+    except Exception as e:  # pragma: no cover - defensive
+        logger.warning("Could not load transcript for session %s: %s", session_id, e)
         return ""
 
-    # Find the job by session_id in completed jobs
-    for job_info in stream_mgr._completed:
-        job = stream_mgr._jobs.get(job_info) if isinstance(job_info, str) else None
-        if job and job.session_id == session_id:
-            parts = []
-            for event in job.events:
-                if event.event == "text-delta":
-                    parts.append(event.data.get("text", ""))
-            return "".join(parts)
+    # Walk backwards to the most recent assistant message carrying real
+    # (non-synthetic) text. Synthetic parts are compaction summaries, not
+    # model output, so they must not satisfy a stop-marker check.
+    for msg in reversed(messages):
+        payload = msg.data or {}
+        if payload.get("role") != "assistant":
+            continue
+        texts = [
+            part.data.get("text", "")
+            for part in msg.parts
+            if (part.data or {}).get("type") == "text"
+            and not (part.data or {}).get("synthetic")
+        ]
+        joined = "".join(texts)
+        if joined.strip():
+            return joined
     return ""
 
 
