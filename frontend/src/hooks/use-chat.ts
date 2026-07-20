@@ -134,7 +134,7 @@ export function useChat(currentSessionId?: string) {
         const permissionRules = settingsState.savedPermissions.map((rule) => ({
           action: rule.allow ? "allow" as const : "deny" as const,
           permission: rule.tool,
-          pattern: "*",
+          pattern: rule.pattern ?? "*",
         }));
 
         const res = await api.post<PromptResponse>(API.CHAT.PROMPT, {
@@ -347,7 +347,7 @@ export function useChat(currentSessionId?: string) {
   }, [currentSessionId, queryClient]);
 
   const respondToPermission = useCallback(
-    async (allow: boolean, remember = false) => {
+    async (allow: boolean, remember = false, pattern?: string) => {
       const chatState = useChatStore.getState();
       const targetSessionId = currentSessionId ?? null;
       const bucket = targetSessionId === null
@@ -364,7 +364,9 @@ export function useChat(currentSessionId?: string) {
           allowed: allow,
           remember,
           permission: perm.tool || perm.permission,
-          pattern: perm.patterns[0] ?? "*",
+          // The scope the user picked in the dialog; falls back to the exact
+          // resource the backend asked about.
+          pattern: pattern ?? perm.patterns[0] ?? "*",
         },
       };
 
@@ -421,7 +423,7 @@ export function useChat(currentSessionId?: string) {
         const permissionRules = settingsState.savedPermissions.map((rule) => ({
           action: rule.allow ? "allow" as const : "deny" as const,
           permission: rule.tool,
-          pattern: "*",
+          pattern: rule.pattern ?? "*",
         }));
 
         const res = await api.post<PromptResponse>(API.CHAT.EDIT, {

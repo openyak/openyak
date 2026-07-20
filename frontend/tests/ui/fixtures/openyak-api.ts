@@ -103,7 +103,14 @@ export interface OpenYakMockOptions {
 
 export interface OpenYakSeedOptions {
   hasCompletedOnboarding?: boolean;
-  savedPermissions?: Array<{ tool: string; allow: boolean; timestamp: number }>;
+  /** Work mode to seed; "ask" surfaces permission dialogs instead of auto-approving. */
+  workMode?: "plan" | "ask" | "auto";
+  savedPermissions?: Array<{
+    tool: string;
+    allow: boolean;
+    pattern?: string;
+    timestamp: number;
+  }>;
   force?: boolean;
 }
 
@@ -1078,7 +1085,7 @@ function seededSettings(options: OpenYakSeedOptions = {}) {
       selectedProviderId: "openrouter",
       selectedAgent: "build",
       safeMode: false,
-      workMode: "auto",
+      workMode: options.workMode ?? "auto",
       reasoningEnabled: true,
       permissionPresets: { fileChanges: true, runCommands: true },
       savedPermissions: options.savedPermissions ?? [],
@@ -1098,6 +1105,7 @@ export async function seedOpenYakStorage(
   const overwrite =
     options.force === true ||
     options.hasCompletedOnboarding !== undefined ||
+    options.workMode !== undefined ||
     options.savedPermissions !== undefined;
   await page.addInitScript(
     ({ settings, overwrite: shouldOverwrite }) => {

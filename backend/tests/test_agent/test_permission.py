@@ -49,6 +49,28 @@ class TestEvaluate:
         rs = Ruleset(rules=[])
         assert evaluate("anything", "*", rs) == "deny"
 
+    def test_command_scoped_bash_rule(self):
+        # The processor passes the bash command as the resource, so a
+        # remembered "git *" rule covers the git family and nothing else.
+        rs = merge_rulesets(
+            GLOBAL_DEFAULTS,
+            Ruleset(rules=[
+                PermissionRule(action="allow", permission="bash", pattern="git *"),
+            ]),
+        )
+        assert evaluate("bash", "git push origin main", rs) == "allow"
+        assert evaluate("bash", "git status", rs) == "allow"
+        assert evaluate("bash", "rm -rf build", rs) == "ask"
+        # A remembered exact command matches only itself.
+        rs_exact = merge_rulesets(
+            GLOBAL_DEFAULTS,
+            Ruleset(rules=[
+                PermissionRule(action="allow", permission="bash", pattern="npm run preflight:ui"),
+            ]),
+        )
+        assert evaluate("bash", "npm run preflight:ui", rs_exact) == "allow"
+        assert evaluate("bash", "npm run deploy", rs_exact) == "ask"
+
     def test_exact_match(self):
         rs = Ruleset(rules=[
             PermissionRule(action="deny", permission="*"),

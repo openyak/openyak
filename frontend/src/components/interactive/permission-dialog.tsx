@@ -11,7 +11,62 @@ import type { PermissionRequest } from "@/types/streaming";
 
 interface PermissionDialogProps {
   permission: PermissionRequest;
-  onRespond: (allow: boolean, remember?: boolean) => void;
+  onRespond: (allow: boolean, remember?: boolean, pattern?: string) => void;
+}
+
+/** A remember-scope option: how broadly the user's choice should apply. */
+interface RememberScope {
+  id: string;
+  label: string;
+  pattern: string;
+}
+
+/**
+ * Scope options for remembering this decision, safest first. File tools can be
+ * scoped to the exact file or its folder; bash to the exact command or its
+ * command family; everything can be scoped to the whole tool.
+ */
+function getRememberScopes(permission: PermissionRequest): RememberScope[] {
+  const tool = permission.tool || permission.permission;
+  const args = permission.arguments ?? {};
+  const scopes: RememberScope[] = [];
+
+  if (tool === "bash") {
+    const command = typeof args.command === "string" ? args.command.trim() : "";
+    if (command) {
+      scopes.push({ id: "exact", label: "This exact command", pattern: command });
+      const firstWord = command.split(/\s+/)[0];
+      if (firstWord && firstWord.length < command.length) {
+        scopes.push({
+          id: "prefix",
+          label: `All "${firstWord}" commands`,
+          pattern: `${firstWord} *`,
+        });
+      }
+    }
+    scopes.push({ id: "all", label: "All shell commands", pattern: "*" });
+    return scopes;
+  }
+
+  const rawPath = [args.file_path, args.path].find(
+    (value) => typeof value === "string" && value.trim(),
+  ) as string | undefined;
+  const filePath =
+    rawPath?.trim() ?? permission.patterns.find((p) => p && p !== "*");
+  if (filePath) {
+    scopes.push({ id: "exact", label: "This file only", pattern: filePath });
+    const sepIndex = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
+    if (sepIndex > 0) {
+      const sep = filePath[sepIndex];
+      scopes.push({
+        id: "dir",
+        label: "This folder",
+        pattern: `${filePath.slice(0, sepIndex)}${sep}*`,
+      });
+    }
+  }
+  scopes.push({ id: "all", label: `Everywhere (all ${tool})`, pattern: "*" });
+  return scopes;
 }
 
 const TOOL_EXPLANATIONS: Record<string, {
@@ -133,6 +188,42 @@ function PermissionDetails({
   );
 }
 
+function RememberScopeSelect({
+  scopes,
+  value,
+  onChange,
+  selectId,
+}: {
+  scopes: RememberScope[];
+  value: RememberScope;
+  onChange: (id: string) => void;
+  selectId: string;
+}) {
+  if (scopes.length <= 1) return null;
+  return (
+    <div className="space-y-1 pl-1">
+      <select
+        id={selectId}
+        value={value.id}
+        onChange={(e) => onChange(e.target.value)}
+        aria-label="Remember scope"
+        className="w-full rounded-md border border-[var(--border-default)] bg-[var(--surface-secondary)] px-2 py-1.5 text-xs text-[var(--text-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-warning)]"
+      >
+        {scopes.map((scope) => (
+          <option key={scope.id} value={scope.id}>
+            {scope.label}
+          </option>
+        ))}
+      </select>
+      {value.pattern !== "*" && (
+        <p className="truncate font-mono text-[10px] text-[var(--text-tertiary)]" title={value.pattern}>
+          {value.pattern}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** Send a browser notification if tab is not focused. */
 function notifyIfHidden(tool: string) {
   if (typeof document === "undefined" || document.visibilityState !== "hidden") return;
@@ -159,6 +250,7 @@ function useRequestNotificationPermission() {
 export function PermissionDialog({ permission, onRespond }: PermissionDialogProps) {
   const [remainingMs, setRemainingMs] = useState(PERMISSION_TIMEOUT);
   const [rememberChoice, setRememberChoice] = useState(false);
+  const [scopeId, setScopeId] = useState("exact");
   const [submitting, setSubmitting] = useState(false);
   const startTimeRef = useRef(Date.now());
   const expired = remainingMs <= 0;
@@ -169,16 +261,28 @@ export function PermissionDialog({ permission, onRespond }: PermissionDialogProp
   const details = getToolExplanation(permission.tool || permission.permission);
   const isMobile = isRemoteMode();
 
+  const rememberScopes = getRememberScopes(permission);
+  const selectedScope =
+    rememberScopes.find((scope) => scope.id === scopeId) ?? rememberScopes[0];
+
   useRequestNotificationPermission();
 
   const handleRespond = useCallback(async (allow: boolean) => {
     if (submitting) return;
     setSubmitting(true);
     if (rememberChoice) {
-      savePermissionRule(permission.tool || permission.permission, allow);
+      savePermissionRule(
+        permission.tool || permission.permission,
+        allow,
+        selectedScope.pattern,
+      );
     }
     try {
-      await onRespond(allow, rememberChoice);
+      await onRespond(
+        allow,
+        rememberChoice,
+        rememberChoice ? selectedScope.pattern : undefined,
+      );
     } finally {
       setSubmitting(false);
     }
@@ -188,6 +292,7 @@ export function PermissionDialog({ permission, onRespond }: PermissionDialogProp
     permission.tool,
     rememberChoice,
     savePermissionRule,
+    selectedScope,
     submitting,
   ]);
 
@@ -221,6 +326,7 @@ export function PermissionDialog({ permission, onRespond }: PermissionDialogProp
 
   useEffect(() => {
     setSubmitting(false);
+    setScopeId("exact");
     hasDeniedRef.current = false;
   }, [permission.callId]);
 
@@ -313,18 +419,28 @@ export function PermissionDialog({ permission, onRespond }: PermissionDialogProp
                   />
                 </div>
 
-                <div className="flex items-center gap-2 py-2 border-t border-[var(--border-default)]">
-                  <Switch
-                    checked={rememberChoice}
-                    onCheckedChange={setRememberChoice}
-                    id="remember-choice-mobile"
-                  />
-                  <label
-                    htmlFor="remember-choice-mobile"
-                    className="text-sm text-[var(--text-secondary)] cursor-pointer select-none"
-                  >
-                    Remember for <span className="font-medium text-[var(--text-primary)]">{displayTool}</span>
-                  </label>
+                <div className="space-y-2 py-2 border-t border-[var(--border-default)]">
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      checked={rememberChoice}
+                      onCheckedChange={setRememberChoice}
+                      id="remember-choice-mobile"
+                    />
+                    <label
+                      htmlFor="remember-choice-mobile"
+                      className="text-sm text-[var(--text-secondary)] cursor-pointer select-none"
+                    >
+                      Remember for <span className="font-medium text-[var(--text-primary)]">{displayTool}</span>
+                    </label>
+                  </div>
+                  {rememberChoice && (
+                    <RememberScopeSelect
+                      scopes={rememberScopes}
+                      value={selectedScope}
+                      onChange={setScopeId}
+                      selectId="remember-scope-mobile"
+                    />
+                  )}
                 </div>
                 <div className="flex items-center gap-3">
                   <button
@@ -406,18 +522,28 @@ export function PermissionDialog({ permission, onRespond }: PermissionDialogProp
                     />
                   </div>
 
-                  <div className="flex items-center gap-2 py-2 border-t border-[var(--border-default)]">
-                    <Switch
-                      checked={rememberChoice}
-                      onCheckedChange={setRememberChoice}
-                      id="remember-choice"
-                    />
-                    <label
-                      htmlFor="remember-choice"
-                      className="text-xs text-[var(--text-secondary)] cursor-pointer select-none"
-                    >
-                      Remember this choice for <span className="font-medium text-[var(--text-primary)]">{displayTool}</span>
-                    </label>
+                  <div className="space-y-2 py-2 border-t border-[var(--border-default)]">
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        checked={rememberChoice}
+                        onCheckedChange={setRememberChoice}
+                        id="remember-choice"
+                      />
+                      <label
+                        htmlFor="remember-choice"
+                        className="text-xs text-[var(--text-secondary)] cursor-pointer select-none"
+                      >
+                        Remember this choice for <span className="font-medium text-[var(--text-primary)]">{displayTool}</span>
+                      </label>
+                    </div>
+                    {rememberChoice && (
+                      <RememberScopeSelect
+                        scopes={rememberScopes}
+                        value={selectedScope}
+                        onChange={setScopeId}
+                        selectId="remember-scope"
+                      />
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
                     <Button
