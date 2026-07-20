@@ -179,7 +179,7 @@ export function CsvRenderer({ content, title }: CsvRendererProps) {
                     <th
                       key={i}
                       onClick={() => handleSort(i)}
-                      className="cursor-pointer select-none hover:bg-[#eee]"
+                      className="cursor-pointer select-none hover:bg-[var(--surface-tertiary)]"
                     >
                       <span className="inline-flex items-center gap-1">
                         {header}

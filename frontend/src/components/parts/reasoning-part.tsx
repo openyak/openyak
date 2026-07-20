@@ -127,7 +127,7 @@ export function ReasoningPart({ texts, toolParts = [], isStreaming, onDurationCh
             <div className="border-l-2 border-[var(--border-heavy)] pl-4 ml-1 mt-1.5 mb-1 space-y-2">
               {/* Reasoning text */}
               {combinedText && (
-                <div className="prose prose-sm max-w-none text-[var(--text-secondary)] leading-relaxed [&_p]:my-2 [&_h1]:text-sm [&_h2]:text-sm [&_h3]:text-sm [&_strong]:text-[var(--text-primary)] [&_hr]:border-[var(--border-default)] [&_hr]:my-3">
+                <div className="prose max-w-none text-[var(--text-secondary)] leading-relaxed [&_p]:my-2 [&_h1]:text-sm [&_h2]:text-sm [&_h3]:text-sm [&_strong]:text-[var(--text-primary)] [&_hr]:border-[var(--border-default)] [&_hr]:my-3">
                   <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
                     {combinedText}
                   </ReactMarkdown>
