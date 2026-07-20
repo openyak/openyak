@@ -91,5 +91,7 @@
   "modelsUnavailableHint": "Check your provider connection, firewall, or VPN settings.",
   "setupProvider": "Set up provider",
   "setUpProvider": "Set up provider",
-  "apiKey": "API Key"
+  "apiKey": "API Key",
+  "sessionNeedsApproval": "Waiting for your approval",
+  "sessionNeedsAnswer": "Waiting for your answer"
 }
