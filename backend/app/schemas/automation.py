@@ -13,6 +13,9 @@ class ScheduleConfig(BaseModel):
     cron: str | None = None  # e.g. "0 8 * * 1"
     hours: int | None = None
     minutes: int | None = None
+    # IANA zone the cron expression is interpreted in (e.g. "Europe/Berlin").
+    # Defaults to the system local zone; ignored for interval schedules.
+    timezone: str | None = None
 
     @model_validator(mode="after")
     def validate_schedule(self) -> "ScheduleConfig":
@@ -25,6 +28,15 @@ class ScheduleConfig(BaseModel):
                     raise ValueError(f"Invalid cron expression: {self.cron}")
             except ImportError:
                 pass  # croniter not available, skip validation
+            # NOTE: deliberately *not* defaulted here. A partial PATCH that
+            # omits `timezone` must inherit the task's stored zone, not the
+            # server's local zone — see merge_schedule_timezone(), which the
+            # API layer applies against the existing row. Defaulting at
+            # validation time would make that inheritance impossible to
+            # distinguish from an explicit choice.
+            from app.utils.timezone import is_valid_timezone
+            if self.timezone is not None and not is_valid_timezone(self.timezone):
+                raise ValueError(f"Unknown timezone: {self.timezone}")
         elif self.type == "interval":
             hours = self.hours or 0
             minutes = self.minutes or 0

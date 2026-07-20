@@ -19,6 +19,7 @@ import { useModels } from "@/hooks/use-models";
 import { useSettingsStore } from "@/stores/settings-store";
 import { browseDirectory } from "@/lib/upload";
 import { DialogOverlay, ScheduleEditor, RunHistoryPanel, inputClass } from "./shared-ui";
+import { browserTimezone } from "./helpers";
 import type {
   AutomationCreate,
   AutomationUpdate,
@@ -177,7 +178,7 @@ export function CreateAutomationDialog({ onClose }: { onClose: () => void }) {
     } else {
       data.schedule_config =
         scheduleType === "cron"
-          ? { type: "cron", cron: cronExpr }
+          ? { type: "cron", cron: cronExpr, timezone: browserTimezone() || undefined }
           : { type: "interval", hours: intervalHours };
     }
     createMut.mutate(data, { onSuccess: () => onClose() });
@@ -282,9 +283,17 @@ export function EditAutomationDialog({ automationId, onClose }: { automationId: 
     if (taskMode === "loop") {
       data.loop_max_iterations = loopIterations;
     } else {
+      // Preserve the task's existing zone; only fall back to the browser's
+      // when the task never had one (e.g. switching interval → cron). There is
+      // no UI to change the zone, so the editing browser must not silently
+      // rewrite a task created in another timezone.
       data.schedule_config =
         scheduleType === "cron"
-          ? { type: "cron", cron: cronExpr }
+          ? {
+              type: "cron",
+              cron: cronExpr,
+              timezone: sc?.timezone || browserTimezone() || undefined,
+            }
           : { type: "interval", hours: intervalHours };
       data.loop_max_iterations = null;
     }

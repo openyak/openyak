@@ -25,7 +25,7 @@ import {
   useRunAutomation,
 } from "@/hooks/use-automations";
 import { queryKeys } from "@/lib/constants";
-import { humanizeSchedule, relativeTime, formatTime } from "./helpers";
+import { humanizeSchedule, relativeTime, formatTime, foreignTimezone } from "./helpers";
 import { StatusBadge, RunHistoryPanel, DeleteConfirmDialog } from "./shared-ui";
 import type { AutomationResponse, ScheduleConfig } from "@/types/automation";
 
@@ -53,6 +53,7 @@ export function AutomationCard({ automation: a, onEdit }: { automation: Automati
   };
 
   const isRunning = (a.last_run_status?.startsWith("running") ?? false) || runMut.isPending;
+  const scheduleTimezone = foreignTimezone(a.schedule_config as ScheduleConfig | null);
 
   return (
     <>
@@ -104,7 +105,14 @@ export function AutomationCard({ automation: a, onEdit }: { automation: Automati
 
         {/* Row 2: Schedule + status meta */}
         <div className="flex items-center gap-3 mt-2 text-ui-2xs text-[var(--text-tertiary)]">
-          <span className="inline-flex items-center gap-1">
+          <span
+            className="inline-flex items-center gap-1"
+            title={
+              scheduleTimezone
+                ? t("runsInTimezone", { tz: scheduleTimezone })
+                : undefined
+            }
+          >
             {a.loop_max_iterations ? (
               <>
                 <Repeat className="h-3 w-3" />

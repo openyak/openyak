@@ -2,8 +2,30 @@ import type { ScheduleConfig } from "@/types/automation";
 
 type TFunc = (key: string, opts?: Record<string, unknown>) => string;
 
+/** The browser's IANA zone, or "" when unavailable. */
+export function browserTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * The zone a cron schedule actually fires in, but only when it differs from
+ * the browser's — otherwise the label is noise.
+ */
+export function foreignTimezone(config: ScheduleConfig | null): string | null {
+  if (!config || config.type !== "cron" || !config.timezone) return null;
+  return config.timezone === browserTimezone() ? null : config.timezone;
+}
+
 export function humanizeSchedule(config: ScheduleConfig, t: TFunc): string {
-  if (config.type === "cron" && config.cron) return humanizeCron(config.cron, t);
+  if (config.type === "cron" && config.cron) {
+    const cron = humanizeCron(config.cron, t);
+    const tz = foreignTimezone(config);
+    return tz ? `${cron} (${tz})` : cron;
+  }
   if (config.type === "interval") {
     const h = config.hours || 0;
     const m = config.minutes || 0;

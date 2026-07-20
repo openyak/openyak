@@ -29,6 +29,7 @@ dependencies = [
     "aiofiles>=24.1.0",
     "pyyaml>=6.0",
     "croniter>=2.0.0",
+    "tzlocal>=5.0",  # local-timezone detection for cron scheduling (Windows-correct)
     "wcmatch>=10.0",
 
     # Web content extraction

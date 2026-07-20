@@ -19,6 +19,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.models.scheduled_task import ScheduledTask
 from app.scheduler.executor import execute_scheduled_task
 from app.utils.id import generate_ulid
+from app.utils.timezone import (
+    get_local_timezone_name,
+    resolve_timezone,
+    to_naive_utc,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +88,7 @@ class TaskScheduler:
                 ).scalar_one_or_none()
                 if task is None:
                     return
+                self._backfill_timezone(task)
                 if task.enabled:
                     task.next_run_at = self._compute_next_run(task.schedule_config)
                 else:
@@ -149,12 +155,21 @@ class TaskScheduler:
                 )
                 break
             asyncio.create_task(
-                self._execute_and_reschedule(task.id, task.name),
+                self._execute_and_reschedule(
+                    task.id, task.name, fired_for=task.next_run_at
+                ),
                 name=f"sched-exec-{task.id[:12]}",
             )
 
-    async def _execute_and_reschedule(self, task_id: str, task_name: str) -> None:
-        """Execute a task and compute the next run time."""
+    async def _execute_and_reschedule(
+        self, task_id: str, task_name: str, *, fired_for: datetime | None = None
+    ) -> None:
+        """Execute a task and compute the next run time.
+
+        ``fired_for`` is the occurrence being executed; it is fed back into the
+        next computation so a DST fall-back repeat of the same wall-clock time
+        is not executed twice.
+        """
         self._running_tasks.add(task_id)
         try:
             await execute_scheduled_task(
@@ -177,7 +192,9 @@ class TaskScheduler:
                     )
                 ).scalar_one_or_none()
                 if task and task.enabled:
-                    task.next_run_at = self._compute_next_run(task.schedule_config)
+                    task.next_run_at = self._compute_next_run(
+                        task.schedule_config, last_run=fired_for
+                    )
 
     # ------------------------------------------------------------------
     # Internal: startup helpers
@@ -193,12 +210,18 @@ class TaskScheduler:
                 tasks = result.scalars().all()
                 now = datetime.now(timezone.utc).replace(tzinfo=None)
                 for task in tasks:
+                    # A legacy row whose zone we just stamped had its
+                    # next_run_at computed under the old UTC interpretation, so
+                    # it must be recomputed even when it looks "fresh" — else
+                    # it fires once at the wrong wall-clock hour after upgrade.
+                    backfilled = self._backfill_timezone(task)
                     next_run = self._compute_next_run(task.schedule_config)
-                    # Only update if next_run_at is stale or missing
+                    # Update if the zone was just backfilled, or if next_run_at
+                    # is stale or missing.
                     existing = task.next_run_at
                     if existing is not None and existing.tzinfo is not None:
                         existing = existing.replace(tzinfo=None)
-                    if existing is None or existing < now:
+                    if backfilled or existing is None or existing < now:
                         task.next_run_at = next_run
 
     async def _catchup_missed(self) -> None:
@@ -228,7 +251,9 @@ class TaskScheduler:
         )
         for task in missed:
             asyncio.create_task(
-                self._execute_and_reschedule(task.id, task.name),
+                self._execute_and_reschedule(
+                    task.id, task.name, fired_for=task.next_run_at
+                ),
                 name=f"sched-catchup-{task.id[:12]}",
             )
 
@@ -237,22 +262,68 @@ class TaskScheduler:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _compute_next_run(schedule_config: dict) -> datetime | None:
+    def _backfill_timezone(task: ScheduledTask) -> bool:
+        """Stamp the local zone onto legacy cron configs that predate the field.
+
+        Returns True if the config was changed. Reassigns the dict so the JSON
+        column change is detected.
+        """
+        config = task.schedule_config or {}
+        if config.get("type") != "cron" or config.get("timezone"):
+            return False
+        task.schedule_config = {**config, "timezone": get_local_timezone_name()}
+        return True
+
+    @staticmethod
+    def _compute_next_run(
+        schedule_config: dict,
+        *,
+        after: datetime | None = None,
+        last_run: datetime | None = None,
+    ) -> datetime | None:
         """Compute the next run time from a schedule config.
 
-        Returns a naive UTC datetime (no tzinfo) for SQLite compatibility.
+        Cron expressions are interpreted in the task's ``timezone`` (an IANA
+        name; the system local zone when absent, which covers rows written
+        before the field existed). Occurrences are computed in that zone so a
+        daily 08:00 task stays at 08:00 wall-clock across DST transitions, then
+        converted back to a naive UTC datetime for SQLite compatibility.
+
+        ``after`` (aware or naive-UTC) overrides "now"; used by tests.
+
+        ``last_run`` (aware or naive-UTC) is the occurrence that just fired. On
+        a DST fall-back the same local wall-clock time occurs twice, so croniter
+        legitimately yields it twice; passing the previous fire suppresses the
+        duplicate so a daily 02:30 job runs once, not twice.
         """
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now_utc = after or datetime.now(timezone.utc)
+        if now_utc.tzinfo is None:
+            now_utc = now_utc.replace(tzinfo=timezone.utc)
+        now = now_utc.replace(tzinfo=None)
         stype = schedule_config.get("type")
         if stype == "cron":
             cron_expr = schedule_config.get("cron")
             if not cron_expr:
                 return None
+            tz = resolve_timezone(schedule_config.get("timezone"))
             try:
-                cron = croniter(cron_expr, now)
-                result = cron.get_next(datetime)
-                # croniter returns naive datetime — ensure no tzinfo
-                return result.replace(tzinfo=None) if result.tzinfo else result
+                cron = croniter(cron_expr, now_utc.astimezone(tz))
+                last_local = None
+                if last_run is not None:
+                    aware = (
+                        last_run
+                        if last_run.tzinfo is not None
+                        else last_run.replace(tzinfo=timezone.utc)
+                    )
+                    last_local = aware.astimezone(tz).replace(tzinfo=None)
+                occurrence = cron.get_next(datetime)
+                # At most one repeat is possible (a single fold), but allow a
+                # couple of hops so an ambiguous *range* cannot loop forever.
+                for _ in range(2):
+                    if occurrence.replace(tzinfo=None) != last_local:
+                        break
+                    occurrence = cron.get_next(datetime)
+                return to_naive_utc(occurrence)
             except (ValueError, KeyError) as e:
                 logger.warning("Invalid cron expression %r: %s", cron_expr, e)
                 return None

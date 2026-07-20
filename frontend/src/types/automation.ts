@@ -5,6 +5,8 @@ export interface ScheduleConfig {
   cron?: string;
   hours?: number;
   minutes?: number;
+  /** IANA zone the cron expression is interpreted in (cron schedules only). */
+  timezone?: string;
 }
 
 export interface AutomationResponse {
