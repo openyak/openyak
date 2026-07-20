@@ -13,6 +13,9 @@ export interface PermissionPresets {
 export interface SavedPermissionRule {
   tool: string;
   allow: boolean;
+  /** Resource scope: "*" = the whole tool, otherwise a glob over the resource
+   * (file path for read/write/edit, command for bash). */
+  pattern: string;
   timestamp: number;
 }
 
@@ -71,12 +74,12 @@ interface SettingsStore {
   setReasoningEnabled: (enabled: boolean) => void;
   /** Toggle a single permission preset */
   togglePermissionPreset: (key: keyof PermissionPresets) => void;
-  /** Save a permission rule for a tool */
-  savePermissionRule: (tool: string, allow: boolean) => void;
-  /** Get saved permission for a tool (if any) */
+  /** Save a permission rule for a tool, optionally scoped to a resource pattern */
+  savePermissionRule: (tool: string, allow: boolean, pattern?: string) => void;
+  /** Get saved tool-wide permission for a tool (if any) */
   getSavedPermission: (tool: string) => boolean | null;
-  /** Clear a saved permission rule */
-  clearPermissionRule: (tool: string) => void;
+  /** Clear a saved permission rule (all rules for the tool when no pattern given) */
+  clearPermissionRule: (tool: string, pattern?: string) => void;
   /** Clear all saved permission rules */
   clearAllPermissionRules: () => void;
   /** Set workspace directory (null = unrestricted) */
@@ -176,20 +179,28 @@ export const useSettingsStore = create<SettingsStore>()(
                 : "ask";
           return { permissionPresets: next, workMode };
         }),
-      savePermissionRule: (tool, allow) =>
+      savePermissionRule: (tool, allow, pattern = "*") =>
         set((s) => ({
           savedPermissions: [
-            ...s.savedPermissions.filter((r) => r.tool !== tool),
-            { tool, allow, timestamp: Date.now() },
+            ...s.savedPermissions.filter(
+              (r) => !(r.tool === tool && (r.pattern ?? "*") === pattern),
+            ),
+            { tool, allow, pattern, timestamp: Date.now() },
           ],
         })),
       getSavedPermission: (tool) => {
-        const rule = get().savedPermissions.find((r) => r.tool === tool);
+        const rule = get().savedPermissions.find(
+          (r) => r.tool === tool && (r.pattern ?? "*") === "*",
+        );
         return rule ? rule.allow : null;
       },
-      clearPermissionRule: (tool) =>
+      clearPermissionRule: (tool, pattern) =>
         set((s) => ({
-          savedPermissions: s.savedPermissions.filter((r) => r.tool !== tool),
+          savedPermissions: s.savedPermissions.filter((r) =>
+            pattern === undefined
+              ? r.tool !== tool
+              : !(r.tool === tool && (r.pattern ?? "*") === pattern),
+          ),
         })),
       clearAllPermissionRules: () => set({ savedPermissions: [] }),
       setWorkspaceDirectory: (dir) => set({ workspaceDirectory: dir }),
@@ -205,24 +216,31 @@ export const useSettingsStore = create<SettingsStore>()(
     }),
     {
       name: "openyak-settings",
-      version: 3,
+      version: 4,
       migrate: (persistedState) => {
-        if (
-          persistedState &&
-          typeof persistedState === "object" &&
-          "activeProvider" in persistedState
-        ) {
-          if (persistedState.activeProvider === "openyak") {
-            return { ...persistedState, activeProvider: null } as SettingsStore;
-          }
-          if (persistedState.activeProvider === "local") {
-            return {
-              ...persistedState,
-              activeProvider: "custom",
-            } as SettingsStore;
+        let state = persistedState as Record<string, unknown> | null;
+        if (state && typeof state === "object" && "activeProvider" in state) {
+          if (state.activeProvider === "openyak") {
+            state = { ...state, activeProvider: null };
+          } else if (state.activeProvider === "local") {
+            state = { ...state, activeProvider: "custom" };
           }
         }
-        return persistedState as SettingsStore;
+        // v4: saved permission rules gained a resource pattern; legacy
+        // tool-wide rules map to "*".
+        if (state && Array.isArray(state.savedPermissions)) {
+          const legacyRules = state.savedPermissions as Array<
+            Omit<SavedPermissionRule, "pattern"> & { pattern?: string }
+          >;
+          state = {
+            ...state,
+            savedPermissions: legacyRules.map((r) => ({
+              ...r,
+              pattern: r.pattern ?? "*",
+            })),
+          };
+        }
+        return state as unknown as SettingsStore;
       },
     },
   ),

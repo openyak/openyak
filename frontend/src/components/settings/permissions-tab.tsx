@@ -82,7 +82,7 @@ export function PermissionsTab() {
             const Icon = rule.allow ? ShieldCheck : ShieldX;
             return (
               <div
-                key={`${rule.tool}-${rule.timestamp}`}
+                key={`${rule.tool}-${rule.pattern ?? "*"}-${rule.timestamp}`}
                 className={cn(
                   "flex items-center gap-3 px-4 py-3",
                   index > 0 && "border-t border-[var(--border-default)]",
@@ -115,14 +115,20 @@ export function PermissionsTab() {
                     </span>
                   </div>
                   <p className="mt-1 truncate text-xs text-[var(--text-secondary)]">
-                    {t("permissionsScopeAll", { tool: rule.tool })}
+                    {(rule.pattern ?? "*") === "*" ? (
+                      t("permissionsScopeAll", { tool: rule.tool })
+                    ) : (
+                      <span className="font-mono" title={rule.pattern}>
+                        {rule.pattern}
+                      </span>
+                    )}
                     {formatTime(rule.timestamp) ? ` · ${formatTime(rule.timestamp)}` : ""}
                   </p>
                 </div>
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => clearPermissionRule(rule.tool)}
+                  onClick={() => clearPermissionRule(rule.tool, rule.pattern ?? "*")}
                   title={t("permissionsRevoke")}
                   aria-label={t("permissionsRevokeRule", { tool: rule.tool })}
                   className="shrink-0 text-[var(--text-secondary)]"

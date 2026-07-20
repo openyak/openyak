@@ -4,6 +4,7 @@ from app.session.processor import (
     _permission_arguments_for_event,
     _permission_decision_from_response,
     _permission_message,
+    _resolve_remember_pattern,
 )
 from app.agent.agent import AgentRegistry
 from app.agent.permission import evaluate
@@ -61,19 +62,64 @@ def test_permission_message_shows_file_target_and_truncation() -> None:
 
 
 def test_permission_decision_accepts_legacy_bool() -> None:
-    assert _permission_decision_from_response(True) == {"allowed": True, "remember": False}
-    assert _permission_decision_from_response(False) == {"allowed": False, "remember": False}
+    assert _permission_decision_from_response(True) == {
+        "allowed": True,
+        "remember": False,
+        "pattern": None,
+    }
+    assert _permission_decision_from_response(False) == {
+        "allowed": False,
+        "remember": False,
+        "pattern": None,
+    }
 
 
 def test_permission_decision_accepts_remember_payload() -> None:
     assert _permission_decision_from_response({"allowed": True, "remember": True}) == {
         "allowed": True,
         "remember": True,
+        "pattern": None,
     }
     assert _permission_decision_from_response({"allowed": False, "remember": True}) == {
         "allowed": False,
         "remember": True,
+        "pattern": None,
     }
+
+
+def test_permission_decision_extracts_scope_pattern() -> None:
+    decision = _permission_decision_from_response(
+        {"allowed": True, "remember": True, "pattern": "git *"}
+    )
+    assert decision["pattern"] == "git *"
+
+    # Non-string / empty patterns are ignored, not remembered verbatim.
+    assert _permission_decision_from_response(
+        {"allowed": True, "remember": True, "pattern": 42}
+    )["pattern"] is None
+    assert _permission_decision_from_response(
+        {"allowed": True, "remember": True, "pattern": "   "}
+    )["pattern"] is None
+
+
+def test_resolve_remember_pattern_honors_covering_scope() -> None:
+    # Chosen scope covers the approved resource → honored.
+    assert _resolve_remember_pattern("git push origin main", "git *") == "git *"
+    assert _resolve_remember_pattern("/ws/report/q3.md", "/ws/report/*") == "/ws/report/*"
+    assert _resolve_remember_pattern("npm run build", "*") == "*"
+    # Exact resource is a valid scope of itself.
+    assert _resolve_remember_pattern("git status", "git status") == "git status"
+
+
+def test_resolve_remember_pattern_falls_back_on_mismatch() -> None:
+    # A scope that does not cover the approved resource falls back to the
+    # exact resource instead of persisting an unrelated rule.
+    assert _resolve_remember_pattern("git push", "npm *") == "git push"
+    assert _resolve_remember_pattern("/ws/a.txt", "/other/*") == "/ws/a.txt"
+    # Missing/blank/non-string scopes also fall back.
+    assert _resolve_remember_pattern("git push", None) == "git push"
+    assert _resolve_remember_pattern("git push", "") == "git push"
+    assert _resolve_remember_pattern("git push", 7) == "git push"
 
 
 class _Provider:

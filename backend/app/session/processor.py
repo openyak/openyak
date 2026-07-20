@@ -29,6 +29,7 @@ from app.agent.agent import AgentRegistry
 from app.agent.permission import (
     RejectedError,
     evaluate,
+    pattern_matches,
 )
 from app.provider.registry import ProviderRegistry
 from app.schemas.agent import PermissionRule
@@ -791,6 +792,12 @@ class SessionProcessor:
         rp = "*"
         if tool.id in _FILE_TOOLS:
             rp = ta.get("file_path", "*")
+        elif tool.id == "bash":
+            # The command is the resource, so pattern rules like "git *" can
+            # scope approvals to a command family instead of all of bash.
+            command = ta.get("command")
+            if isinstance(command, str) and command.strip():
+                rp = command.strip()
         action = evaluate(tool.id, rp, sp.merged_permissions)
 
         if action == "deny":
@@ -815,7 +822,7 @@ class SessionProcessor:
                     job.session_id,
                     sp,
                     permission=tool.id,
-                    pattern=rp,
+                    pattern=_resolve_remember_pattern(rp, decision.get("pattern")),
                     allow=bool(decision.get("allowed")),
                 )
             if not decision.get("allowed"):
@@ -1481,7 +1488,7 @@ async def _ask_permission(
     tool_name: str,
     tool_args: dict[str, Any],
     resource_pattern: str = "*",
-) -> dict[str, bool]:
+) -> dict[str, Any]:
     """Ask user for permission via SSE and wait for response."""
     permission_call_id = generate_ulid()
     arguments, truncated = _permission_arguments_for_event(tool_args)
@@ -1507,17 +1514,32 @@ async def _ask_permission(
         return _permission_decision_from_response(response)
     except TimeoutError:
         logger.warning("Permission request timed out for %s", tool_name)
-        return {"allowed": False, "remember": False}
+        return {"allowed": False, "remember": False, "pattern": None}
 
 
-def _permission_decision_from_response(response: Any) -> dict[str, bool]:
+def _permission_decision_from_response(response: Any) -> dict[str, Any]:
     if isinstance(response, dict):
+        pattern = response.get("pattern")
         return {
             "allowed": bool(response.get("allowed")),
             "remember": bool(response.get("remember")),
+            "pattern": pattern if isinstance(pattern, str) and pattern.strip() else None,
         }
     allowed = str(response).lower() in ("allow", "yes", "true", "1")
-    return {"allowed": allowed, "remember": False}
+    return {"allowed": allowed, "remember": False, "pattern": None}
+
+
+def _resolve_remember_pattern(resource: str, chosen: Any) -> str:
+    """Pick the pattern to remember for an approved permission.
+
+    The user-chosen scope is honored only if it actually covers the resource
+    that was just approved; anything else falls back to the exact resource.
+    """
+    if isinstance(chosen, str) and chosen.strip():
+        chosen = chosen.strip()
+        if pattern_matches(resource, chosen):
+            return chosen
+    return resource
 
 
 async def _remember_permission_rule(

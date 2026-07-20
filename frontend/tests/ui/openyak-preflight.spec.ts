@@ -530,6 +530,9 @@ test.describe("OpenYak UI preflight", () => {
     await page
       .getByRole("switch", { name: /Remember this choice for bash/i })
       .setChecked(true);
+    // Tool-wide allow is this test's subject; the scope selector defaults to
+    // the safest option (this exact command), so widen it explicitly.
+    await page.locator("#remember-scope").selectOption("all");
 
     const respond = page.waitForResponse(
       (res) => res.url().includes("/api/chat/respond") && res.status() === 200,
@@ -542,7 +545,7 @@ test.describe("OpenYak UI preflight", () => {
         allowed: true,
         remember: true,
         permission: "bash",
-        pattern: "npm run preflight:ui",
+        pattern: "*",
       },
     });
 
@@ -603,6 +606,9 @@ test.describe("OpenYak UI preflight", () => {
     await page
       .getByRole("switch", { name: /Remember this choice for bash/i })
       .setChecked(true);
+    // This test covers the tool-wide deny path; the scope selector defaults
+    // to the safest option (this exact command), so widen it explicitly.
+    await page.locator("#remember-scope").selectOption("all");
 
     const respond = page.waitForResponse(
       (res) => res.url().includes("/api/chat/respond") && res.status() === 200,
@@ -615,7 +621,7 @@ test.describe("OpenYak UI preflight", () => {
         allowed: false,
         remember: true,
         permission: "bash",
-        pattern: "npm run preflight:ui",
+        pattern: "*",
       },
     });
 

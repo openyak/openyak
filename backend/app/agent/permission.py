@@ -110,6 +110,15 @@ def presets_to_ruleset(presets: dict[str, bool] | None) -> Ruleset:
     return Ruleset(rules=rules)
 
 
+def pattern_matches(value: str, pattern: str) -> bool:
+    """Public glob check: does this resource value fall under this pattern?
+
+    Used by the processor to validate that a user-chosen remember-scope
+    actually covers the resource that was just approved.
+    """
+    return _glob_match(value, pattern)
+
+
 def _glob_match(value: str, pattern: str) -> bool:
     """Glob match for permission patterns.
 
