@@ -34,7 +34,9 @@
 
   /* Semantic */
   --color-success: #22C55E;
-  --color-warning: #EAB308;
+  /* Darkened amber: #EAB308 text on white fails contrast (permission dialog,
+     status chips); #B45309 passes AA at the sizes we use. */
+  --color-warning: #B45309;
   --color-destructive: #EF4444;
 
   /* Sidebar */
@@ -98,6 +100,46 @@
   --ui-font-title-sm: var(--ui-size-md);
   --ui-font-title: var(--ui-size-lg);
   --ui-font-title-lg: var(--ui-size-xl);
+
+  /* ─── Codex-alignment tokens (P0) ─── */
+
+  /* Text — fourth tier was referenced in several places but never defined */
+  --text-quaternary: #A9AEB8;
+  --text-accent: var(--brand-primary);
+
+  /* Ink fill — primary-action language: solid ink pill, brand color stays
+     reserved for interaction accents (links, focus, selection) */
+  --ink-solid: #171717;
+  --ink-solid-hover: #2E2E2E;
+  --ink-solid-text: #FFFFFF;
+
+  /* Border aliases — these names were already used across forms; without a
+     definition every such control rendered with no focus ring at all */
+  --border-hover: var(--border-heavy);
+  --border-focus: var(--ring);
+  --border-primary: var(--border-default);
+  --accent-primary: var(--brand-primary);
+
+  /* Diff semantics */
+  --diff-added-fg: #16A34A;
+  --diff-added-bg: rgba(34, 197, 94, 0.1);
+  --diff-removed-fg: #DC2626;
+  --diff-removed-bg: rgba(239, 68, 68, 0.1);
+
+  /* Skill accent — skills get their own semantic hue, distinct from brand */
+  --skill-accent: #7C5CFC;
+
+  /* Radius scale — inline chips → cards/inputs → dialogs/panels → composer */
+  --radius-sm: 6px;
+  --radius-md: var(--radius);
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+
+  /* Motion */
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --motion-slow: 320ms;
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .dark {
@@ -164,6 +206,17 @@
   --prose-accent: #9fc1ff;
   --prose-blockquote-bg: rgba(138, 180, 255, 0.06);
   --prose-marker: #727272;
+
+  /* ─── Codex-alignment tokens (P0) ─── */
+  --text-quaternary: #6E7178;
+  --ink-solid: #FFFFFF;
+  --ink-solid-hover: #E6E6E6;
+  --ink-solid-text: #171717;
+  --diff-added-fg: #3ED08F;
+  --diff-added-bg: rgba(62, 208, 143, 0.12);
+  --diff-removed-fg: #E86D73;
+  --diff-removed-bg: rgba(232, 109, 115, 0.12);
+  --skill-accent: #A78BFA;
 }
 
 /* ─── Base Styles ─── */
@@ -451,25 +504,9 @@ pre code {
   --code-inserted: #89D185;
 }
 
-.dark {
-  --code-bg: #1E1E1E;
-  --code-text: #D4D4D4;
-  --code-comment: #6A9955;
-  --code-keyword: #569CD6;
-  --code-string: #CE9178;
-  --code-function: #DCDCAA;
-  --code-variable: #9CDCFE;
-  --code-number: #B5CEA8;
-  --code-operator: #D4D4D4;
-  --code-class: #4EC9B0;
-  --code-tag: #569CD6;
-  --code-attr-name: #9CDCFE;
-  --code-attr-value: #CE9178;
-  --code-builtin: #4EC9B0;
-  --code-regex: #D16969;
-  --code-deleted: #F44747;
-  --code-inserted: #89D185;
-}
+/* Both themes intentionally share the same code palette (code blocks stay
+   dark even in light mode, like ChatGPT/Claude), so the :root values above
+   apply globally — no .dark override needed. */
 
 /* Highlight.js Theme — VS Code Dark+ inspired */
 .hljs {
@@ -1116,5 +1153,108 @@ pre code {
   .shimmer-text {
     animation: none;
     -webkit-text-fill-color: var(--text-secondary);
+  }
+}
+
+/* ─── Enter/exit animation utilities (P0 motion revival) ───
+   The shadcn-style popover/dialog/sheet components reference animate-in /
+   fade-in-0 / zoom-in-95 / slide-in-from-* classes that were never defined
+   (no animation plugin installed), so every overlay popped with zero motion.
+   Minimal dependency-free implementation of exactly the classes this codebase
+   uses; utility API adapted from tw-animate-css (MIT). */
+
+@utility animate-in {
+  animation: oy-enter var(--tw-duration, var(--motion-base)) var(--tw-ease, var(--ease-out-expo));
+  --tw-enter-opacity: initial;
+  --tw-enter-scale: initial;
+  --tw-enter-translate-x: initial;
+  --tw-enter-translate-y: initial;
+}
+
+@utility animate-out {
+  animation: oy-exit var(--tw-duration, var(--motion-fast)) var(--tw-ease, ease-in);
+  --tw-exit-opacity: initial;
+  --tw-exit-scale: initial;
+  --tw-exit-translate-x: initial;
+  --tw-exit-translate-y: initial;
+}
+
+@keyframes oy-enter {
+  from {
+    opacity: var(--tw-enter-opacity, 1);
+    transform: translate3d(var(--tw-enter-translate-x, 0), var(--tw-enter-translate-y, 0), 0)
+      scale3d(var(--tw-enter-scale, 1), var(--tw-enter-scale, 1), var(--tw-enter-scale, 1));
+  }
+}
+
+@keyframes oy-exit {
+  to {
+    opacity: var(--tw-exit-opacity, 1);
+    transform: translate3d(var(--tw-exit-translate-x, 0), var(--tw-exit-translate-y, 0), 0)
+      scale3d(var(--tw-exit-scale, 1), var(--tw-exit-scale, 1), var(--tw-exit-scale, 1));
+  }
+}
+
+@utility fade-in-0 {
+  --tw-enter-opacity: 0;
+}
+@utility fade-out-0 {
+  --tw-exit-opacity: 0;
+}
+@utility zoom-in-95 {
+  --tw-enter-scale: 0.95;
+}
+@utility zoom-out-95 {
+  --tw-exit-scale: 0.95;
+}
+
+@utility slide-in-from-top {
+  --tw-enter-translate-y: -100%;
+}
+@utility slide-in-from-bottom {
+  --tw-enter-translate-y: 100%;
+}
+@utility slide-in-from-left {
+  --tw-enter-translate-x: -100%;
+}
+@utility slide-in-from-right {
+  --tw-enter-translate-x: 100%;
+}
+@utility slide-out-to-top {
+  --tw-exit-translate-y: -100%;
+}
+@utility slide-out-to-bottom {
+  --tw-exit-translate-y: 100%;
+}
+@utility slide-out-to-left {
+  --tw-exit-translate-x: -100%;
+}
+@utility slide-out-to-right {
+  --tw-exit-translate-x: 100%;
+}
+
+@utility slide-in-from-top-* {
+  --tw-enter-translate-y: calc(--value([percentage], [length]) * -1);
+  --tw-enter-translate-y: calc(--value(ratio) * -100%);
+}
+@utility slide-in-from-left-* {
+  --tw-enter-translate-x: calc(--value([percentage], [length]) * -1);
+  --tw-enter-translate-x: calc(--value(ratio) * -100%);
+}
+@utility slide-out-to-top-* {
+  --tw-exit-translate-y: calc(--value([percentage], [length]) * -1);
+  --tw-exit-translate-y: calc(--value(ratio) * -100%);
+}
+@utility slide-out-to-left-* {
+  --tw-exit-translate-x: calc(--value([percentage], [length]) * -1);
+  --tw-exit-translate-x: calc(--value(ratio) * -100%);
+}
+
+/* Entry/exit motion collapses to imperceptible under reduced-motion; ongoing
+   informative animations (spinners, progress) are governed separately above. */
+@media (prefers-reduced-motion: reduce) {
+  [class*="animate-in"],
+  [class*="animate-out"] {
+    animation-duration: 1ms !important;
   }
 }
