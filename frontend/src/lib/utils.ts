@@ -1,6 +1,36 @@
 import { type ClassValue, clsx } from "clsx";
-import { twMerge } from "tailwind-merge";
+import { extendTailwindMerge } from "tailwind-merge";
 import type { PartData, TextPart } from "@/types/message";
+
+// tailwind-merge doesn't know our custom text-ui-* font-size utilities and
+// its default heuristic classifies unknown `text-*` classes as text COLOR —
+// which silently deleted real color classes (e.g. a button's
+// text-[var(--ink-solid-text)]) whenever a text-ui-* size appeared later in
+// the list. Register them in the font-size group so they only ever compete
+// with other font sizes.
+const twMerge = extendTailwindMerge({
+  extend: {
+    classGroups: {
+      "font-size": [
+        "text-ui-overline",
+        "text-ui-caption",
+        "text-ui-body",
+        "text-ui-title-sm",
+        "text-ui-title",
+        "text-ui-title-lg",
+        "text-ui-3xs",
+        "text-ui-2xs",
+        "text-ui-xs",
+        "text-ui-sm",
+        "text-ui-md",
+        "text-ui-lg",
+        "text-ui-xl",
+        "text-ui-code",
+        "text-ui-qr",
+      ],
+    },
+  },
+});
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));

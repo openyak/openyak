@@ -61,7 +61,29 @@ test("scoped remember: command-family approval persists and rides the next promp
   await scopeSelect.selectOption("prefix");
   await expect(page.getByText("npm *", { exact: true })).toBeVisible();
 
-  await page.getByRole("button", { name: /Allow/ }).click();
+  // Regression: the ink-filled Allow button must keep readable text —
+  // tailwind-merge once dropped its color class as a bogus font-size
+  // conflict, leaving near-black text on the ink fill. Assert real
+  // luminance contrast, not just string inequality.
+  const allowButton = page.getByRole("button", { name: /Allow/ });
+  const contrastRatio = await allowButton.evaluate((el) => {
+    const cs = getComputedStyle(el);
+    const lum = (rgb: string) => {
+      const [r, g, b] = (rgb.match(/\d+/g) ?? ["0", "0", "0"])
+        .slice(0, 3)
+        .map((v) => {
+          const c = Number(v) / 255;
+          return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+        });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const l1 = lum(cs.color);
+    const l2 = lum(cs.backgroundColor);
+    return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+  });
+  expect(contrastRatio).toBeGreaterThan(4.5);
+
+  await allowButton.click();
 
   // The respond payload carries the chosen scope to the backend.
   await expect.poll(() => mockState.chatResponses.length).toBeGreaterThan(0);
