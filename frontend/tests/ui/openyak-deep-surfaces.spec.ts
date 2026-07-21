@@ -145,6 +145,12 @@ test.describe("OpenYak deep claimed-feature GUI surfaces", () => {
     await alphaAfterPin.locator("button").last().click();
     await page.getByRole("menuitem", { name: /Rename/i }).click();
     await expect(alphaAfterPin.locator('input[type="text"]')).toBeVisible();
+    // #144: after the menu closes the rename input must keep focus — otherwise it
+    // blurs, commits empty, and "flashes" shut ("一闪而过"). The underlying focus-
+    // restore race is engine-timing-specific (loses on Windows WebView2; chromium
+    // wins it either way), so this pins the intended contract — it does not by
+    // itself reproduce the platform bug.
+    await expect(alphaAfterPin.locator('input[type="text"]')).toBeFocused();
     await alphaAfterPin.locator('input[type="text"]').fill("Quarterly planning notes renamed");
     await page.keyboard.press("Enter");
     await expect(page.getByRole("option", { name: /Quarterly planning notes renamed/i })).toBeVisible();
