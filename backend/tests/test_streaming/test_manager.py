@@ -174,7 +174,7 @@ class TestStreamManagerCleanup:
             job = GenerationJob(stream_id=f"s{i}", session_id=f"sess{i}")
             sm._jobs[f"s{i}"] = job
             if i < 55:
-                job.complete()
+                job.settle()
 
         removed = sm.cleanup_completed(keep_last=10)
         assert removed == 45  # 55 completed, keep 10
@@ -223,6 +223,53 @@ class TestStreamManagerCleanup:
         assert job.abort_event.is_set()
         with pytest.raises(asyncio.CancelledError):
             await job.task
+
+    @pytest.mark.asyncio
+    async def test_abort_sessions_waits_for_terminal_job_cleanup(self):
+        sm = StreamManager()
+        job = sm.create_job("running-stream", "running-session")
+        cleanup_started = asyncio.Event()
+        cleanup_finished = asyncio.Event()
+        allow_settlement = asyncio.Event()
+
+        async def run_until_cancelled():
+            await job.abort_event.wait()
+            job.complete()
+            cleanup_started.set()
+            await allow_settlement.wait()
+            cleanup_finished.set()
+            job.settle()
+
+        job.task = asyncio.create_task(run_until_cancelled())
+        await asyncio.sleep(0)
+
+        abort_and_wait = asyncio.create_task(
+            sm.abort_sessions_and_wait({"running-session"})
+        )
+        await cleanup_started.wait()
+
+        assert job.completed
+        assert not job.settled
+        assert not abort_and_wait.done()
+        allow_settlement.set()
+        aborted = await abort_and_wait
+        assert aborted == 1
+        assert cleanup_finished.is_set()
+        assert job.settled
+
+    @pytest.mark.asyncio
+    async def test_abort_sessions_rejects_waiting_on_its_own_owner_task(self):
+        sm = StreamManager()
+        job = sm.create_job("self-stream", "self-session")
+        job.set_settlement_owner(asyncio.current_task())
+
+        with pytest.raises(
+            TimeoutError,
+            match="own generation Task",
+        ):
+            await sm.abort_sessions_and_wait({"self-session"})
+
+        job.settle()
 
     @pytest.mark.asyncio
     async def test_workspace_mutation_slot_serializes_same_workspace(self):

@@ -917,7 +917,7 @@ async def update_session(
 
 
 async def delete_session_cascade(
-    db: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
     session_id: str,
     stream_manager: StreamManager,
 ) -> dict[str, bool]:
@@ -929,31 +929,53 @@ async def delete_session_cascade(
     """
     from app.dependencies import get_index_manager
 
-    if await get_session(db, session_id) is None:
-        raise NotFound("Session not found")
+    async def read_tree(db: AsyncSession) -> list[str]:
+        if await get_session(db, session_id) is None:
+            raise NotFound("Session not found")
 
-    session_ids = [session_id]
-    seen = {session_id}
-    frontier = [session_id]
-    while frontier:
-        result = await db.execute(
-            select(Session.id).where(Session.parent_id.in_(frontier))
-        )
-        frontier = [
-            child_id
-            for child_id in result.scalars().all()
-            if child_id not in seen
-        ]
-        seen.update(frontier)
-        session_ids.extend(frontier)
+        session_ids = [session_id]
+        seen = {session_id}
+        frontier = [session_id]
+        while frontier:
+            result = await db.execute(
+                select(Session.id).where(Session.parent_id.in_(frontier))
+            )
+            frontier = [
+                child_id
+                for child_id in result.scalars().all()
+                if child_id not in seen
+            ]
+            seen.update(frontier)
+            session_ids.extend(frontier)
+        return session_ids
 
-    for tree_session_id in session_ids:
-        if stream_manager is not None:
-            stream_manager.abort_session(tree_session_id)
-        await delete_session_uploads(db, tree_session_id)
+    # End the discovery transaction before cancellation. Cancelled generation
+    # Jobs persist terminal state from independent connections; waiting while
+    # this connection retains a read snapshot can deadlock SQLite's writer
+    # upgrade, even in WAL mode.
+    async with session_factory() as db:
+        async with db.begin():
+            session_ids = await read_tree(db)
 
-    for tree_session_id in reversed(session_ids):
-        await delete_by_id(db, Session, tree_session_id)
+    if stream_manager is not None:
+        try:
+            await stream_manager.abort_sessions_and_wait(session_ids)
+        except TimeoutError as exc:
+            raise Conflict(
+                "Session is still stopping; try deleting it again"
+            ) from exc
+
+    # Re-read in the deleting transaction so descendants committed during the
+    # cancellation boundary are included. Active Jobs for the original tree
+    # have fully settled, so no terminal writer can race these deletes.
+    async with session_factory() as db:
+        async with db.begin():
+            session_ids = await read_tree(db)
+            for tree_session_id in session_ids:
+                await delete_session_uploads(db, tree_session_id)
+
+            for tree_session_id in reversed(session_ids):
+                await delete_by_id(db, Session, tree_session_id)
 
     index_manager = get_index_manager()
     if index_manager is not None:

@@ -6,10 +6,11 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agent.agent import AgentRegistry
 from app.agent.swarm import SwarmCoordinator, SwarmRunContext, SwarmTaskSpec
+from app.config import Settings
 from app.models.base import Base
 from app.provider.base import BaseProvider
 from app.provider.registry import ProviderRegistry
@@ -28,6 +29,7 @@ from app.session.manager import (
 )
 from app.streaming.events import PERMISSION_REQUEST, SWARM_STATE, TEXT_DELTA, SSEEvent
 from app.streaming.manager import GenerationJob, StreamManager
+from app.storage.database import create_engine
 from app.tool.base import ToolDefinition, ToolResult
 from app.tool.builtin.write import WriteTool
 from app.tool.context import ToolContext
@@ -39,8 +41,12 @@ pytestmark = pytest.mark.asyncio
 
 @pytest_asyncio.fixture
 async def swarm_session_factory(tmp_path):
-    """File-backed SQLite permits the overlapping transactions Swarm uses."""
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'swarm.db'}")
+    """Use the production SQLite concurrency contract for overlapping writes."""
+    engine = create_engine(
+        Settings(
+            database_url=f"sqlite+aiosqlite:///{tmp_path / 'swarm.db'}",
+        )
+    )
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
     yield async_sessionmaker(
@@ -1272,13 +1278,11 @@ async def test_deleting_running_child_aborts_registered_job_without_recreation(
         await asyncio.sleep(0.01)
 
     assert child_session_id
-    async with swarm_session_factory() as db:
-        async with db.begin():
-            await delete_session_cascade(
-                db,
-                child_session_id,
-                stream_manager,
-            )
+    await delete_session_cascade(
+        swarm_session_factory,
+        child_session_id,
+        stream_manager,
+    )
 
     outcome = await asyncio.wait_for(coordinator_task, timeout=2)
 

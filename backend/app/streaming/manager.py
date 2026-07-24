@@ -6,7 +6,7 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Any, Awaitable, TypeVar
 
 from app.streaming.events import (
@@ -142,6 +142,10 @@ class GenerationJob:
         self.subscribers: list[asyncio.Queue[SSEEvent | None]] = []
         self.abort_event: asyncio.Event | LinkedAbortEvent = asyncio.Event()
         self._completed = False
+        self._completed_event = asyncio.Event()
+        self._settled = False
+        self._settled_event = asyncio.Event()
+        self._settlement_owner_task: asyncio.Task[Any] | None = None
         self._event_counter = 0
         self._response_queue: asyncio.Queue[tuple[str, Any]] | None = None
         self._response_futures: dict[str, asyncio.Future[Any]] = {}
@@ -177,6 +181,11 @@ class GenerationJob:
     @property
     def completed(self) -> bool:
         return self._completed
+
+    @property
+    def settled(self) -> bool:
+        """Whether the Job owner finished all terminal persistence."""
+        return self._settled
 
     def publish(self, event: SSEEvent) -> None:
         """Publish an event to all subscribers and buffer for replay."""
@@ -366,12 +375,35 @@ class GenerationJob:
     def complete(self) -> None:
         """Mark generation as complete. Signal all subscribers."""
         self._completed = True
+        self._completed_event.set()
         for q in self.subscribers:
             try:
                 q.put_nowait(None)
             except asyncio.QueueFull:
                 pass
         self.subscribers.clear()
+
+    async def wait_until_complete(self) -> None:
+        """Wait until the public event stream is closed."""
+        await self._completed_event.wait()
+
+    def settle(self) -> None:
+        """Mark owner-level cleanup and terminal persistence as finished."""
+        if not self.completed:
+            self.complete()
+        self._settled = True
+        self._settled_event.set()
+
+    async def wait_until_settled(self) -> None:
+        """Wait until the Job owner has no remaining persistence work."""
+        await self._settled_event.wait()
+
+    def set_settlement_owner(
+        self,
+        task: asyncio.Task[Any] | None,
+    ) -> None:
+        """Record the Task responsible for marking this Job settled."""
+        self._settlement_owner_task = task
 
     def abort(self) -> None:
         """Signal abort to the generation loop."""
@@ -731,6 +763,61 @@ class StreamManager:
                 count += 1
         return count
 
+    async def abort_sessions_and_wait(
+        self,
+        session_ids: Iterable[str],
+        *,
+        timeout: float = 5.0,
+    ) -> int:
+        """Stop Session jobs and wait for their terminal persistence.
+
+        Deleting a Session immediately after ``abort_session`` can race the
+        cancelled generation's final database write. Snapshot matching Jobs,
+        request cooperative abort, and wait for owner-level settlement rather
+        than cancelling a Task during an aiosqlite commit. A child Agent can
+        close its SSE stream before its coordinator persists the final parent
+        Swarm/Subtask state, so ``completed`` alone is not sufficient.
+        """
+        targets = set(session_ids)
+        if not targets:
+            return 0
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        aborted_streams: set[str] = set()
+
+        while True:
+            jobs = [
+                job
+                for job in self._jobs.values()
+                if job.session_id in targets and not job.settled
+            ]
+            if not jobs:
+                return len(aborted_streams)
+
+            current_task = asyncio.current_task()
+            if any(
+                job._settlement_owner_task is current_task
+                for job in jobs
+            ):
+                raise TimeoutError(
+                    "Cannot delete a Session from its own generation Task"
+                )
+
+            for job in jobs:
+                aborted_streams.add(job.stream_id)
+                job.abort()
+
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise TimeoutError("Timed out waiting for generation shutdown")
+            await asyncio.wait_for(
+                asyncio.gather(
+                    *(job.wait_until_settled() for job in jobs),
+                ),
+                timeout=remaining,
+            )
+
     def abort_all(self) -> int:
         """Abort all active jobs. Used during graceful shutdown."""
         count = 0
@@ -741,11 +828,11 @@ class StreamManager:
         return count
 
     def cleanup_completed(self, keep_last: int = 50) -> int:
-        """Remove old completed jobs, keeping the most recent ones."""
-        completed = [
-            sid for sid, j in self._jobs.items() if j.completed
+        """Remove old settled jobs, keeping the most recent ones."""
+        settled = [
+            sid for sid, job in self._jobs.items() if job.settled
         ]
-        to_remove = completed[:-keep_last] if len(completed) > keep_last else []
+        to_remove = settled[:-keep_last] if len(settled) > keep_last else []
         for sid in to_remove:
             del self._jobs[sid]
         return len(to_remove)

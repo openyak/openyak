@@ -158,6 +158,8 @@ class AgentAdapter:
 
         task = asyncio.create_task(coro, name=f"gen-channel-{stream_id}")
         job.task = task
+        job.set_settlement_owner(task)
+        task.add_done_callback(lambda _task: job.settle())
 
         # Collect response from SSE events
         queue = job.subscribe()

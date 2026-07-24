@@ -242,15 +242,18 @@ def _content_to_text(content: Any) -> str:
 
 def _on_task_done(task: asyncio.Task[None], *, job: GenerationJob) -> None:
     """Log unhandled exceptions from generation tasks."""
-    if task.cancelled():
-        return
-    exc = task.exception()
-    if exc is not None:
-        logger.error("OpenAI-compat generation failed %s: %s", task.get_name(), exc, exc_info=exc)
-        try:
-            job.publish(SSEEvent(AGENT_ERROR, {"error_message": "Internal error."}))
-        except Exception:
-            pass
+    try:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error("OpenAI-compat generation failed %s: %s", task.get_name(), exc, exc_info=exc)
+            try:
+                job.publish(SSEEvent(AGENT_ERROR, {"error_message": "Internal error."}))
+            except Exception:
+                pass
+    finally:
+        job.settle()
 
 
 async def _run_with_semaphore(sm: StreamManager, job: GenerationJob, coro) -> None:
@@ -419,6 +422,7 @@ async def chat_completions(
     )
     task.add_done_callback(functools.partial(_on_task_done, job=job))
     job.task = task
+    job.set_settlement_owner(task)
 
     if body.stream:
         return StreamingResponse(

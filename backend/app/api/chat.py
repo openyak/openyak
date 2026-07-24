@@ -101,15 +101,18 @@ def _on_task_done(task: asyncio.Task[None], *, job: GenerationJob) -> None:
     swallowed and the frontend would never receive a DONE or AGENT_ERROR event,
     leaving the UI stuck in the "generating" state forever.
     """
-    if task.cancelled():
-        return
-    exc = task.exception()
-    if exc is not None:
-        logger.error("Unhandled exception in generation task %s: %s", task.get_name(), exc, exc_info=exc)
-        try:
-            job.publish(SSEEvent(AGENT_ERROR, {"error_message": "An internal error occurred. Please try again."}))
-        except Exception:
-            logger.exception("Failed to publish AGENT_ERROR for task %s", task.get_name())
+    try:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error("Unhandled exception in generation task %s: %s", task.get_name(), exc, exc_info=exc)
+            try:
+                job.publish(SSEEvent(AGENT_ERROR, {"error_message": "An internal error occurred. Please try again."}))
+            except Exception:
+                logger.exception("Failed to publish AGENT_ERROR for task %s", task.get_name())
+    finally:
+        job.settle()
 
 
 async def _run_with_semaphore(sm: StreamManager, job: GenerationJob, coro) -> None:
@@ -228,6 +231,7 @@ async def start_prompt(
     )
     task.add_done_callback(functools.partial(_on_task_done, job=job))
     job.task = task  # prevent GC from silently cancelling the task
+    job.set_settlement_owner(task)
 
     return PromptResponse(stream_id=stream_id, session_id=session_id)
 
@@ -314,6 +318,7 @@ async def start_compaction(
     )
     task.add_done_callback(functools.partial(_on_task_done, job=job))
     job.task = task
+    job.set_settlement_owner(task)
 
     return PromptResponse(stream_id=stream_id, session_id=body.session_id)
 
@@ -383,6 +388,7 @@ async def edit_and_resend(
     )
     task.add_done_callback(functools.partial(_on_task_done, job=job))
     job.task = task
+    job.set_settlement_owner(task)
 
     return PromptResponse(stream_id=stream_id, session_id=body.session_id)
 

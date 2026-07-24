@@ -29,6 +29,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/), and this project
 
 - **streaming:** Fixed Stop, queued cancellation, replay deduplication, reconnect, immediate resend, remote transport health, stale streaming cursors, and active-GenerationJob recovery after backend restarts.
 - **agent lifecycle:** Fixed child cancellation, `waiting_input` propagation, parent/child terminal-state synchronization, permit cleanup, and stale Swarm members after interruption.
+- **storage:** Session deletion now waits for owner-level Agent settlement before removing SQLite rows, preventing terminal Swarm/Subtask writes from racing the delete transaction.
 - **session:** Context collapse preserves the visible transcript while excluding collapsed Messages from future model context.
 - **scheduler:** Cron schedules use each automation's timezone, and loop completion reads persisted output so `[LOOP_DONE]` terminates reliably.
 - **accessibility:** Loading indicators remain animated under reduced motion while nonessential transitions stay disabled; disclosure controls expose stable labels, relationships, and focus restoration.
@@ -41,7 +42,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/), and this project
 
 ### Validation
 
-- Backend: 1,234 passed, 21 skipped; CI-equivalent suite: 1,232 passed, 21 skipped.
+- Backend: 1,236 passed, 21 skipped; CI-equivalent suite: 1,234 passed, 21 skipped.
 - Frontend unit tests: 51/51 passed; TypeScript and ESLint completed with zero diagnostics.
 - Chromium UI regression: 120 passed, 5 documentation-capture scenarios skipped, 0 failed.
 - Production frontend build: 15/15 static pages generated.

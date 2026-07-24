@@ -339,6 +339,7 @@ class SwarmCoordinator:
             child_job.link_abort_event(coordinator_abort)
             child_jobs[member.agent_run_id] = child_job
             if self._stream_manager is not None:
+                child_job.set_settlement_owner(asyncio.current_task())
                 self._stream_manager.register_job(child_job)
 
         concurrency = asyncio.Semaphore(
@@ -627,6 +628,7 @@ class SwarmCoordinator:
             for child_job in child_jobs.values():
                 if not child_job.completed:
                     child_job.complete()
+                child_job.settle()
                 if self._stream_manager is not None:
                     self._stream_manager.remove_job(
                         child_job.stream_id

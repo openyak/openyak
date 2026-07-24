@@ -1,5 +1,7 @@
 """Session manager tests (DB operations)."""
 
+import asyncio
+
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,15 +56,18 @@ class TestSessionManager:
     @pytest.mark.asyncio
     async def test_delete_parent_cascades_through_child_agent_sessions(
         self,
-        db: AsyncSession,
+        session_factory,
     ):
-        parent = await create_session(db, id="parent")
-        child = await create_session(db, id="child", parent_id=parent.id)
-        grandchild = await create_session(
-            db,
-            id="grandchild",
-            parent_id=child.id,
-        )
+        async with session_factory() as db:
+            async with db.begin():
+                parent = await create_session(db, id="parent")
+                child = await create_session(db, id="child", parent_id=parent.id)
+                grandchild = await create_session(
+                    db,
+                    id="grandchild",
+                    parent_id=child.id,
+                )
+
         stream_manager = StreamManager()
         jobs = [
             stream_manager.create_job("parent-stream", parent.id),
@@ -70,16 +75,26 @@ class TestSessionManager:
             stream_manager.create_job("grandchild-stream", grandchild.id),
         ]
 
+        async def run_until_cancelled(job):
+            await job.abort_event.wait()
+            job.complete()
+            job.settle()
+
+        for job in jobs:
+            job.task = asyncio.create_task(run_until_cancelled(job))
+        await asyncio.sleep(0)
+
         result = await delete_session_cascade(
-            db,
+            session_factory,
             parent.id,
             stream_manager,
         )
 
         assert result == {"deleted": True}
-        assert await get_session(db, parent.id) is None
-        assert await get_session(db, child.id) is None
-        assert await get_session(db, grandchild.id) is None
+        async with session_factory() as db:
+            assert await get_session(db, parent.id) is None
+            assert await get_session(db, child.id) is None
+            assert await get_session(db, grandchild.id) is None
         assert all(job.abort_event.is_set() for job in jobs)
 
 

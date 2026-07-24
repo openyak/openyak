@@ -401,8 +401,17 @@ class TaskTool(ToolDefinition):
         cancelled = False
         propagate_cancellation = False
         stream_manager = app_state.get("stream_manager")
+        child_owner_task: asyncio.Task[Any] | None = None
         if stream_manager is not None:
             stream_manager.register_job(child_job)
+            child_owner_task = asyncio.current_task()
+            if child_owner_task is not None:
+                child_job.set_settlement_owner(child_owner_task)
+                def settle_registered_child(_task: asyncio.Task[Any]) -> None:
+                    child_job.settle()
+                    stream_manager.remove_job(child_job.stream_id)
+
+                child_owner_task.add_done_callback(settle_registered_child)
 
         def run_child() -> Any:
             return run_generation(
@@ -487,9 +496,10 @@ class TaskTool(ToolDefinition):
                     "SubAgent interaction monitor failed for %s",
                     child_session_id,
                 )
-            if stream_manager is not None:
+            if stream_manager is not None and child_owner_task is None:
                 if not child_job.completed:
                     child_job.complete()
+                child_job.settle()
                 stream_manager.remove_job(child_job.stream_id)
 
         finalization_cancel_requested = asyncio.Event()
