@@ -367,6 +367,7 @@ export function ActivityPanelContent() {
           size="icon"
           className="h-7 w-7"
           onClick={close}
+          aria-label={t("closeActivity")}
         >
           <X className="h-4 w-4" />
         </Button>
@@ -461,7 +462,11 @@ export function ActivityPanel() {
   // Mobile: Sheet overlay from right
   return (
     <Sheet open={isOpen} onOpenChange={(open) => !open && close()}>
-      <SheetContent side="right" className="w-[85vw] sm:max-w-[380px] p-0">
+      <SheetContent
+        id="activity-panel"
+        side="right"
+        className="w-[85vw] sm:max-w-[380px] p-0"
+      >
         <VisuallyHidden.Root asChild>
           <SheetTitle>{t("activity")}</SheetTitle>
         </VisuallyHidden.Root>

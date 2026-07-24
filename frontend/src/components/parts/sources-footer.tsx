@@ -5,7 +5,10 @@ import { ChevronUp } from "lucide-react";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
-import type { Source } from "@/lib/sources";
+import {
+  canonicalizeExternalSourceUrl,
+  type Source,
+} from "@/lib/sources";
 
 interface SourcesFooterProps {
   sources: Source[];
@@ -16,7 +19,13 @@ export function SourcesFooter({ sources }: SourcesFooterProps) {
 
   if (sources.length === 0) return null;
 
-  const firstFavicon = sources.find((s) => s.favicon)?.favicon;
+  const firstFavicon = sources
+    .map((source) =>
+      source.favicon
+        ? canonicalizeExternalSourceUrl(source.favicon)
+        : null,
+    )
+    .find((favicon) => favicon !== null);
 
   return (
     <Popover open={isOpen} onOpenChange={setIsOpen}>
@@ -56,17 +65,16 @@ export function SourcesFooter({ sources }: SourcesFooterProps) {
         collisionPadding={16}
         className="w-[320px] max-h-[300px] overflow-y-auto p-2 space-y-0.5 scrollbar-auto"
       >
-        {sources.map((source) => (
-          <a
-            key={source.url}
-            href={source.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-[var(--text-secondary)] hover:bg-[var(--surface-secondary)] hover:text-[var(--text-primary)] transition-colors"
-          >
-            {source.favicon && (
+        {sources.map((source) => {
+          const safeUrl = canonicalizeExternalSourceUrl(source.url);
+          const safeFavicon = source.favicon
+            ? canonicalizeExternalSourceUrl(source.favicon)
+            : null;
+          const content = (
+            <>
+            {safeFavicon && (
               <Image
-                src={source.favicon}
+                src={safeFavicon}
                 alt=""
                 width={16}
                 height={16}
@@ -79,8 +87,34 @@ export function SourcesFooter({ sources }: SourcesFooterProps) {
               <div className="truncate font-medium">{source.title}</div>
               <div className="truncate text-[10px] text-[var(--text-tertiary)]">{source.domain}</div>
             </div>
-          </a>
-        ))}
+            </>
+          );
+          const className =
+            "flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-[var(--text-secondary)] transition-colors";
+
+          return safeUrl ? (
+            <a
+              key={source.url}
+              href={safeUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={cn(
+                className,
+                "hover:bg-[var(--surface-secondary)] hover:text-[var(--text-primary)]",
+              )}
+            >
+              {content}
+            </a>
+          ) : (
+            <div
+              key={source.url}
+              className={className}
+              aria-label={`${source.title}. Unsafe source URL; link disabled`}
+            >
+              {content}
+            </div>
+          );
+        })}
       </PopoverContent>
     </Popover>
   );

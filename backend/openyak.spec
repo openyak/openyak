@@ -185,7 +185,6 @@ hiddenimports = [
     'app.session.manager',
     'app.session.compaction',
     'app.session.system_prompt',
-    'app.session.title',
     'app.session.retry',
     'app.streaming.events',
     'app.streaming.manager',

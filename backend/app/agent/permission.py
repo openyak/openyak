@@ -93,20 +93,23 @@ def presets_to_ruleset(presets: dict[str, bool] | None) -> Ruleset:
     """Convert frontend permission presets into a Ruleset.
 
     Preset keys:
-      - file_changes  → allow write + edit
-      - run_commands   → allow bash
+      - file_changes  → write/edit/apply_patch/artifact
+      - run_commands  → bash/code_execute
 
-    Only True values generate allow rules; False values are ignored so the
-    GLOBAL_DEFAULTS "ask" behaviour is preserved.
+    Explicit False values generate ``ask`` rules. This makes the UI's Ask
+    mode a complete mutation ceiling that can be inherited by child Agents.
     """
     if not presets:
         return Ruleset()
     rules: list[PermissionRule] = []
-    if presets.get("file_changes"):
-        rules.append(PermissionRule(action="allow", permission="write"))
-        rules.append(PermissionRule(action="allow", permission="edit"))
-    if presets.get("run_commands"):
-        rules.append(PermissionRule(action="allow", permission="bash"))
+    if "file_changes" in presets:
+        action = "allow" if presets["file_changes"] else "ask"
+        for permission in ("write", "edit", "apply_patch", "artifact"):
+            rules.append(PermissionRule(action=action, permission=permission))
+    if "run_commands" in presets:
+        action = "allow" if presets["run_commands"] else "ask"
+        for permission in ("bash", "code_execute"):
+            rules.append(PermissionRule(action=action, permission=permission))
     return Ruleset(rules=rules)
 
 
@@ -142,6 +145,9 @@ GLOBAL_DEFAULTS = Ruleset(rules=[
     PermissionRule(action="ask", permission="bash"),
     PermissionRule(action="ask", permission="write"),
     PermissionRule(action="ask", permission="edit"),
+    PermissionRule(action="ask", permission="apply_patch"),
+    PermissionRule(action="ask", permission="artifact"),
+    PermissionRule(action="ask", permission="code_execute"),
     PermissionRule(action="deny", permission="question"),
     PermissionRule(action="deny", permission="plan"),
     # .env file protection (two-dimensional: tool + resource pattern)

@@ -117,6 +117,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.engine = engine
     app.state.session_factory = session_factory
 
+    # Generations live in this process and cannot survive a backend restart.
+    # Reconcile their durable Work-mode rows before the first client refresh so
+    # stale child Agents never remain indefinitely under Active.
+    from app.agent.run_recovery import reconcile_interrupted_agent_runs
+
+    try:
+        interrupted_runs = await reconcile_interrupted_agent_runs(
+            session_factory
+        )
+        if interrupted_runs:
+            logger.info(
+                "Reconciled %d interrupted child-Agent run(s)",
+                interrupted_runs,
+            )
+    except Exception:
+        logger.exception("Failed to reconcile interrupted child-Agent runs")
+
     # Provider registry
     registry = ProviderRegistry()
 
@@ -543,6 +560,7 @@ def _register_builtin_tools(
     from app.tool.builtin.present_file import PresentFileTool
     from app.tool.builtin.question import QuestionTool
     from app.tool.builtin.submit_plan import SubmitPlanTool
+    from app.tool.builtin.swarm import SwarmTool
     from app.tool.builtin.read import ReadTool
     from app.tool.builtin.skill import SkillTool
     from app.tool.builtin.task import TaskTool
@@ -555,7 +573,7 @@ def _register_builtin_tools(
         ReadTool, WriteTool, EditTool, ApplyPatchTool,
         BashTool, CodeExecuteTool,
         GlobTool, GrepTool, QuestionTool, TodoTool,
-        TaskTool, WebFetchTool, WebSearchTool, InvalidTool,
+        TaskTool, SwarmTool, WebFetchTool, WebSearchTool, InvalidTool,
         PlanTool, SubmitPlanTool, ArtifactTool, PresentFileTool,
     ]:
         registry.register(tool_cls())

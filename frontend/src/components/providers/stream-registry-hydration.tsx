@@ -8,6 +8,10 @@ import { getChatRoute } from "@/lib/routes";
 import { useChatStore } from "@/stores/chat-store";
 import { startStream, isStreamActive } from "@/lib/session-stream-registry";
 import { NAVIGATE_TO_SESSION_EVENT, type NavigateToSessionDetail } from "@/lib/background-notify";
+import {
+  shouldHydrateStreamJob,
+  type ActiveStreamJob,
+} from "@/lib/active-stream-job";
 
 /**
  * On app boot, ask the backend which generations are still running and
@@ -26,12 +30,13 @@ export function StreamRegistryHydration() {
 
     const hydrate = async () => {
       try {
-        const jobs = await api.get<Array<{ stream_id: string; session_id: string; needs_input?: boolean }>>(
+        const jobs = await api.get<ActiveStreamJob[]>(
           API.CHAT.ACTIVE,
         );
         if (cancelled) return;
         const chatState = useChatStore.getState();
         for (const job of jobs) {
+          if (!shouldHydrateStreamJob(job)) continue;
           if (isStreamActive(job.session_id)) continue;
           chatState.startGeneration(job.session_id, job.stream_id);
           void startStream(job.session_id, job.stream_id);

@@ -86,9 +86,15 @@ class TestPlanPermissions:
 
         plan = BUILTIN_AGENTS["plan"]
         merged = merge_rulesets(GLOBAL_DEFAULTS, plan.permissions)
-        assert evaluate("write", "*", merged) == "deny"
-        assert evaluate("edit", "*", merged) == "deny"
-        assert evaluate("bash", "*", merged) == "deny"
+        for permission in (
+            "write",
+            "edit",
+            "apply_patch",
+            "artifact",
+            "bash",
+            "code_execute",
+        ):
+            assert evaluate(permission, "*", merged) == "deny"
 
     def test_plan_agent_allows_read(self):
         from app.agent.agent import BUILTIN_AGENTS

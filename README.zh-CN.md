@@ -75,13 +75,9 @@ OpenYak 可以在同一个线程里综合多份文件，并在右侧 artifact pa
   <img src="docs/readme/openyak-artifact-panel.png" width="900" alt="OpenYak 右侧 artifact panel 展示多文件 board brief" />
 </p>
 
-### Multi-Agent Task Batch
+### Ultra Agent Swarm
 
-把较大的请求拆成多个聚焦的 child-agent task，并行执行；父线程负责收拢进度、子会话链接和最终汇总结果。
-
-<p align="center">
-  <img src="docs/readme/openyak-multi-agent-task-batch.png" width="900" alt="OpenYak 并行 multi-agent task batch，展示子会话链接和汇总结果" />
-</p>
+复杂任务开启 Ultra 后，像平常一样描述目标即可。协调 Agent 会按需委派 2–4 个聚焦且可追踪的子 Session，并行开展只读研究，再回到父 Session 完成统一验证与综合。
 
 ### 长对话与自动压缩
 

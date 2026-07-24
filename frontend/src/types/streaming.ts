@@ -1,5 +1,7 @@
 /** SSE event types — mirrors backend app/streaming/events.py */
 
+import type { SwarmMemberPart } from "@/types/message";
+
 export const SSE_EVENTS = {
   TEXT_DELTA: "text-delta",
   REASONING_DELTA: "reasoning-delta",
@@ -25,27 +27,16 @@ export const SSE_EVENTS = {
   MODEL_LOADING: "model-loading",
   PERMISSION_RESOLVED: "permission-resolved",
   QUESTION_RESOLVED: "question-resolved",
-  TASK_BATCH_START: "task-batch-start",
-  TASK_BATCH_UPDATE: "task-batch-update",
-  TASK_BATCH_FINISH: "task-batch-finish",
+  SWARM_STATE: "swarm-state",
+  SUBTASK_STATE: "subtask-state",
 } as const;
-
-export interface TaskBatchProgressItem {
-  task_id: string;
-  session_id: string;
-  title: string;
-  agent: string;
-  model?: string | null;
-  provider_id?: string | null;
-  status: "pending" | "running" | "completed" | "failed" | "cancelled";
-  error?: string | null;
-}
 
 /** SSE event payload — mirrors backend app/schemas/streaming.py SSEEventData */
 export interface SSEEventData {
   // Common
   session_id?: string | null;
   message_id?: string | null;
+  type?: string | null;
 
   // text_delta / reasoning_delta
   text?: string | null;
@@ -63,6 +54,11 @@ export interface SSEEventData {
   cost?: number | null;
   total_cost?: number | null;
   reason?: string | null;
+
+  // retry
+  attempt?: number | null;
+  max_retries?: number | null;
+  delay?: number | null;
 
   // permission_request
   permission?: string | null;
@@ -101,10 +97,25 @@ export interface SSEEventData {
   plan?: string | null;
   files_to_modify?: string[] | null;
 
-  // task-batch-start / task-batch-update / task-batch-finish
-  batch_id?: string | null;
-  mode?: "sequential" | "parallel" | null;
-  tasks?: TaskBatchProgressItem[] | null;
+  // swarm-state
+  schema_version?: number | null;
+  swarm_id?: string | null;
+  parent_session_id?: string | null;
+  revision?: number | null;
+  strategy?: string | null;
+  failure_policy?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  members?: SwarmMemberPart[] | null;
+
+  // subtask-state
+  task_id?: string | null;
+  parent_id?: string | null;
+  agent?: string | null;
+  description?: string | null;
+  depth?: number | null;
+  resumed?: boolean | null;
+  error?: string | null;
 }
 
 /** Parsed SSE event with type and data. */

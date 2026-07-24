@@ -917,36 +917,77 @@ async def update_session(
 
 
 async def delete_session_cascade(
-    db: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
     session_id: str,
     stream_manager: StreamManager,
 ) -> dict[str, bool]:
-    """Delete a session, abort in-flight streams, and clean up FTS.
+    """Delete a Session tree, abort in-flight streams, and clean up FTS.
 
-    Streams are aborted *before* the row delete so in-flight DB writes
-    don't trip foreign-key constraints. Raises :class:`NotFound` if no
-    row was deleted.
+    Child Agent Sessions are durable rows, so deleting only their parent would
+    orphan hidden work. Descendants are discovered first, then stopped and
+    deleted leaf-first. Raises :class:`NotFound` when the root does not exist.
     """
     from app.dependencies import get_index_manager
 
-    if stream_manager is not None:
-        stream_manager.abort_session(session_id)
+    async def read_tree(db: AsyncSession) -> list[str]:
+        if await get_session(db, session_id) is None:
+            raise NotFound("Session not found")
 
-    await delete_session_uploads(db, session_id)
-    deleted = await delete_by_id(db, Session, session_id)
-    if not deleted:
-        raise NotFound("Session not found")
+        session_ids = [session_id]
+        seen = {session_id}
+        frontier = [session_id]
+        while frontier:
+            result = await db.execute(
+                select(Session.id).where(Session.parent_id.in_(frontier))
+            )
+            frontier = [
+                child_id
+                for child_id in result.scalars().all()
+                if child_id not in seen
+            ]
+            seen.update(frontier)
+            session_ids.extend(frontier)
+        return session_ids
+
+    # End the discovery transaction before cancellation. Cancelled generation
+    # Jobs persist terminal state from independent connections; waiting while
+    # this connection retains a read snapshot can deadlock SQLite's writer
+    # upgrade, even in WAL mode.
+    async with session_factory() as db:
+        async with db.begin():
+            session_ids = await read_tree(db)
+
+    if stream_manager is not None:
+        try:
+            await stream_manager.abort_sessions_and_wait(session_ids)
+        except TimeoutError as exc:
+            raise Conflict(
+                "Session is still stopping; try deleting it again"
+            ) from exc
+
+    # Re-read in the deleting transaction so descendants committed during the
+    # cancellation boundary are included. Active Jobs for the original tree
+    # have fully settled, so no terminal writer can race these deletes.
+    async with session_factory() as db:
+        async with db.begin():
+            session_ids = await read_tree(db)
+            for tree_session_id in session_ids:
+                await delete_session_uploads(db, tree_session_id)
+
+            for tree_session_id in reversed(session_ids):
+                await delete_by_id(db, Session, tree_session_id)
 
     index_manager = get_index_manager()
     if index_manager is not None:
-        try:
-            await index_manager.cleanup_session(session_id)
-        except Exception:
-            logger.warning(
-                "FTS cleanup failed for session %s",
-                session_id,
-                exc_info=True,
-            )
+        for tree_session_id in session_ids:
+            try:
+                await index_manager.cleanup_session(tree_session_id)
+            except Exception:
+                logger.warning(
+                    "FTS cleanup failed for session %s",
+                    tree_session_id,
+                    exc_info=True,
+                )
 
     return {"deleted": True}
 

@@ -25,6 +25,7 @@ from app.api import remote as remote_api
 from app.api import rapid_mlx as rapid_mlx_api
 from app.api import sessions as sessions_api
 from app.api import skills as skills_api
+from app.api import subagents as subagents_api
 from app.api import tools as tools_api
 from app.api import usage as usage_api
 
@@ -35,6 +36,7 @@ api_router.include_router(chat_api.router, tags=["chat"])
 api_router.include_router(agents_api.router, tags=["agents"])
 api_router.include_router(tools_api.router, tags=["tools"])
 api_router.include_router(skills_api.router, tags=["skills"])
+api_router.include_router(subagents_api.router, tags=["subagents"])
 api_router.include_router(sessions_api.router, tags=["sessions"])
 api_router.include_router(messages_api.router, tags=["messages"])
 api_router.include_router(files_api.router, tags=["files"])

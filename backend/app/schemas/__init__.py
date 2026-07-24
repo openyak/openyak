@@ -19,6 +19,12 @@ from app.schemas.message import (
 from app.schemas.provider import ModelCapabilities, ModelInfo, ModelPricing, ProviderStatus, StreamChunk
 from app.schemas.session import SessionCreate, SessionList, SessionResponse, SessionUpdate
 from app.schemas.streaming import SSEEventData
+from app.schemas.subagent import (
+    AgentRunCounts,
+    AgentRunListResponse,
+    AgentRunResponse,
+    AgentRunStatus,
+)
 
 __all__ = [
     "AgentInfo",
@@ -52,4 +58,8 @@ __all__ = [
     "SessionResponse",
     "SessionUpdate",
     "SSEEventData",
+    "AgentRunCounts",
+    "AgentRunListResponse",
+    "AgentRunResponse",
+    "AgentRunStatus",
 ]

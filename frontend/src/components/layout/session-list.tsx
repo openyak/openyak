@@ -112,6 +112,7 @@ export function SessionList() {
       const seen = new Set<string>();
       const unique: SessionResponse[] = [];
       for (const result of searchResults) {
+        if (result.session.parent_id) continue;
         if (seen.has(result.session.id)) continue;
         seen.add(result.session.id);
         unique.push(result.session);
@@ -119,9 +120,10 @@ export function SessionList() {
       return unique;
     }
     if (!sessions.length) return [];
-    if (!searchQuery.trim()) return sessions;
+    const parentSessions = sessions.filter((session) => !session.parent_id);
+    if (!searchQuery.trim()) return parentSessions;
     const q = searchQuery.toLowerCase();
-    return sessions.filter((s) =>
+    return parentSessions.filter((s) =>
       (s.title ?? "").toLowerCase().includes(q),
     );
   }, [sessions, searchQuery, isContentSearch, searchResults]);

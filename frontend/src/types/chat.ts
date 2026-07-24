@@ -1,5 +1,7 @@
 /** Chat request/response schemas — mirrors backend app/schemas/chat.py */
 
+export type ExecutionMode = "standard" | "ultra";
+
 /** Metadata returned by the upload endpoint, sent with the prompt. */
 export interface FileAttachment {
   file_id: string;
@@ -22,28 +24,12 @@ export interface PromptRequest {
   permission_rules?: Array<{ action: "allow" | "deny"; permission: string; pattern?: string }> | null;
   reasoning?: boolean | null;
   workspace?: string | null;
+  execution_mode?: ExecutionMode;
 }
 
 export interface PromptResponse {
   stream_id: string;
   session_id: string;
-}
-
-export type TaskBatchMode = "sequential" | "parallel";
-
-export interface TaskBatchTask {
-  title: string;
-  prompt: string;
-  agent: string;
-  model?: string | null;
-  provider_id?: string | null;
-}
-
-export interface TaskBatchRequest {
-  session_id?: string | null;
-  mode: TaskBatchMode;
-  tasks: TaskBatchTask[];
-  workspace?: string | null;
 }
 
 export interface EditAndResendRequest {
@@ -58,6 +44,7 @@ export interface EditAndResendRequest {
   permission_rules?: Array<{ action: "allow" | "deny"; permission: string; pattern?: string }> | null;
   reasoning?: boolean | null;
   workspace?: string | null;
+  execution_mode?: ExecutionMode;
 }
 
 export interface AbortRequest {

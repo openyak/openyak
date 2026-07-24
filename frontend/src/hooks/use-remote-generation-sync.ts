@@ -6,6 +6,10 @@ import { api } from "@/lib/api";
 import { API, queryKeys } from "@/lib/constants";
 import { useChatStore } from "@/stores/chat-store";
 import { startStream, isStreamActive } from "@/lib/session-stream-registry";
+import {
+  isChildStreamJob,
+  type ActiveStreamJob,
+} from "@/lib/active-stream-job";
 
 /**
  * Poll for active generations in the current session.
@@ -35,7 +39,7 @@ export function useRemoteGenerationSync(sessionId: string | undefined) {
       if (!active) return;
 
       try {
-        const jobs = await api.get<{ stream_id: string; session_id: string }[]>(
+        const jobs = await api.get<ActiveStreamJob[]>(
           API.CHAT.ACTIVE,
         );
 
@@ -58,7 +62,9 @@ export function useRemoteGenerationSync(sessionId: string | undefined) {
             });
 
             chatState.startGeneration(sessionId, match.stream_id);
-            void startStream(sessionId, match.stream_id);
+            void startStream(sessionId, match.stream_id, {
+              suppressFinishNotification: isChildStreamJob(match),
+            });
           }
         } else {
           // No active generation server-side. If we were tracking one from a

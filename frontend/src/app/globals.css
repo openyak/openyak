@@ -7,12 +7,15 @@
   --surface-primary: #FFFFFF;
   --surface-secondary: #F6F6F6;
   --surface-tertiary: #EFEFEF;
+  --surface-selected: #E9EAEC;
+  --surface-raised: #F1F1F1;
   --surface-chat: #FFFFFF;
 
   /* Text */
   --text-primary: #1A1C1F;
   --text-secondary: #5F6368;
   --text-tertiary: #8A8F98;
+  --text-quaternary: #A9AEB8;
 
   /* Border */
   --border-default: #E3E4E7;
@@ -103,8 +106,7 @@
 
   /* ─── Codex-alignment tokens (P0) ─── */
 
-  /* Text — fourth tier was referenced in several places but never defined */
-  --text-quaternary: #A9AEB8;
+  /* Text accent */
   --text-accent: var(--brand-primary);
 
   /* Ink fill — primary-action language: solid ink pill, brand color stays
@@ -140,6 +142,14 @@
   --motion-base: 200ms;
   --motion-slow: 320ms;
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Conversation — keep the work journal readable without scaling the
+     surrounding workspace, navigation, or settings surfaces. */
+  --conversation-rail-width: 736px;
+  --conversation-body-size: 15px;
+  --conversation-meta-size: 13px;
+  --conversation-body-line-height: 1.55;
+  --conversation-body-color: #202124;
 }
 
 .dark {
@@ -147,12 +157,15 @@
   --surface-primary: #181818;
   --surface-secondary: #202020;
   --surface-tertiary: #292929;
+  --surface-selected: #242424;
+  --surface-raised: #2D2D2D;
   --surface-chat: #181818;
 
   /* Text */
   --text-primary: #FFFFFF;
   --text-secondary: #C2C2C2;
   --text-tertiary: #95979D;
+  --text-quaternary: #6E7178;
 
   /* Border */
   --border-default: #313131;
@@ -180,7 +193,7 @@
   /* Sidebar */
   --sidebar-bg: #252525;
   /* Dark mode keeps the low-alpha vibrancy aesthetic (wallpaper shows through). */
-  --sidebar-translucent-bg: rgba(37, 37, 37, 0.20);
+  --sidebar-translucent-bg: rgba(37, 37, 37, 0.72);
   --sidebar-hover: rgba(255, 255, 255, 0.05);
   --sidebar-active: rgba(255, 255, 255, 0.09);
   --sidebar-active-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
@@ -208,7 +221,6 @@
   --prose-marker: #727272;
 
   /* ─── Codex-alignment tokens (P0) ─── */
-  --text-quaternary: #6E7178;
   --ink-solid: #FFFFFF;
   --ink-solid-hover: #E6E6E6;
   --ink-solid-text: #171717;
@@ -217,6 +229,9 @@
   --diff-removed-fg: #E86D73;
   --diff-removed-bg: rgba(232, 109, 115, 0.12);
   --skill-accent: #A78BFA;
+
+  /* Conversation */
+  --conversation-body-color: #F1F1F1;
 }
 
 /* ─── Base Styles ─── */
@@ -622,6 +637,54 @@ pre code {
   color: var(--prose-body);
 }
 
+.conversation-rail {
+  width: 100%;
+  max-width: var(--conversation-rail-width);
+}
+
+.conversation-rail .prose {
+  font-size: var(--conversation-body-size);
+  line-height: var(--conversation-body-line-height);
+  letter-spacing: -0.008em;
+  color: var(--conversation-body-color);
+}
+
+.conversation-user-bubble {
+  border: 1px solid var(--border-subtle);
+  background: var(--user-bubble-bg);
+  box-shadow: none;
+  color: var(--text-primary);
+  font-size: var(--conversation-body-size);
+  line-height: var(--conversation-body-line-height);
+  letter-spacing: -0.006em;
+}
+
+.conversation-message-actions {
+  opacity: 0.68;
+  transition: opacity 150ms ease, color 150ms ease;
+}
+
+.conversation-message-actions:hover,
+.conversation-message-actions:focus-within {
+  opacity: 1;
+}
+
+.conversation-message-actions button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.conversation-lifecycle-row {
+  display: flex;
+  min-height: 22px;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-tertiary);
+  font-size: var(--conversation-meta-size);
+  line-height: 1.35;
+  letter-spacing: -0.004em;
+}
+
 /* First/last child margin reset */
 .prose > :first-child { margin-top: 0; }
 .prose > :last-child { margin-bottom: 0; }
@@ -925,6 +988,11 @@ pre code {
   to { opacity: 1; }
 }
 
+@keyframes conversation-append {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 @keyframes slide-up {
   from { opacity: 0; transform: translateY(12px); }
   to { opacity: 1; transform: translateY(0); }
@@ -944,6 +1012,10 @@ pre code {
   animation: fade-in 0.3s ease-out;
 }
 
+.conversation-append {
+  animation: conversation-append 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+
 .animate-slide-up {
   animation: slide-up 0.35s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -957,11 +1029,9 @@ pre code {
   50% { opacity: 0; }
 }
 
-/* Streaming cursor — blinks at end of last paragraph */
-.streaming-cursor > *:last-child {
-  display: inline !important;
-}
-.streaming-cursor::after {
+/* Streaming cursor — append inside the final Markdown block without changing
+   that block's display mode (lists, tables and code must keep their layout). */
+.streaming-cursor > :last-child::after {
   content: '';
   display: inline-block;
   width: 2px;
@@ -1146,7 +1216,7 @@ pre code {
     transition-duration: 0.01ms !important;
   }
 
-  .streaming-cursor::after {
+  .streaming-cursor > :last-child::after {
     animation: none;
   }
 

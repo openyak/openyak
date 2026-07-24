@@ -126,7 +126,7 @@ export function PlanAcceptPrompt({ onRespond }: PlanAcceptPromptProps) {
   // Desktop layout
   return (
     <div ref={containerRef} className="px-4 pb-4 pt-2">
-      <div className="mx-auto max-w-3xl xl:max-w-4xl">
+      <div className="mx-auto max-w-[736px]">
         <div className="rounded-xl border border-[var(--border-default)] bg-[var(--surface-primary)] p-4 space-y-3 animate-slide-up">
           {/* Header */}
           <div>

@@ -275,7 +275,7 @@ export function HeaderModelDropdown() {
             <button
               type="button"
               onClick={() => router.push("/settings?tab=providers")}
-              className="inline-flex h-7 max-w-[220px] items-center gap-1.5 rounded-lg border-none bg-transparent px-3 text-[13px] font-semibold text-[var(--text-secondary)] shadow-none transition-colors hover:bg-[var(--surface-secondary)] focus:outline-none cursor-pointer"
+              className="inline-flex h-7 max-w-[220px] items-center gap-1.5 rounded-lg border-none bg-transparent px-3 text-[13px] font-semibold text-[var(--text-secondary)] shadow-none transition-colors hover:bg-[var(--surface-secondary)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)] cursor-pointer"
             >
               <AlertCircle className="h-4 w-4 shrink-0 text-[var(--color-destructive)]" />
               <span className="truncate">
@@ -302,7 +302,7 @@ export function HeaderModelDropdown() {
       <button
         type="button"
         onClick={() => router.push("/settings?tab=providers")}
-        className="inline-flex h-7 max-w-[220px] items-center gap-1.5 rounded-lg border-none bg-transparent px-3 text-[13px] font-semibold text-[var(--text-secondary)] shadow-none transition-colors hover:bg-[var(--surface-secondary)] focus:outline-none cursor-pointer"
+        className="inline-flex h-7 max-w-[220px] items-center gap-1.5 rounded-lg border-none bg-transparent px-3 text-[13px] font-semibold text-[var(--text-secondary)] shadow-none transition-colors hover:bg-[var(--surface-secondary)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)] cursor-pointer"
       >
         <span className="truncate">{t("setupProvider")}</span>
         <ChevronDown className="h-4 w-4 opacity-50 shrink-0" />
@@ -325,7 +325,7 @@ export function HeaderModelDropdown() {
           }
           title={selectedLabel}
           className={cn(
-            "inline-flex translate-y-[1px] items-center gap-1.5 rounded-lg border-none bg-transparent px-3 shadow-none transition-colors hover:bg-[var(--surface-secondary)] focus:outline-none cursor-pointer",
+            "inline-flex translate-y-[1px] items-center gap-1.5 rounded-lg border-none bg-transparent px-3 shadow-none transition-colors hover:bg-[var(--surface-secondary)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)] cursor-pointer",
             // Two-line layout when a variant is detected; otherwise keep single
             // line so the visual matches the existing dropdown trigger height.
             modelVariant

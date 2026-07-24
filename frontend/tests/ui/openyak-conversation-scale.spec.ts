@@ -40,7 +40,7 @@ test.describe("OpenYak conversation scale and compaction GUI workflows", () => {
     await page.getByRole("button", { name: "Click to compact now" }).click();
     await compactResponse;
 
-    await expect(page.getByText("Context compressed to save tokens")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText("Optimized the conversation")).toBeVisible({ timeout: 20_000 });
     expect(state.compactRequests).toHaveLength(1);
     await expectNoAppCrash(page);
   });
@@ -54,7 +54,7 @@ test.describe("OpenYak conversation scale and compaction GUI workflows", () => {
 
     await expect(page).toHaveURL(/\/c\/session-new$/);
     await expect(page.getByText("Auto compacted answer persisted after compression.")).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByText("Context compressed to save tokens")).toBeVisible();
+    await expect(page.getByText("Optimized the conversation")).toBeVisible();
     await expectNoAppCrash(page);
   });
 

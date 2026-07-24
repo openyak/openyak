@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class PromptRequest(BaseModel):
@@ -21,6 +21,7 @@ class PromptRequest(BaseModel):
     reasoning: bool | None = None  # Explicitly enable/disable reasoning
     workspace: str | None = None  # Workspace directory restriction
     format: dict[str, Any] | None = None  # e.g. {"type": "json_schema", "json_schema": {...}}
+    execution_mode: Literal["standard", "ultra"] = "standard"
 
 
 class PromptResponse(BaseModel):
@@ -28,25 +29,6 @@ class PromptResponse(BaseModel):
 
     stream_id: str
     session_id: str
-
-
-class TaskBatchTask(BaseModel):
-    """One explicit child-agent task in a multi-agent batch."""
-
-    title: str = Field(..., min_length=1, max_length=120)
-    prompt: str = Field(..., min_length=1)
-    agent: str = "explore"
-    model: str | None = None
-    provider_id: str | None = None
-
-
-class TaskBatchRequest(BaseModel):
-    """Start a sequential or parallel multi-agent task batch."""
-
-    session_id: str | None = None
-    mode: Literal["sequential", "parallel"] = "parallel"
-    tasks: list[TaskBatchTask] = Field(..., min_length=1, max_length=12)
-    workspace: str | None = None
 
 
 class CompactRequest(BaseModel):
@@ -71,6 +53,7 @@ class EditAndResendRequest(BaseModel):
     reasoning: bool | None = None
     workspace: str | None = None  # Workspace directory restriction
     format: dict[str, Any] | None = None  # e.g. {"type": "json_schema", "json_schema": {...}}
+    execution_mode: Literal["standard", "ultra"] = "standard"
 
 
 class AbortRequest(BaseModel):

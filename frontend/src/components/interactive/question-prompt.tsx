@@ -76,7 +76,7 @@ function LegacyQuestionPrompt({
 
   return (
     <div className={isMobile ? "px-3 pb-[max(env(safe-area-inset-bottom),8px)]" : "px-4 pb-3"}>
-      <div className={isMobile ? "" : "mx-auto max-w-3xl xl:max-w-4xl"}>
+      <div className={isMobile ? "" : "mx-auto max-w-[736px]"}>
         <div className={`rounded-${isMobile ? "2xl" : "xl"} border-2 border-[var(--brand-primary)]/40 bg-${isMobile ? "[var(--surface-primary)] shadow-lg" : "[var(--brand-primary)]/5"} p-4 animate-slide-up`}>
           <div className="flex items-start gap-3">
             <HelpCircle className="h-5 w-5 text-[var(--brand-primary)] shrink-0 mt-0.5" />
@@ -375,7 +375,7 @@ function MultiQuestionPrompt({
   // Desktop: Tab + preview panel layout (unchanged)
   return (
     <div className="px-4 pb-3">
-      <div className="mx-auto max-w-3xl xl:max-w-4xl">
+      <div className="mx-auto max-w-[736px]">
         <div className="rounded-xl border-2 border-[var(--brand-primary)]/40 bg-[var(--brand-primary)]/5 animate-slide-up overflow-hidden">
           {/* Tab bar */}
           <div

@@ -57,7 +57,7 @@ function pickRandomStarters(count: number): typeof FEATURED_STARTERS {
 
 export function Landing({ directoryParam = null }: LandingProps) {
   const { t } = useTranslation('chat');
-  const { sendMessage, sendTaskBatch, isGenerating, stopGeneration, pendingUserText, pendingAttachments, streamingParts, streamingText, streamingReasoning } = useChat();
+  const { sendMessage, isGenerating, stopGeneration, pendingUserText, pendingAttachments, streamingParts, streamingText, streamingReasoning } = useChat();
   const globalWorkspace = useSettingsStore((s) => s.workspaceDirectory);
   const workspaceName = workspaceBasename(globalWorkspace);
   const activeProvider = useSettingsStore((s) => s.activeProvider);
@@ -114,7 +114,7 @@ export function Landing({ directoryParam = null }: LandingProps) {
         <div className="flex-1 overflow-y-auto">
           {displayText && (
             <div className="px-4 py-3">
-              <div className="mx-auto max-w-3xl xl:max-w-4xl">
+              <div className="mx-auto max-w-[736px]">
                 <motion.div
                   className="flex justify-end"
                   initial={{ opacity: 0, y: 10 }}
@@ -140,7 +140,7 @@ export function Landing({ directoryParam = null }: LandingProps) {
 
           {/* Streaming assistant message — same component used in chat-view */}
           <div className="px-4 py-5">
-            <div className="mx-auto max-w-3xl xl:max-w-4xl">
+            <div className="mx-auto max-w-[736px]">
               <StreamingMessage
                 sessionId={null}
                 parts={streamingParts}
@@ -155,9 +155,9 @@ export function Landing({ directoryParam = null }: LandingProps) {
         <ChatForm
           isGenerating={isGenerating}
           onSend={sendMessage}
-          onSendTaskBatch={sendTaskBatch}
           onStop={stopGeneration}
           directory={globalWorkspace}
+          isSubagentSession={false}
         />
       </div>
     );
@@ -169,7 +169,7 @@ export function Landing({ directoryParam = null }: LandingProps) {
       <ChatHeader />
 
       <div className="flex flex-1 flex-col items-center justify-center px-4 pb-8">
-        <div className="w-full max-w-3xl xl:max-w-4xl">
+        <div className="w-full max-w-[736px]">
           {/* Provider setup prompt */}
           {!activeProvider && (
             <motion.div
@@ -209,9 +209,9 @@ export function Landing({ directoryParam = null }: LandingProps) {
           <ChatForm
             isGenerating={isGenerating}
             onSend={sendMessage}
-            onSendTaskBatch={sendTaskBatch}
             onStop={stopGeneration}
             directory={globalWorkspace}
+            isSubagentSession={false}
           />
 
           {/* Suggested starters — mx-7 aligns suggestion icons with the folder picker icon inside the input container */}

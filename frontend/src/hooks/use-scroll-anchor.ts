@@ -119,8 +119,8 @@ export function useScrollAnchor() {
     el.addEventListener("scroll", handleScroll, { passive: true });
 
     // --- MutationObserver for auto-scroll on content changes ---
-    // Do NOT observe characterData: streaming text changes every character and would
-    // fire hundreds of times/sec, causing 100%+ CPU and UI freeze on M1.
+    // Text deltas are buffered upstream and this observer is throttled below,
+    // so characterData updates can safely keep a growing paragraph anchored.
     let mutationRafId = 0;
     let mutationLastRun = 0;
     const MUTATION_THROTTLE_MS = 80;
@@ -158,7 +158,7 @@ export function useScrollAnchor() {
     observer.observe(el, {
       childList: true,
       subtree: true,
-      // characterData omitted: causes CPU spike during streaming (every token = mutation)
+      characterData: true,
     });
 
     cleanupRef.current = () => {

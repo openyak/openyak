@@ -34,6 +34,7 @@ export type ActiveProvider =
  *   auto → agent=build, auto-approve on
  */
 export type WorkMode = "plan" | "ask" | "auto";
+export type ExecutionMode = "standard" | "ultra";
 
 interface SettingsStore {
   /** Whether the user has completed the first-run onboarding flow */
@@ -48,6 +49,8 @@ interface SettingsStore {
   safeMode: boolean;
   /** Unified work mode */
   workMode: WorkMode;
+  /** Execution topology, independent from Plan / Ask / Auto permissions. */
+  executionMode: ExecutionMode;
   /** Whether reasoning/thinking mode is enabled */
   reasoningEnabled: boolean;
   /** Permission presets — auto-allow tool categories */
@@ -70,6 +73,8 @@ interface SettingsStore {
   setSafeMode: (enabled: boolean) => void;
   /** Set unified work mode (plan / ask / auto) */
   setWorkMode: (mode: WorkMode) => void;
+  /** Set single-Agent or coordinated multi-Agent execution. */
+  setExecutionMode: (mode: ExecutionMode) => void;
   /** Set reasoning mode */
   setReasoningEnabled: (enabled: boolean) => void;
   /** Toggle a single permission preset */
@@ -103,6 +108,7 @@ export const useSettingsStore = create<SettingsStore>()(
       selectedAgent: "build",
       safeMode: false,
       workMode: "auto" as WorkMode,
+      executionMode: "standard" as ExecutionMode,
       reasoningEnabled: true,
       permissionPresets: { fileChanges: true, runCommands: true },
       savedPermissions: [],
@@ -163,6 +169,7 @@ export const useSettingsStore = create<SettingsStore>()(
             break;
         }
       },
+      setExecutionMode: (mode) => set({ executionMode: mode }),
       setReasoningEnabled: (enabled) => set({ reasoningEnabled: enabled }),
       togglePermissionPreset: (key) =>
         set((s) => {
@@ -218,8 +225,12 @@ export const useSettingsStore = create<SettingsStore>()(
       name: "openyak-settings",
       version: 4,
       migrate: (persistedState) => {
-        let state = persistedState as Record<string, unknown> | null;
-        if (state && typeof state === "object" && "activeProvider" in state) {
+        if (!persistedState || typeof persistedState !== "object") {
+          return persistedState as SettingsStore;
+        }
+
+        let state = { ...(persistedState as Record<string, unknown>) };
+        if ("activeProvider" in state) {
           if (state.activeProvider === "openyak") {
             state = { ...state, activeProvider: null };
           } else if (state.activeProvider === "local") {
@@ -240,7 +251,12 @@ export const useSettingsStore = create<SettingsStore>()(
             })),
           };
         }
-        return state as unknown as SettingsStore;
+
+        return {
+          ...state,
+          executionMode:
+            state.executionMode === "ultra" ? "ultra" : "standard",
+        } as unknown as SettingsStore;
       },
     },
   ),

@@ -361,6 +361,19 @@ async def run_generation(
             skip_user_message=skip_user_message,
         )
         await prompt.run()
+    except asyncio.CancelledError:
+        # Permission/question waits and nested Agent orchestration use
+        # cancellation as control flow. Preserve the public stream contract:
+        # every generation must expose a terminal event before completion.
+        if not any(
+            event.event in {DONE, AGENT_ERROR}
+            for event in job.events
+        ):
+            job.publish(SSEEvent(DONE, {
+                "session_id": job.session_id,
+                "finish_reason": "aborted",
+            }))
+        raise
     except IntegrityError:
         # Session was deleted while generation was in-flight — notify frontend
         # so it can exit the generating state, then stop.
@@ -421,6 +434,15 @@ class SessionProcessor:
           "compact"  — context overflow detected; run compaction then continue
         """
         self._init_step_state()
+        try:
+            return await self._run_step()
+        except asyncio.CancelledError:
+            await self._persist_cancelled_output()
+            await self._cancel_running_tools()
+            raise
+
+    async def _run_step(self) -> Literal["continue", "stop", "compact"]:
+        """Run one initialized step; ``process`` owns cancellation cleanup."""
         await self._persist_step_start()
 
         # Phase 1: stream from LLM (with retry); may early-return "stop".
@@ -492,6 +514,10 @@ class SessionProcessor:
         self._exec_metadata: dict[int, dict[str, Any]] = {}
         self._exec_index: int = 0
         self._exec_blocked: bool = False  # Set True if loop detection blocks
+        self._advertised_tool_ids: set[str] = set()
+        self._cancelled_tool_parts_finalized: bool = False
+        self._finalized_exec_indices: set[int] = set()
+        self._text_reasoning_persisted: bool = False
 
     async def _persist_step_start(self) -> None:
         """Persist the StepStart part (mirrors OpenCode's StepStartPart)."""
@@ -539,6 +565,19 @@ class SessionProcessor:
                 blocked = await self._check_vision_blocked()
                 if blocked is not None:
                     return blocked
+
+                if sp.request.format:
+                    self._advertised_tool_ids = set()
+                else:
+                    specs = sp.tool_registry.to_openai_specs(
+                        sp.agent,
+                        exclude=exclude_tools,
+                        discovered=sp.discovered_tools,
+                    )
+                    self._advertised_tool_ids = {
+                        str(spec["function"]["name"])
+                        for spec in specs
+                    }
 
                 async for chunk in stream_llm(
                     sp.provider,
@@ -683,6 +722,12 @@ class SessionProcessor:
             exclude_tools = exclude_tools or set()
             exclude_tools.add("web_search")
 
+        # The Swarm Tool is intentionally absent from standard execution.
+        # Ultra is an orchestration overlay, not a different permission mode.
+        if sp.request.execution_mode != "ultra":
+            exclude_tools = exclude_tools or set()
+            exclude_tools.add("swarm")
+
         return reasoning_extra, safe_max_tokens, exclude_tools
 
     async def _check_vision_blocked(self) -> Literal["stop"] | None:
@@ -788,6 +833,28 @@ class SessionProcessor:
             job.publish(SSEEvent(TOOL_ERROR, {"call_id": ci, "error": f"Tool not found: {tn}"}))
             return
 
+        # Provider output is untrusted. A registered Tool is executable only
+        # when this exact Agent/step advertised it to the model. This preserves
+        # Agent Tool allowlists and per-step exclusions even if a Provider
+        # fabricates a function call.
+        if tool.id != "invalid" and tool.id not in self._advertised_tool_ids:
+            message = f"Tool is not available to this Agent: {tool.id}"
+            job.publish(SSEEvent(TOOL_ERROR, {
+                "call_id": ci,
+                "tool": tool.id,
+                "output": message,
+            }))
+            await _persist_tool_error(
+                session_factory,
+                self._assistant_msg_id,
+                job.session_id,
+                tool.id,
+                ci,
+                ta,
+                message,
+            )
+            return
+
         # Permission check
         rp = "*"
         if tool.id in _FILE_TOOLS:
@@ -798,6 +865,24 @@ class SessionProcessor:
             command = ta.get("command")
             if isinstance(command, str) and command.strip():
                 rp = command.strip()
+        if evaluate(tool.id, rp, sp.agent.permissions) == "deny":
+            message = f"Agent policy denied tool: {tool.id}"
+            job.publish(SSEEvent(TOOL_ERROR, {
+                "call_id": ci,
+                "tool": tool.id,
+                "output": message,
+            }))
+            await _persist_tool_error(
+                session_factory,
+                self._assistant_msg_id,
+                job.session_id,
+                tool.id,
+                ci,
+                ta,
+                message,
+            )
+            return
+
         action = evaluate(tool.id, rp, sp.merged_permissions)
 
         if action == "deny":
@@ -849,6 +934,19 @@ class SessionProcessor:
         }))
 
         # Build context
+        from app.dependencies import get_stream_manager
+
+        app_state = {
+            "session_factory": session_factory,
+            "provider_registry": sp.provider_registry,
+            "agent_registry": sp.agent_registry,
+            "tool_registry": sp.tool_registry,
+            "stream_manager": get_stream_manager(),
+        }
+        effective_permission_rules = tuple(
+            rule.model_dump()
+            for rule in sp.merged_permissions.rules
+        )
         ctx = ToolContext(
             session_id=job.session_id,
             message_id=self._assistant_msg_id,
@@ -858,14 +956,19 @@ class SessionProcessor:
             index_manager=getattr(sp, "index_manager", None),
             messages=self._llm_messages,
             discovered_tools=sp.discovered_tools,
+            model_id=sp.model_id,
+            provider_id=sp.provider.id if sp.provider else None,
+            permission_rules=effective_permission_rules,
+            reasoning=sp.request.reasoning,
+            execution_mode=sp.request.execution_mode,
+            depth=job._depth,
+            job=job,
+            app_state=app_state,
             _publish_fn=lambda et, d: job.publish(SSEEvent(et, d)),
         )
-        ctx._app_state = {  # type: ignore[attr-defined]
-            "session_factory": session_factory,
-            "provider_registry": sp.provider_registry,
-            "agent_registry": sp.agent_registry,
-            "tool_registry": sp.tool_registry,
-        }
+        # Backwards-compatible aliases for existing built-in Tools. New Tools
+        # use the explicit ToolContext runtime fields above.
+        ctx._app_state = app_state  # type: ignore[attr-defined]
         ctx._model_id = sp.model_id  # type: ignore[attr-defined]
         ctx._job = job  # type: ignore[attr-defined]
         ctx._depth = job._depth  # type: ignore[attr-defined]
@@ -875,7 +978,7 @@ class SessionProcessor:
             index=self._exec_index, tool=tool,
             tool_name=tool.id, tool_args=ta,
             call_id=ci, ctx=ctx,
-            timeout=_cfg().tool_timeout,
+            timeout=tool.execution_timeout or _cfg().tool_timeout,
         ))
         self._exec_metadata[self._exec_index] = {
             "tool_part_id": tool_part_id,
@@ -1125,6 +1228,8 @@ class SessionProcessor:
 
     async def _persist_text_and_reasoning(self) -> None:
         """Persist accumulated text + reasoning as parts on the assistant message."""
+        if self._text_reasoning_persisted:
+            return
         sp = self._sp
         self.has_text = bool(self._accumulated_text.strip())
         async with sp.session_factory() as db:
@@ -1143,6 +1248,37 @@ class SessionProcessor:
                         session_id=sp.job.session_id,
                         data={"type": "reasoning", "text": self._accumulated_reasoning},
                     )
+        self._text_reasoning_persisted = True
+
+    async def _persist_cancelled_output(self) -> None:
+        """Durably keep content the user already saw before pressing Stop."""
+        if self._text_reasoning_persisted:
+            return
+        if not (
+            self._accumulated_text.strip()
+            or self._accumulated_reasoning
+        ):
+            return
+
+        persistence = asyncio.create_task(
+            self._persist_text_and_reasoning()
+        )
+        while not persistence.done():
+            try:
+                await asyncio.shield(persistence)
+            except asyncio.CancelledError:
+                # Stop can be requested more than once. Once persistence has
+                # started, repeated cancellation must not erase visible text.
+                continue
+            except Exception:
+                break
+        try:
+            await persistence
+        except Exception:
+            logger.exception(
+                "Failed to persist partial output for cancelled session %s",
+                self._sp.job.session_id,
+            )
 
     # ------------------------------------------------------------------
     # process() phases — tool dispatch
@@ -1166,7 +1302,11 @@ class SessionProcessor:
             return "stop"
 
         # === Collect results — concurrent tools already running, exclusive run now ===
-        exec_results = await self._streaming_executor.collect()
+        try:
+            exec_results = await self._streaming_executor.collect()
+        except asyncio.CancelledError:
+            await self._cancel_running_tools()
+            raise
 
         # === Finalize — persist results, emit SSE, handle side effects ===
         if exec_results:
@@ -1174,9 +1314,102 @@ class SessionProcessor:
                 meta = self._exec_metadata.get(exec_result.index)
                 if meta is None:
                     continue
-                await self._finalize_one_tool_result(meta, exec_result)
+                await self._finalize_exec_result(
+                    exec_result.index,
+                    meta,
+                    exec_result,
+                )
 
         return None
+
+    async def _cancel_running_tools(self) -> None:
+        """Cancel executor work and durably terminate every running ToolPart."""
+        self._streaming_executor.cancel_all()
+        if getattr(self, "_cancelled_tool_parts_finalized", False):
+            return
+        finalization = asyncio.create_task(
+            self._finalize_cancelled_tool_parts()
+        )
+        while not finalization.done():
+            try:
+                await asyncio.shield(finalization)
+            except asyncio.CancelledError:
+                # A second cancellation must not strand persisted ToolParts.
+                continue
+        self._cancelled_tool_parts_finalized = await finalization
+
+    async def _finalize_exec_result(
+        self,
+        index: int,
+        meta: dict[str, Any],
+        exec_result: Any,
+    ) -> None:
+        """Finish one result before honoring cancellation of the dispatch loop."""
+        finalization = asyncio.create_task(
+            self._finalize_one_tool_result(meta, exec_result)
+        )
+        was_cancelled = False
+        while not finalization.done():
+            try:
+                await asyncio.shield(finalization)
+            except asyncio.CancelledError:
+                was_cancelled = True
+                continue
+            except Exception:
+                # Retrieve and prioritize the terminal state below so a
+                # simultaneous caller cancellation cannot be overwritten.
+                break
+        finalization_error: Exception | None = None
+        try:
+            await finalization
+        except Exception as exc:
+            finalization_error = exc
+
+        if finalization_error is None:
+            self._finalized_exec_indices.add(index)
+        if was_cancelled:
+            if finalization_error is not None:
+                logger.warning(
+                    "Tool result finalization failed while generation was "
+                    "being cancelled; cancellation cleanup will reconcile "
+                    "the running ToolPart",
+                    exc_info=finalization_error,
+                )
+            raise asyncio.CancelledError from finalization_error
+        if finalization_error is not None:
+            raise finalization_error
+
+    async def _finalize_cancelled_tool_parts(self) -> bool:
+        """Persist terminal error state for every dispatched running ToolPart."""
+        finalized = getattr(self, "_finalized_exec_indices", set())
+        all_finalized = True
+        for index, meta in self._exec_metadata.items():
+            if index in finalized:
+                continue
+            tool = meta["tool"]
+            call_id = meta["call_id"]
+            message = "Tool cancelled because generation was aborted"
+            self._sp.job.publish(SSEEvent(
+                TOOL_ERROR,
+                {
+                    "call_id": call_id,
+                    "tool": tool.id,
+                    "error": message,
+                },
+            ))
+            persisted = await _update_tool_part_error(
+                self._sp.session_factory,
+                meta["tool_part_id"],
+                tool.id,
+                call_id,
+                meta["tool_args"],
+                message,
+            )
+            if persisted:
+                finalized.add(index)
+            else:
+                all_finalized = False
+        return all_finalized
 
     async def _finalize_one_tool_result(
         self, meta: dict[str, Any], exec_result: Any,
@@ -1197,9 +1430,13 @@ class SessionProcessor:
             timeout_msg = f"Tool timed out after {_cfg().tool_timeout}s: {tool.id}"
             logger.warning(timeout_msg)
             job.publish(SSEEvent(TOOL_ERROR, {"call_id": call_id, "error": timeout_msg}))
-            await _update_tool_part_error(
+            persisted = await _update_tool_part_error(
                 session_factory, tool_part_id, tool.id, call_id, tool_args, timeout_msg,
             )
+            if not persisted:
+                raise RuntimeError(
+                    f"Failed to persist terminal state for timed out tool {tool.id}"
+                )
             return
 
         # Handle execution error
@@ -1210,13 +1447,34 @@ class SessionProcessor:
                 err_msg = str(exec_result.error)
                 logger.exception("Tool execution error: %s", tool.id)
             job.publish(SSEEvent(TOOL_ERROR, {"call_id": call_id, "error": err_msg}))
-            await _update_tool_part_error(
+            persisted = await _update_tool_part_error(
                 session_factory, tool_part_id, tool.id, call_id, tool_args, err_msg,
             )
+            if not persisted:
+                raise RuntimeError(
+                    f"Failed to persist terminal state for failed tool {tool.id}"
+                )
             return
 
         result = exec_result.result
         if result is None:
+            err_msg = f"Tool returned no result: {tool.id}"
+            job.publish(SSEEvent(
+                TOOL_ERROR,
+                {"call_id": call_id, "error": err_msg, "tool": tool.id},
+            ))
+            persisted = await _update_tool_part_error(
+                session_factory,
+                tool_part_id,
+                tool.id,
+                call_id,
+                tool_args,
+                err_msg,
+            )
+            if not persisted:
+                raise RuntimeError(
+                    f"Failed to persist terminal state for empty tool result {tool.id}"
+                )
             return
 
         # Emit SSE result
@@ -1242,26 +1500,6 @@ class SessionProcessor:
             tool, tool_args, result, loop_result,
         )
 
-        # Update tool part to "completed" / "error"
-        async with session_factory() as db:
-            async with db.begin():
-                await update_part_data(
-                    db,
-                    tool_part_id,
-                    {
-                        "type": "tool",
-                        "tool": tool.id,
-                        "call_id": call_id,
-                        "state": {
-                            "status": "completed" if result.success else "error",
-                            "input": tool_args,
-                            "output": persist_output,
-                            "title": result.title,
-                            "metadata": result.metadata,
-                        },
-                    },
-                )
-
         # Persist file attachments returned by the tool as FileParts
         if result.attachments:
             async with session_factory() as db:
@@ -1275,6 +1513,44 @@ class SessionProcessor:
                         )
 
         self._maybe_switch_agent(result)
+
+        # The ToolPart is the durable terminal marker. Commit it last so
+        # `_finalize_exec_result` can safely record the execution index as
+        # finalized only after every associated persistence step succeeds.
+        terminal_data = {
+            "type": "tool",
+            "tool": tool.id,
+            "call_id": call_id,
+            "state": {
+                "status": "completed" if result.success else "error",
+                "input": tool_args,
+                "output": persist_output,
+                "title": result.title,
+                "metadata": result.metadata,
+            },
+        }
+        persisted = await _update_tool_part_with_retry(
+            session_factory,
+            tool_part_id,
+            terminal_data,
+            tool_name=tool.id,
+        )
+        if not persisted:
+            fallback_message = (
+                f"Tool finished but its terminal result could not be "
+                f"persisted: {tool.id}"
+            )
+            fallback_persisted = await _update_tool_part_error(
+                session_factory,
+                tool_part_id,
+                tool.id,
+                call_id,
+                tool_args,
+                fallback_message,
+            )
+            if not fallback_persisted:
+                raise RuntimeError(fallback_message)
+            raise RuntimeError(fallback_message)
 
     async def _apply_tool_side_effects(self, tool: Any, result: Any) -> None:
         """Update session files / artifact files / todos / web_search quota from a tool result."""
@@ -1693,20 +1969,46 @@ async def _update_tool_part_error(
     call_id: str,
     tool_args: dict[str, Any],
     error_msg: str,
-) -> None:
-    """Update an existing tool part to error state. Logs warning on failure."""
-    try:
-        async with session_factory() as db:
-            async with db.begin():
-                await update_part_data(
-                    db,
-                    part_id,
-                    {
-                        "type": "tool",
-                        "tool": tool_name,
-                        "call_id": call_id,
-                        "state": {"status": "error", "input": tool_args, "output": error_msg},
-                    },
-                )
-    except Exception:
-        logger.warning("Failed to persist error state for tool %s", tool_name)
+) -> bool:
+    """Update a ToolPart to error state with bounded transient retries."""
+    return await _update_tool_part_with_retry(
+        session_factory,
+        part_id,
+        {
+            "type": "tool",
+            "tool": tool_name,
+            "call_id": call_id,
+            "state": {
+                "status": "error",
+                "input": tool_args,
+                "output": error_msg,
+            },
+        },
+        tool_name=tool_name,
+    )
+
+
+async def _update_tool_part_with_retry(
+    session_factory: async_sessionmaker[AsyncSession],
+    part_id: str,
+    data: dict[str, Any],
+    *,
+    tool_name: str,
+) -> bool:
+    """Persist a terminal ToolPart snapshot with bounded transient retries."""
+    for attempt in range(3):
+        try:
+            async with session_factory() as db:
+                async with db.begin():
+                    await update_part_data(db, part_id, data)
+            return True
+        except Exception:
+            logger.warning(
+                "Failed to persist terminal state for tool %s (attempt %d/3)",
+                tool_name,
+                attempt + 1,
+                exc_info=True,
+            )
+            if attempt < 2:
+                await asyncio.sleep(0.05 * (attempt + 1))
+    return False

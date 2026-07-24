@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Copy, Check, RefreshCw, ThumbsUp, ThumbsDown, ListTree } from "lucide-react";
 import { useActivityStore, type ActivityData } from "@/stores/activity-store";
@@ -16,6 +16,19 @@ export function MessageActions({ content, onRegenerate, activityData, activityKe
   const [copied, setCopied] = useState(false);
   const [liked, setLiked] = useState<"up" | "down" | null>(null);
   const toggleForMessage = useActivityStore((s) => s.toggleForMessage);
+  const isPanelOpen = useActivityStore((s) => s.isOpen);
+  const isActivityOpen = useActivityStore(
+    (s) => s.isOpen && !!activityKey && s.activeKey === activityKey,
+  );
+  const activityTriggerRef = useRef<HTMLButtonElement>(null);
+  const wasExpandedRef = useRef(false);
+
+  useEffect(() => {
+    if (wasExpandedRef.current && !isPanelOpen) {
+      activityTriggerRef.current?.focus();
+    }
+    wasExpandedRef.current = isActivityOpen;
+  }, [isActivityOpen, isPanelOpen]);
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(content);
@@ -36,10 +49,10 @@ export function MessageActions({ content, onRegenerate, activityData, activityKe
           {copied ? (
             <motion.span
               key="check"
-              initial={{ scale: 0, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0, opacity: 0 }}
-              transition={{ type: "spring", stiffness: 500, damping: 25 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.14, ease: "easeOut" }}
               className="flex items-center justify-center"
             >
               <Check className="h-4 w-4 text-[var(--color-success)]" />
@@ -47,10 +60,10 @@ export function MessageActions({ content, onRegenerate, activityData, activityKe
           ) : (
             <motion.span
               key="copy"
-              initial={{ scale: 0, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0, opacity: 0 }}
-              transition={{ duration: 0.15 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.14, ease: "easeOut" }}
               className="flex items-center justify-center"
             >
               <Copy className="h-4 w-4" />
@@ -74,10 +87,13 @@ export function MessageActions({ content, onRegenerate, activityData, activityKe
       {/* Activity */}
       {activityData && activityKey && (
         <button
+          ref={activityTriggerRef}
           type="button"
           onClick={() => toggleForMessage(activityKey, activityData)}
           className="flex items-center justify-center h-7 w-7 rounded-md text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-secondary)] transition-colors"
           aria-label="View activity"
+          aria-expanded={isActivityOpen}
+          aria-controls="activity-panel"
         >
           <ListTree className="h-4 w-4" />
         </button>

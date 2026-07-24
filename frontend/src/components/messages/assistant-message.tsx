@@ -1,15 +1,15 @@
 "use client";
 
-import { useState, useMemo, memo, useEffect, useRef } from "react";
+import { useMemo, memo, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { motion } from "framer-motion";
+import { Square } from "lucide-react";
 import { MessageContent } from "./message-content";
 import { MessageActions } from "./message-actions";
-import { CompactionPart } from "@/components/parts/compaction-part";
 import { useChatStore } from "@/stores/chat-store";
 import { useActivityStore } from "@/stores/activity-store";
 import { extractTextFromParts } from "@/lib/utils";
-import type { MessageResponse, PartData, ToolPart, StepStartPart, StepFinishPart, CompactionPart as CompactionPartType } from "@/types/message";
+import type { MessageResponse, PartData, ToolPart, StepStartPart, StepFinishPart } from "@/types/message";
 import { computeDuration, type ActivityData, type ChainItem } from "@/stores/activity-store";
 
 interface AssistantMessageProps {
@@ -22,15 +22,10 @@ interface AssistantMessageProps {
 }
 
 export function AssistantMessage({ message, combinedParts, onRegenerate, isNew = true }: AssistantMessageProps) {
-  const [hovered, setHovered] = useState(false);
   const refreshForMessage = useActivityStore((s) => s.refreshForMessage);
   const parts = combinedParts ?? message.parts.map((p) => p.data as PartData);
   const mainParts = useMemo(
     () => parts.filter((part) => part.type !== "compaction"),
-    [parts],
-  );
-  const compactionParts = useMemo(
-    () => parts.filter((part): part is CompactionPartType => part.type === "compaction"),
     [parts],
   );
   const activityKey = message.id;
@@ -63,7 +58,7 @@ export function AssistantMessage({ message, combinedParts, onRegenerate, isNew =
       toolParts,
       stepParts,
       hasVisibleOutput: mainParts.some((p) =>
-        p.type === "text" || p.type === "file" || p.type === "subtask",
+        p.type === "text" || p.type === "file" || p.type === "subtask" || p.type === "swarm",
       ),
       chain,
     };
@@ -78,45 +73,36 @@ export function AssistantMessage({ message, combinedParts, onRegenerate, isNew =
   }, [activityData, activityKey, refreshForMessage]);
 
   return (
-    <>
-      <div
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
+    <div data-message-author="assistant">
+      <motion.div
+        initial={isNew ? { opacity: 0, y: 3 } : false}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{
+          duration: 0.16,
+          ease: [0.2, 0, 0, 1],
+        }}
       >
-        <motion.div
-          initial={isNew ? { opacity: 0, y: 6 } : false}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{
-            type: "spring",
-            stiffness: 300,
-            damping: 30,
-            opacity: { duration: 0.2 },
-          }}
-        >
-          <MessageContent parts={mainParts} activityKey={activityKey} />
-        </motion.div>
+        <MessageContent
+          parts={parts}
+          parentSessionId={message.session_id}
+          activityKey={activityKey}
+        />
+      </motion.div>
 
-        {/* Action bar — always in DOM to avoid layout shift, opacity-only toggle */}
-        <div
-          className={`transition-opacity duration-150 ${hovered ? "opacity-100" : "opacity-0 pointer-events-none"}`}
-        >
-          <MessageActions
-            content={textContent}
-            onRegenerate={onRegenerate}
-            activityData={activityData}
-            activityKey={activityKey}
-          />
-        </div>
+      {/* Keep core actions quietly visible. Work-mode controls should remain
+          discoverable without requiring pointer hover. */}
+      <div
+        className="conversation-message-actions"
+        data-message-actions
+      >
+        <MessageActions
+          content={textContent}
+          onRegenerate={onRegenerate}
+          activityData={activityData}
+          activityKey={activityKey}
+        />
       </div>
-
-      {compactionParts.length > 0 && (
-        <div className="mt-4 space-y-2">
-          {compactionParts.map((part, index) => (
-            <CompactionPart key={`${activityKey}-compaction-${index}`} data={part} />
-          ))}
-        </div>
-      )}
-    </>
+    </div>
   );
 }
 
@@ -129,9 +115,17 @@ interface StreamingMessageProps {
   parts: PartData[];
   streamingText: string;
   streamingReasoning: string;
+  /** The user explicitly stopped this response. */
+  isStopped?: boolean;
 }
 
-export const StreamingMessage = memo(function StreamingMessage({ sessionId, parts, streamingText, streamingReasoning }: StreamingMessageProps) {
+export const StreamingMessage = memo(function StreamingMessage({
+  sessionId,
+  parts,
+  streamingText,
+  streamingReasoning,
+  isStopped = false,
+}: StreamingMessageProps) {
   const { t } = useTranslation("chat");
   const isModelLoading = useChatStore((s) => {
     const bucket = sessionId === null ? s.draftSession : s.sessions[sessionId];
@@ -155,6 +149,7 @@ export const StreamingMessage = memo(function StreamingMessage({ sessionId, part
     if (streamingText) result.push({ type: "text", text: streamingText });
     return result;
   }, [parts, streamingReasoning, streamingText]);
+  const isSwarmResponse = liveParts.some((part) => part.type === "swarm");
 
   // No content yet — show a SINGLE "Thinking" stage indicator (the same one
   // the content phase renders at the top, so it carries over seamlessly).
@@ -166,6 +161,7 @@ export const StreamingMessage = memo(function StreamingMessage({ sessionId, part
   // (This phase also used to stack a separate StreamingIndicator dot-row on
   // top of the stage, so two different thinking animations showed at once.)
   if (liveParts.length === 0) {
+    if (isStopped) return <StoppedTerminus label={t("generationStopped")} />;
     return <StreamingStage label={t("stageThinking")} />;
   }
 
@@ -189,16 +185,30 @@ export const StreamingMessage = memo(function StreamingMessage({ sessionId, part
   // yet) renders the StreamingStage line AND the trailing dots at the same
   // time — two different "thinking" animations stacked. The stage line already
   // covers the no-activity case.
-  const showTail = hasAnyActivity && !isActivelyStreaming && !hasRunningTool && !isGenerationDone;
+  const showTail =
+    !isStopped &&
+    hasAnyActivity &&
+    !isActivelyStreaming &&
+    !hasRunningTool &&
+    !isGenerationDone;
 
   let stageLabel = t("stageThinking");
   if (hasRunningTool) stageLabel = t("stageWorkingWithTools");
   else if (!isActivelyStreaming && hasAnyTool) stageLabel = t("stageFinalizing");
 
   return (
-    <div className={freshMountRef.current ? "animate-fade-in" : undefined}>
-      {!hasAnyActivity && <StreamingStage label={isModelLoading ? t("stageThinking") : stageLabel} />}
-      <MessageContent parts={liveParts} isStreaming />
+    <div className={freshMountRef.current ? "conversation-append" : undefined}>
+      {!hasAnyActivity && !isActivelyStreaming && !isStopped && (
+        <StreamingStage label={isModelLoading ? t("stageThinking") : stageLabel} />
+      )}
+      <MessageContent
+        parts={liveParts}
+        parentSessionId={sessionId}
+        isStreaming={!isStopped}
+      />
+      {isStopped && !isSwarmResponse && (
+        <StoppedTerminus label={t("generationStopped")} />
+      )}
       {showTail && (
         <div className="mt-2">
           <StreamingIndicator label={stageLabel} />
@@ -208,10 +218,28 @@ export const StreamingMessage = memo(function StreamingMessage({ sessionId, part
   );
 });
 
+function StoppedTerminus({ label }: { label: string }) {
+  return (
+    <div
+      className="conversation-lifecycle-row mt-3"
+      role="status"
+      aria-live="polite"
+      data-conversation-lifecycle
+    >
+      <Square
+        className="h-3 w-3 shrink-0"
+        strokeWidth={1.8}
+        aria-hidden="true"
+      />
+      <span>{label}</span>
+    </div>
+  );
+}
+
 function StreamingStage({ label }: { label: string }) {
   return (
     <div
-      className="mb-2 flex items-center gap-2 text-[11px] text-[var(--text-tertiary)]"
+      className="conversation-lifecycle-row mb-2"
       role="status"
       aria-live="polite"
     >

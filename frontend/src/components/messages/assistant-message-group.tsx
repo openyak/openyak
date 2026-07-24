@@ -28,8 +28,11 @@ export const AssistantMessageGroup = memo(function AssistantMessageGroup({ messa
 
   // Use the first message as the "representative" for the group
   return (
-    <div className="px-4 py-5">
-      <div className="mx-auto max-w-3xl xl:max-w-4xl">
+    <div className="px-4 py-4">
+      <div
+        className="conversation-rail mx-auto"
+        data-conversation-rail
+      >
         <AssistantMessage
           message={messages[0]}
           combinedParts={combinedParts}

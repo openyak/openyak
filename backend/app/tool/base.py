@@ -72,6 +72,11 @@ class ToolDefinition(ABC):
         """
         return False
 
+    @property
+    def execution_timeout(self) -> float | None:
+        """Optional Tool-specific timeout; ``None`` uses the global limit."""
+        return None
+
     @abstractmethod
     def parameters_schema(self) -> dict[str, Any]:
         """Return JSON Schema for the tool's parameters."""

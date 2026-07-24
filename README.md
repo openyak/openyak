@@ -75,13 +75,9 @@ OpenYak can synthesize several files in the same thread and open a right-side ar
   <img src="docs/readme/openyak-artifact-panel.png" width="900" alt="OpenYak artifact panel with a multi-file board brief" />
 </p>
 
-### Multi-Agent Task Batches
+### Ultra Agent Swarm
 
-Split a larger request into focused child-agent tasks, run them in parallel, and keep the parent thread as the place where progress, links, and the final aggregate result come back together.
-
-<p align="center">
-  <img src="docs/readme/openyak-multi-agent-task-batch.png" width="900" alt="OpenYak parallel multi-agent task batch with child session links and an aggregate result" />
-</p>
+Turn on Ultra for complex work and describe the goal normally. The coordinating Agent can delegate 2–4 focused, traceable child Sessions, run read-only research in parallel, and bring their results back to the parent for one verified synthesis.
 
 ### Long Threads and Auto-Compress
 

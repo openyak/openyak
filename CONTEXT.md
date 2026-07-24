@@ -15,7 +15,7 @@ A single turn in a Session, authored by either user or assistant.
 _Avoid_: turn, post, entry.
 
 **Part**:
-The atomic content unit inside a Message — text, reasoning, tool call, step-finish, compaction, subtask, or file. Messages are sequences of Parts, not flat strings.
+The atomic content unit inside a Message — text, reasoning, tool call, step-finish, compaction, subtask, swarm, or file. Messages are sequences of Parts, not flat strings.
 _Avoid_: block, segment, chunk.
 
 **Compaction**:
@@ -41,6 +41,14 @@ _Avoid_: knowledge base, memory.
 **Agent**:
 A configuration bundle (system prompt, model choice, Tool allowlist, PermissionRules) that defines how a Session behaves.
 _Avoid_: persona, assistant, bot.
+
+**AgentRun**:
+One execution of a configured Agent for a Swarm assignment. An AgentRun has its own durable child Session and child GenerationJob; its lifecycle snapshot is stored inside the parent Session's `SwarmPart`.
+_Avoid_: task, worker config, agent definition.
+
+**Swarm**:
+A model-directed, bounded fork/join group of 2–4 AgentRuns launched by the parent Agent through the Swarm Tool in Ultra execution mode. The parent Session remains the owner of user interaction and final synthesis.
+_Avoid_: task batch, workflow, queue.
 
 **Provider**:
 A pluggable backend that produces model output (OpenAI, Anthropic, Ollama, etc.); implements `BaseProvider` in `backend/app/provider/base.py`.
@@ -82,9 +90,11 @@ _Avoid_: integration, connector, bot.
 - A **Project** owns one **Workspace**; **Sessions** live inside a **Workspace**.
 - A **Session** is a sequence of **Messages**; each **Message** is a sequence of **Parts**.
 - An **Agent** drives a **Session** by calling a **Provider** and dispatching **Tools** through a **ToolContext**.
+- A **Swarm** belongs to one parent **Session** and contains 2–4 **AgentRuns**; each AgentRun is backed by one durable child Session and child GenerationJob.
+- The parent Session's single `SwarmPart` is the durable lifecycle snapshot for all AgentRuns; deleting the parent deletes its child Session tree.
 - A **PermissionRule** belongs to an **Agent** and gates the **Tools** it may invoke.
 - A **GenerationJob** produces the **Parts** of a single assistant **Message**, streamed via SSE.
-- An **Artifact** is a specific **Part** type; **Compaction** is another.
+- An **Artifact**, **Compaction**, and `SwarmPart` are specific **Part** types.
 - A **Channel** delivers external **Messages** into a **Session** and ships the resulting **Parts** back out.
 - **WorkspaceMemory** is read by an **Agent** at the start of every **Session** in that **Workspace**.
 
@@ -100,5 +110,6 @@ _Avoid_: integration, connector, bot.
 
 - **Workspace vs. Project** — used interchangeably in places (e.g. `tool/workspace.py` vs. `models/project.py`). Resolved: **Project** is the persisted row; **Workspace** is the live, in-memory binding. Don't say "the Project's workspace"; say "the Workspace" or "the Project record."
 - **Agent vs. Skill vs. Tool** — three scales of "a thing the AI does." Resolved: **Tool** = atomic action, **Skill** = composed routine of Tools+prompt, **Agent** = whole config that owns Skills, Tools, and permissions. Reach for the smallest term that fits.
+- **Agent vs. AgentRun vs. Swarm** — an **Agent** is reusable configuration; an **AgentRun** is one execution of that configuration in a child Session; a **Swarm** coordinates multiple AgentRuns and returns control to the parent Agent for synthesis.
 - **Artifact vs. Part** — every Artifact is a Part; not every Part is an Artifact. Resolved: say **Part** unless the right-panel rendering specifically matters; then say **Artifact**.
 - **Channel vs. Provider** — both are pluggable adapters. Resolved: a **Provider** generates content (LLM); a **Channel** delivers Messages to and from external surfaces. Never call Slack a Provider.

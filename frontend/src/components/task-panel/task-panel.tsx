@@ -1,16 +1,24 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Activity, ChevronDown, FolderOpen, Layers } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { IS_DESKTOP, TITLE_BAR_HEIGHT } from "@/lib/constants";
+import {
+  IS_DESKTOP,
+  TITLE_BAR_HEIGHT,
+  WORKSPACE_PANEL_WIDTH,
+} from "@/lib/constants";
 import { useIsMacOS } from "@/hooks/use-platform";
 import { useIsDesktop } from "@/hooks/use-is-desktop";
+import { useMessages } from "@/hooks/use-messages";
+import { useSession } from "@/hooks/use-sessions";
+import { useSubagents } from "@/hooks/use-subagents";
 import { usePlanReviewStore } from "@/stores/plan-review-store";
 import { useArtifactStore } from "@/stores/artifact-store";
 import { useActivityStore } from "@/stores/activity-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
+import { useChatSession, useChatStore } from "@/stores/chat-store";
 import {
   useTaskPanelStore,
   type TaskPanelSection,
@@ -22,6 +30,15 @@ import { ActivityPanelContent } from "@/components/activity/activity-panel";
 import { ProgressCard } from "@/components/workspace/progress-section";
 import { FilesCard } from "@/components/workspace/files-section";
 import { ContextCard } from "@/components/workspace/context-section";
+import {
+  InputsSection,
+  SourcesSection,
+} from "@/components/workspace/evidence-sections";
+import { SubagentsSummaryCard } from "@/components/workspace/subagents-summary-card";
+import {
+  collectTaskSummaryEvidence,
+  collectTaskSummaryOutputs,
+} from "@/components/workspace/workspace-summary-data";
 import { cn } from "@/lib/utils";
 
 function halfViewport(): number {
@@ -37,13 +54,20 @@ function halfViewport(): number {
 export function useTaskPanelWidth(): number {
   const width = useTaskPanelStore((s) => s.width);
   const planIsOpen = usePlanReviewStore((s) => s.isOpen);
+  const artifactIsOpen = useArtifactStore((s) => s.isOpen);
+  const activityIsOpen = useActivityStore((s) => s.isOpen);
+  const workspaceIsOpen = useWorkspaceStore((s) => s.isOpen);
   const [viewportHalf, setViewportHalf] = useState(halfViewport);
   useEffect(() => {
     const handler = () => setViewportHalf(halfViewport());
     window.addEventListener("resize", handler);
     return () => window.removeEventListener("resize", handler);
   }, []);
-  return planIsOpen ? Math.max(width, viewportHalf) : width;
+  if (planIsOpen) return Math.max(width, viewportHalf);
+  if (workspaceIsOpen && !artifactIsOpen && !activityIsOpen) {
+    return WORKSPACE_PANEL_WIDTH;
+  }
+  return width;
 }
 
 /** Whether the unified task panel has anything to show. */
@@ -143,6 +167,79 @@ function SectionHeader({
   );
 }
 
+function WorkspaceSummaryContent() {
+  const parentSessionId = useChatStore((state) => state.focusedSessionId);
+  const { messages } = useMessages(parentSessionId ?? undefined);
+  const {
+    streamingParts,
+    pendingAttachments,
+    isGenerating,
+    isStopped,
+  } = useChatSession(parentSessionId);
+  const parentFiles = useWorkspaceStore((state) => state.workspaceFiles);
+  const { data: parentSession } = useSession(parentSessionId ?? undefined);
+  const { data: subagents } = useSubagents(parentSessionId);
+  const parentEvidence = useMemo(() => {
+    const firstRun = subagents?.active[0] ?? subagents?.done[0];
+    const agent =
+      [...messages]
+        .reverse()
+        .find((message) => message.data.agent)?.data.agent ?? "primary";
+    return {
+      sessionId: parentSessionId ?? "parent",
+      agentTitle:
+        parentSession?.title || firstRun?.parent_title || "Parent task",
+      agent,
+      status: isGenerating
+        ? ("running" as const)
+        : isStopped
+          ? ("cancelled" as const)
+          : ("completed" as const),
+    };
+  }, [
+    isGenerating,
+    isStopped,
+    messages,
+    parentSession?.title,
+    parentSessionId,
+    subagents,
+  ]);
+  const evidence = useMemo(
+    () =>
+      collectTaskSummaryEvidence(
+        messages,
+        streamingParts,
+        pendingAttachments ?? [],
+        subagents,
+        parentEvidence,
+      ),
+    [
+      messages,
+      parentEvidence,
+      pendingAttachments,
+      streamingParts,
+      subagents,
+    ],
+  );
+  const outputs = useMemo(
+    () => collectTaskSummaryOutputs(parentFiles, subagents, parentEvidence),
+    [parentEvidence, parentFiles, subagents],
+  );
+
+  return (
+    <div className="overflow-hidden rounded-[28px] border border-[var(--border-subtle)] bg-[var(--surface-raised)] shadow-[var(--shadow-sm)]">
+      <ProgressCard />
+      <FilesCard files={outputs} />
+      {parentSessionId ? (
+        <SubagentsSummaryCard parentSessionId={parentSessionId} />
+      ) : null}
+      <SourcesSection sources={evidence.sources} />
+      <InputsSection inputs={evidence.inputs} />
+      <ContextCard />
+    </div>
+  );
+}
+
 /**
  * Unified right-hand task panel (desktop only). Stacks what used to be four
  * mutually-exclusive overlays as sections: pending plan review (pinned,
@@ -168,18 +265,25 @@ export function TaskPanel({ isActiveChat }: { isActiveChat: boolean }) {
   if (!isDesktop || !isOpen) return null;
 
   const showWorkspace = isActiveChat && workspaceIsOpen;
+  const workspaceOnly =
+    showWorkspace && !planIsOpen && !artifactIsOpen && !activityIsOpen;
 
   return (
     <motion.aside
-      aria-label={t("taskPanel")}
-      className="fixed inset-y-0 right-0 z-[35] flex flex-col overflow-hidden border-l border-[var(--border-default)] bg-[var(--surface-primary)]"
+      aria-label={workspaceOnly ? "Task summary" : t("taskPanel")}
+      className={cn(
+        "fixed inset-y-0 right-0 z-[35] flex flex-col overflow-hidden",
+        workspaceOnly
+          ? "pointer-events-none bg-transparent"
+          : "border-l border-[var(--border-default)] bg-[var(--surface-primary)]",
+      )}
       style={{ width, top: topOffset, ["--panel-right-w" as string]: `${width}px` }}
       initial={{ x: "100%" }}
       animate={{ x: 0 }}
       exit={{ x: "100%" }}
       transition={{ type: "spring", damping: 30, stiffness: 300 }}
     >
-      <ResizeHandle />
+      {!workspaceOnly && <ResizeHandle />}
 
       {/* Pending plan review gates the conversation — pinned, always expanded,
           visually urgent. */}
@@ -211,7 +315,11 @@ export function TaskPanel({ isActiveChat }: { isActiveChat: boolean }) {
       )}
 
       {activityIsOpen && (
-        <section className="flex min-h-0 flex-1 flex-col">
+        <section
+          id="activity-panel"
+          aria-label={t("activity")}
+          className="flex min-h-0 flex-1 flex-col"
+        >
           <SectionHeader
             section="activity"
             icon={<Activity className="h-3.5 w-3.5" />}
@@ -225,7 +333,17 @@ export function TaskPanel({ isActiveChat }: { isActiveChat: boolean }) {
         </section>
       )}
 
-      {showWorkspace && (
+      {showWorkspace && workspaceOnly && (
+        <section className="flex min-h-0 flex-1 flex-col">
+          <div className="scrollbar-auto min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-4 pt-16">
+            <div className="pointer-events-auto">
+              <WorkspaceSummaryContent />
+            </div>
+          </div>
+        </section>
+      )}
+
+      {showWorkspace && !workspaceOnly && (
         <section
           className={cn(
             "flex min-h-0 flex-col",
@@ -242,10 +360,8 @@ export function TaskPanel({ isActiveChat }: { isActiveChat: boolean }) {
             title={t("taskPanelWorkspace")}
           />
           {!collapsed.workspace && (
-            <div className="scrollbar-auto min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 py-4">
-              <ProgressCard />
-              <FilesCard />
-              <ContextCard />
+            <div className="scrollbar-auto min-h-0 flex-1 overflow-y-auto overscroll-contain p-3">
+              <WorkspaceSummaryContent />
             </div>
           )}
         </section>

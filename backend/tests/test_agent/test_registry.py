@@ -8,7 +8,16 @@ class TestAgentRegistry:
         r = AgentRegistry()
         agents = r.list_agents(include_hidden=True)
         names = {a.name for a in agents}
-        assert names == {"build", "plan", "explore", "general", "compaction", "title", "summary"}
+        assert names == {
+            "build",
+            "plan",
+            "explore",
+            "research",
+            "general",
+            "compaction",
+            "title",
+            "summary",
+        }
 
     def test_default_agent_is_build(self):
         r = AgentRegistry()
@@ -45,7 +54,7 @@ class TestAgentRegistry:
         r = AgentRegistry()
         subs = r.subagents()
         assert all(a.mode == "subagent" for a in subs)
-        assert {a.name for a in subs} == {"explore", "general"}
+        assert {a.name for a in subs} == {"explore", "research", "general"}
 
     def test_explore_has_restricted_tools(self):
         r = AgentRegistry()

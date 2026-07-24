@@ -5,10 +5,15 @@ import { WifiOff, RefreshCw, X, QrCode } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useConnectionStore } from "@/stores/connection-store";
 import { isRemoteMode } from "@/lib/remote-connection";
+import { getTaskConnectionStatus } from "@/lib/stream-status";
 import { Button } from "@/components/ui/button";
 
-export function OfflineOverlay() {
-  const status = useConnectionStore((s) => s.status);
+export function OfflineOverlay({ sessionId }: { sessionId?: string }) {
+  const status = useConnectionStore((state) =>
+    sessionId
+      ? getTaskConnectionStatus(state.sessionStates[sessionId])
+      : state.status,
+  );
   const [dismissed, setDismissed] = useState(false);
   const router = useRouter();
 
