@@ -177,7 +177,7 @@ export function FilesCard({ files }: { files: WorkspaceFile[] }) {
         onClick={() => toggleSection("files")}
         aria-expanded={!collapsed}
         aria-controls="workspace-outputs-content"
-        aria-label={`Outputs. ${fileSummary}`}
+        aria-label={`Outputs. ${fileSummary}. Files ${fileSummary}`}
       >
         <h2 className="text-base font-normal text-[var(--text-tertiary)]">
           Outputs

@@ -315,7 +315,11 @@ export function TaskPanel({ isActiveChat }: { isActiveChat: boolean }) {
       )}
 
       {activityIsOpen && (
-        <section className="flex min-h-0 flex-1 flex-col">
+        <section
+          id="activity-panel"
+          aria-label={t("activity")}
+          className="flex min-h-0 flex-1 flex-col"
+        >
           <SectionHeader
             section="activity"
             icon={<Activity className="h-3.5 w-3.5" />}

@@ -6,6 +6,47 @@ Format follows [Keep a Changelog](https://keepachangelog.com/), and this project
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-07-23
+
+### Added
+
+- **agent (Ultra mode):** Added model-directed Agent Swarms. The parent Agent can launch 2–4 bounded AgentRuns in durable child Sessions, follow their live state, exchange input, recover interrupted work, and synthesize the final result without asking the user to fill out a task batch.
+- **work mode (conversation):** Added a Codex-style ordered work timeline for prose, reasoning, Tool activity, Compaction, Agent coordination, Stop, and follow-up work. Progressive text buffers now flush before Tool events so the visible chronology matches execution.
+- **work mode (Subagents):** Added parent-scoped Active/Done lists, child detail views, live lifecycle updates, `waiting_input`, nested descendant aggregation, and direct navigation between the parent Session and AgentRun Sessions.
+- **work mode (task summary):** Added task-level Progress, Outputs, Subagents, Sources, Inputs, and Context to the unified right-side Task Panel, including descendant lineage and responsive overlay/pinned behavior.
+- **evidence (Sources):** Added bounded, versioned `source_evidence` envelopes for web and MCP connector results so source links survive output truncation and Compaction without persisting entire raw payloads.
+- **desktop UX:** Added app-wide keyboard shortcuts, a slash-command menu, localized first-run onboarding, blocked-Session attention states, and a cross-Session automation activity inbox.
+
+### Changed
+
+- **multi-agent:** Replaced the manual Task Batch composer/API with the normal Composer plus the Ultra execution-mode toggle. Delegation strategy is now selected by the Agent and coordinated through the Swarm Tool.
+- **task panel:** Consolidated Workspace, Activity, Artifact, and Plan Review surfaces into one right-side panel contract while preserving a compact Codex-style Summary card for Work Mode.
+- **permissions:** Permission memory is scoped by concrete command family or path and Agent-level denials remain authoritative over Session-level remembered rules.
+- **design system:** Completed semantic surface, border, text, focus, motion, and system-typography tokens; tightened Composer and timeline density without copying decorative Agent avatars or proprietary Codex chrome.
+- **providers:** Refreshed curated model families and documented all supported BYOK providers.
+
+### Fixed
+
+- **streaming:** Fixed Stop, queued cancellation, replay deduplication, reconnect, immediate resend, remote transport health, stale streaming cursors, and active-GenerationJob recovery after backend restarts.
+- **agent lifecycle:** Fixed child cancellation, `waiting_input` propagation, parent/child terminal-state synchronization, permit cleanup, and stale Swarm members after interruption.
+- **session:** Context collapse preserves the visible transcript while excluding collapsed Messages from future model context.
+- **scheduler:** Cron schedules use each automation's timezone, and loop completion reads persisted output so `[LOOP_DONE]` terminates reliably.
+- **accessibility:** Loading indicators remain animated under reduced motion while nonessential transitions stay disabled; disclosure controls expose stable labels, relationships, and focus restoration.
+- **frontend:** Fixed Tailwind class merging that could remove button text colors and refreshed long-running UI fixtures to match the current model/provider surfaces.
+
+### Security
+
+- **source provenance:** Credential-bearing paths and queries, signature/token aliases, malformed URLs, callback/pagination fields, and credential assignments in titles or snippets are rejected or redacted before persistence and again before rendering.
+- **source isolation:** Ordinary prose and local Read/Bash/Code JSON are never treated as external Sources; a valid evidence envelope is authoritative even when empty, preventing unsafe raw-output fallback.
+
+### Validation
+
+- Backend: 1,234 passed, 21 skipped; CI-equivalent suite: 1,232 passed, 21 skipped.
+- Frontend unit tests: 51/51 passed; TypeScript and ESLint completed with zero diagnostics.
+- Chromium UI regression: 120 passed, 5 documentation-capture scenarios skipped, 0 failed.
+- Production frontend build: 15/15 static pages generated.
+- Desktop bundle smoke test passed against the frozen backend; Desktop Rust `cargo check` passed with all version metadata synchronized to 1.4.0.
+
 ## [1.3.0] - 2026-05-31
 
 ### Added

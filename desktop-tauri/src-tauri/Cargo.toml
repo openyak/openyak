@@ -1,6 +1,6 @@
 [package]
 name = "openyak-desktop"
-version = "1.3.0"
+version = "1.4.0"
 description = "OpenYak — local-first AI agent for desktop work"
 license = "Apache-2.0"
 edition = "2021"

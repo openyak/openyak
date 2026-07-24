@@ -185,7 +185,9 @@ Dynamic evidence:
 - Browser capture diagnostics: zero warnings or errors.
 - `git diff --check`: passed.
 - Combined reference/implementation inspection: no remaining P0, P1, or actionable P2 visual defects.
-- Full backend regression after final provenance hardening: 1145 passed, 21 skipped.
+- Full backend regression after final provenance hardening: 1234 passed, 21 skipped.
+- Full Chromium UI regression: 120 passed, 5 README capture scenarios skipped,
+  0 failed.
 - Dynamic Stop regression: 6 passed, including SSE → Swarm → Stop and
   stopped-caret coverage.
 

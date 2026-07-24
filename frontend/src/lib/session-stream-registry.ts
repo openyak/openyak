@@ -733,11 +733,16 @@ export async function startStream(
       filesToModify: data.files_to_modify ?? [],
     };
     store.getState().setPlanReview(sessionId, reviewData);
-    try {
-      const { usePlanReviewStore } = require("@/stores/plan-review-store");
-      usePlanReviewStore.getState().openReview(reviewData);
-    } catch {
-      // ignore — store may not be available during SSR
+    // The panel is a mirror for the task the user is currently viewing.
+    // Background sessions keep their pending plan in their own chat bucket;
+    // focusing that session rehydrates the panel from the bucket.
+    if (store.getState().focusedSessionId === sessionId) {
+      try {
+        const { usePlanReviewStore } = require("@/stores/plan-review-store");
+        usePlanReviewStore.getState().openReview(reviewData);
+      } catch {
+        // ignore — store may not be available during SSR
+      }
     }
   });
 

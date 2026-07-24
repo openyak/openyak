@@ -10,18 +10,20 @@ test.describe("Workspace Session state", () => {
     await page.goto("/c/session-alpha");
 
     const alphaScratchpad = page.getByRole("button", { name: "Scratchpad" });
-    if (!(await alphaScratchpad.isVisible())) {
-      await page.getByRole("button", { name: /Outputs\. 5 generated files/i }).click();
-    }
+    await expect(
+      page.getByRole("button", { name: /Outputs\. 5 generated files/i }),
+    ).toHaveAttribute("aria-expanded", "true");
+    await expect(alphaScratchpad).toBeVisible();
     await alphaScratchpad.click();
     await page.getByPlaceholder("Notes, ideas, reminders...").fill("Alpha notes");
 
     await page.getByRole("option", { name: /Invoice cleanup/i }).click();
     await expect(page).toHaveURL(/\/c\/session-beta$/);
     const betaScratchpad = page.getByRole("button", { name: "Scratchpad" });
-    if (!(await betaScratchpad.isVisible())) {
-      await page.getByRole("button", { name: /Outputs\. 5 generated files/i }).click();
-    }
+    await expect(
+      page.getByRole("button", { name: /Outputs\. 5 generated files/i }),
+    ).toHaveAttribute("aria-expanded", "true");
+    await expect(betaScratchpad).toBeVisible();
     await betaScratchpad.click();
     await page.getByPlaceholder("Notes, ideas, reminders...").fill("Beta notes");
 

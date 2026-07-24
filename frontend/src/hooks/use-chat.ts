@@ -533,11 +533,12 @@ export function useChat(
         await api.post(API.CHAT.RESPOND, req);
         chatState.clearPlanReview(targetSessionId);
 
+        try {
+          const { usePlanReviewStore } = require("@/stores/plan-review-store");
+          usePlanReviewStore.getState().close();
+        } catch {}
+
         if (action === "accept") {
-          try {
-            const { usePlanReviewStore } = require("@/stores/plan-review-store");
-            usePlanReviewStore.getState().close();
-          } catch {}
           useSettingsStore.getState().setWorkMode(options?.mode ?? "auto");
         }
       } catch (err) {
