@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/readme/openyak-workflow-artifacts.gif" width="900" alt="OpenYak 把多份办公文件整理成结构化回答和可复用 artifact" />
+  <img src="docs/readme/openyak-ultra-agent-swarm.gif" width="900" alt="OpenYak Ultra Agent Swarm 并行运行多个子 Agent，并在父任务中统一综合结果" />
 </p>
 
 <h3 align="center">面向文件、工具、长线程和真实桌面工作的本地优先 AI Agent。</h3>
@@ -72,16 +72,16 @@ OpenYak 可以把很长的 memo 整理成给管理层、团队同步或 follow-u
 OpenYak 可以在同一个线程里综合多份文件，并在右侧 artifact panel 打开可复用的 brief、计划、图表和结构化输出。
 
 <p align="center">
+  <img src="docs/readme/openyak-workflow-artifacts.gif" width="900" alt="OpenYak 把多份办公文件整理成结构化回答和可复用 artifact" />
+</p>
+
+<p align="center">
   <img src="docs/readme/openyak-artifact-panel.png" width="900" alt="OpenYak 右侧 artifact panel 展示多文件 board brief" />
 </p>
 
 ### Ultra Agent Swarm
 
 复杂任务开启 Ultra 后，像平常一样描述目标即可。父 Agent 会自主判断何时在持久化子 Session 中启动 2–4 个聚焦的 AgentRun，跟踪实时状态，在需要时交换输入，并在原任务中综合已持久化的结果。用户不需要配置 task-batch 表单。
-
-<p align="center">
-  <img src="docs/readme/openyak-ultra-agent-swarm.gif" width="900" alt="OpenYak Ultra Agent Swarm 在父任务中实时展示并行子 AgentRun，并完成统一验证与综合" />
-</p>
 
 父任务作用域内的 Subagents 视图会在同一个任务壳中整理 Active 和 Done 工作。你可以打开子会话 transcript，检查状态与输出，再返回父任务；Progress、Outputs、Subagents、Sources、Inputs 和 Context 始终关联到同一个任务。
 

@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/readme/openyak-workflow-artifacts.gif" width="900" alt="OpenYak turns uploaded office files into a structured answer and reusable artifact" />
+  <img src="docs/readme/openyak-ultra-agent-swarm.gif" width="900" alt="OpenYak Ultra Agent Swarm runs parallel child agents and synthesizes their work in the parent task" />
 </p>
 
 <h3 align="center">A local-first AI agent for files, tools, long threads, and real desktop work.</h3>
@@ -72,16 +72,16 @@ Use spreadsheets as working inputs, not screenshots. Ask for budget variance, fo
 OpenYak can synthesize several files in the same thread and open a right-side artifact panel for reusable briefs, plans, diagrams, and structured outputs.
 
 <p align="center">
+  <img src="docs/readme/openyak-workflow-artifacts.gif" width="900" alt="OpenYak turns uploaded office files into a structured answer and reusable artifact" />
+</p>
+
+<p align="center">
   <img src="docs/readme/openyak-artifact-panel.png" width="900" alt="OpenYak artifact panel with a multi-file board brief" />
 </p>
 
 ### Ultra Agent Swarm
 
 Turn on Ultra for complex work and describe the goal normally. The parent Agent decides when to launch 2–4 focused AgentRuns in durable child Sessions, follows their live state, exchanges input when needed, and synthesizes their persisted results in the original task. There is no task-batch form to configure.
-
-<p align="center">
-  <img src="docs/readme/openyak-ultra-agent-swarm.gif" width="900" alt="OpenYak Ultra Agent Swarm streams parallel child AgentRuns into the parent task before a verified final synthesis" />
-</p>
 
 The parent-scoped Subagents view keeps Active and Done work inside the same task shell. Open a child transcript, inspect its status and output, then return to the parent while Progress, Outputs, Subagents, Sources, Inputs, and Context stay tied to the same task.
 
