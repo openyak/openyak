@@ -136,28 +136,45 @@ test.describe("OpenYak Work mode task shell", () => {
           ),
         )
         .toBe(current.overlay ? 0 : 320);
+      await expect
+        .poll(() =>
+          main.evaluate((element) =>
+            Number.parseFloat(getComputedStyle(element).marginLeft),
+          ),
+        )
+        .toBe(current.sidebar);
 
-      const summaryBox = await page
-        .getByRole("complementary", { name: "Task summary" })
-        .boundingBox();
       const composerSurface = page
         .getByRole("region", { name: "Message composer" })
         .locator("div.rounded-3xl")
         .first();
-      const composerBox = await composerSurface.boundingBox();
-      const sendBox = await page
-        .getByRole("button", { name: /Send message/i })
-        .boundingBox();
+      const bounds = await composerSurface.evaluate((composer) => {
+        const summary = document.querySelector<HTMLElement>(
+          'aside[aria-label="Task summary"]',
+        );
+        const send = document.querySelector<HTMLElement>(
+          'button[aria-label="Send message"]',
+        );
+        if (!summary || !send) return null;
 
-      expect(summaryBox).not.toBeNull();
-      expect(composerBox).not.toBeNull();
-      expect(sendBox).not.toBeNull();
-      expect(composerBox!.x + composerBox!.width)
-        .toBeLessThanOrEqual(summaryBox!.x);
-      expect(sendBox!.x + sendBox!.width)
-        .toBeLessThanOrEqual(composerBox!.x + composerBox!.width);
-      expect(sendBox!.y + sendBox!.height)
-        .toBeLessThanOrEqual(composerBox!.y + composerBox!.height);
+        const rect = (element: Element) => {
+          const { x, y, width, height } = element.getBoundingClientRect();
+          return { x, y, width, height };
+        };
+        return {
+          summary: rect(summary),
+          composer: rect(composer),
+          send: rect(send),
+        };
+      });
+
+      expect(bounds).not.toBeNull();
+      expect(bounds!.composer.x + bounds!.composer.width)
+        .toBeLessThanOrEqual(bounds!.summary.x);
+      expect(bounds!.send.x + bounds!.send.width)
+        .toBeLessThanOrEqual(bounds!.composer.x + bounds!.composer.width);
+      expect(bounds!.send.y + bounds!.send.height)
+        .toBeLessThanOrEqual(bounds!.composer.y + bounds!.composer.height);
     }
   });
 });

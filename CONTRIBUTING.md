@@ -100,6 +100,23 @@ Fixes #42
 - Keep the PR up to date with `main` via rebase
 - Once approved, a maintainer will merge
 
+## Refreshing README Media
+
+The README screenshots and GIFs are generated from deterministic Playwright
+scenarios that exercise the current desktop Work Mode UI. Install `ffmpeg`,
+then run:
+
+```bash
+cd frontend
+npm run capture:readme-media
+```
+
+The command uses headless Chromium with one worker. It stages and validates all
+managed media first, then replaces `docs/readme` only after every capture
+succeeds. Publishing uses an atomic, recoverable transaction, and a second
+capture process is rejected while one is active, so failures or interruptions
+cannot leave the README with a partial asset set.
+
 ## Community Guidelines
 
 OpenYak uses issue templates and moderation tools to keep project discussions useful for contributors and users.

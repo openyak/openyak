@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useTranslation } from "react-i18next";
 import { useSubagents } from "@/hooks/use-subagents";
 import { getTaskSubagentsRoute } from "@/lib/routes";
+import { useChatSession } from "@/stores/chat-store";
+import { deriveSubagentSummaryState } from "./subagent-summary-state";
 
 interface SubagentsSummaryCardProps {
   parentSessionId: string;
@@ -14,13 +16,19 @@ export function SubagentsSummaryCard({
 }: SubagentsSummaryCardProps) {
   const { t } = useTranslation("common");
   const { data, isPlaceholderData } = useSubagents(parentSessionId);
-  const counts = data?.counts ?? { active: 0, done: 0, total: 0 };
+  const { streamingParts, isGenerating, isStopped } =
+    useChatSession(parentSessionId);
+  const liveMembers = streamingParts.flatMap((part) =>
+    part.type === "swarm" ? part.members : [],
+  );
+  const summary = deriveSubagentSummaryState(
+    data,
+    liveMembers,
+    isGenerating && !isStopped,
+  );
+  const { counts, waitingCount, workingCount, usesLiveState } = summary;
 
-  if (isPlaceholderData || counts.total === 0) return null;
-
-  const waitingCount =
-    data?.active.filter((run) => run.status === "waiting_input").length ?? 0;
-  const workingCount = Math.max(0, counts.active - waitingCount);
+  if ((isPlaceholderData && !usesLiveState) || counts.total === 0) return null;
   const primaryLabel =
     waitingCount > 0
       ? t("subagentsWaitingCount", { count: waitingCount })

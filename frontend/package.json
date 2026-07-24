@@ -13,6 +13,7 @@
     "test:ui": "node scripts/playwright-env.mjs test",
     "test:ui:headed": "node scripts/playwright-env.mjs test --headed",
     "test:ui:headless": "node scripts/playwright-env.mjs --headless test",
+    "capture:readme-media": "OPENYAK_CAPTURE_README_MEDIA=true OPENYAK_UI_HEADLESS=true node scripts/playwright-env.mjs test tests/ui/openyak-readme-media.spec.ts --project=chromium --workers=1",
     "preflight:ui": "node scripts/playwright-env.mjs test --project=chromium"
   },
   "dependencies": {

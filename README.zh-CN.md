@@ -77,7 +77,17 @@ OpenYak 可以在同一个线程里综合多份文件，并在右侧 artifact pa
 
 ### Ultra Agent Swarm
 
-复杂任务开启 Ultra 后，像平常一样描述目标即可。协调 Agent 会按需委派 2–4 个聚焦且可追踪的子 Session，并行开展只读研究，再回到父 Session 完成统一验证与综合。
+复杂任务开启 Ultra 后，像平常一样描述目标即可。父 Agent 会自主判断何时在持久化子 Session 中启动 2–4 个聚焦的 AgentRun，跟踪实时状态，在需要时交换输入，并在原任务中综合已持久化的结果。用户不需要配置 task-batch 表单。
+
+<p align="center">
+  <img src="docs/readme/openyak-ultra-agent-swarm.gif" width="900" alt="OpenYak Ultra Agent Swarm 在父任务中实时展示并行子 AgentRun，并完成统一验证与综合" />
+</p>
+
+父任务作用域内的 Subagents 视图会在同一个任务壳中整理 Active 和 Done 工作。你可以打开子会话 transcript，检查状态与输出，再返回父任务；Progress、Outputs、Subagents、Sources、Inputs 和 Context 始终关联到同一个任务。
+
+<p align="center">
+  <img src="docs/readme/openyak-subagents-work-view.png" width="900" alt="OpenYak Subagents 工作视图，展示 Active 和 Done 子 Session 以及任务级 Outputs" />
+</p>
 
 ### 长对话与自动压缩
 
