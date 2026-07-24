@@ -6,6 +6,7 @@ frontend SSE recovery logic. They intentionally avoid real LLM calls.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -16,6 +17,8 @@ from app.streaming.events import (
     AGENT_ERROR,
     DESYNC,
     DONE,
+    PERMISSION_RESOLVED,
+    QUESTION_RESOLVED,
     STEP_FINISH,
     TEXT_DELTA,
     SSEEvent,
@@ -154,6 +157,19 @@ class TestGenerationLifecycleContract:
         assert first.event == DESYNC
         assert first.id is not None
 
+    def test_active_replay_reports_buffer_gap_without_overfilling_queue(self) -> None:
+        job = GenerationJob("stream-1", "session-1")
+        for i in range(GenerationJob._MAX_EVENT_BUFFER + 10):
+            job.publish(SSEEvent(TEXT_DELTA, {"text": str(i)}))
+
+        queue = job.subscribe(last_event_id=1)
+        first = queue.get_nowait()
+
+        assert first is not None
+        assert first.event == DESYNC
+        assert first.data["dropped_event_id"] > 1
+        assert queue.qsize() == queue.maxsize - 1
+
     def test_tool_use_step_finish_does_not_complete_generation(self) -> None:
         sm = StreamManager()
         job = sm.create_job("stream-1", "session-1")
@@ -174,8 +190,115 @@ class TestGenerationLifecycleContract:
         assert not job.completed
         assert sm.active_jobs()[0]["stream_id"] == "stream-1"
 
+    @pytest.mark.asyncio
+    async def test_cancelled_generation_publishes_aborted_done(
+        self,
+        monkeypatch,
+    ) -> None:
+        from app.session.processor import run_generation
+        import app.session.prompt as prompt_module
+
+        class _CancelledPrompt:
+            def __init__(self, *args, **kwargs) -> None:
+                del args, kwargs
+
+            async def run(self) -> None:
+                raise asyncio.CancelledError
+
+        monkeypatch.setattr(prompt_module, "SessionPrompt", _CancelledPrompt)
+        job = GenerationJob("cancelled-stream", "cancelled-session")
+
+        with pytest.raises(asyncio.CancelledError):
+            await run_generation(
+                job,
+                object(),
+                session_factory=object(),
+                provider_registry=object(),
+                agent_registry=object(),
+                tool_registry=object(),
+            )
+
+        done = [event for event in job.events if event.event == DONE]
+        assert len(done) == 1
+        assert done[0].data["finish_reason"] == "aborted"
+        assert job.completed
+
 
 class TestChatStreamEndpointContract:
+    @pytest.mark.parametrize(
+        ("submitted_response", "resolved_event"),
+        [
+            (True, PERMISSION_RESOLVED),
+            ("selected-option", QUESTION_RESOLVED),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_child_response_reaches_parent_broker_and_resolves_both_streams(
+        self,
+        app_client,
+        submitted_response,
+        resolved_event,
+    ) -> None:
+        sm = StreamManager()
+        set_stream_manager(sm)
+        parent = sm.create_job("parent-stream", "parent-session")
+        child = GenerationJob("child-stream", "child-session")
+        child.link_parent(parent)
+        sm.register_job(child)
+        waiter = asyncio.create_task(
+            child.wait_for_response("call-1", timeout=1.0)
+        )
+        await asyncio.sleep(0)
+
+        response = await app_client.post(
+            "/api/chat/respond",
+            json={
+                "stream_id": child.stream_id,
+                "call_id": "call-1",
+                "response": submitted_response,
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "submitted"}
+        assert await waiter == submitted_response
+        assert child.events[-1].event == resolved_event
+        assert child.events[-1].data["call_id"] == "call-1"
+        assert parent.events[-1].event == resolved_event
+        assert parent.events[-1].data["call_id"] == "child-stream:call-1"
+
+    @pytest.mark.asyncio
+    async def test_parent_response_also_resolves_the_linked_child_stream(
+        self,
+        app_client,
+    ) -> None:
+        sm = StreamManager()
+        set_stream_manager(sm)
+        parent = sm.create_job("parent-stream", "parent-session")
+        child = GenerationJob("child-stream", "child-session")
+        child.link_parent(parent)
+        sm.register_job(child)
+        waiter = asyncio.create_task(
+            child.wait_for_response("call-1", timeout=1.0)
+        )
+        await asyncio.sleep(0)
+
+        response = await app_client.post(
+            "/api/chat/respond",
+            json={
+                "stream_id": parent.stream_id,
+                "call_id": "child-stream:call-1",
+                "response": False,
+            },
+        )
+
+        assert response.status_code == 200
+        assert await waiter is False
+        assert parent.events[-1].event == PERMISSION_RESOLVED
+        assert parent.events[-1].data["call_id"] == "child-stream:call-1"
+        assert child.events[-1].event == PERMISSION_RESOLVED
+        assert child.events[-1].data["call_id"] == "call-1"
+
     @pytest.mark.asyncio
     async def test_stream_replays_from_last_event_id_query_param(self, app_client) -> None:
         sm = StreamManager()
@@ -214,6 +337,31 @@ class TestChatStreamEndpointContract:
         assert events[0]["data"]["text"] == "two"
 
     @pytest.mark.asyncio
+    async def test_stream_uses_newer_last_event_id_header_over_query(self, app_client) -> None:
+        sm = StreamManager()
+        set_stream_manager(sm)
+        job = sm.create_job("stream-1", "session-1")
+        job.publish(SSEEvent(TEXT_DELTA, {"text": "one"}))
+        job.publish(SSEEvent(TEXT_DELTA, {"text": "two"}))
+        job.publish(SSEEvent(TEXT_DELTA, {"text": "three"}))
+        job.publish(
+            SSEEvent(
+                DONE,
+                {"session_id": "session-1", "finish_reason": "stop"},
+            )
+        )
+        job.complete()
+
+        response = await app_client.get(
+            "/api/chat/stream/stream-1?last_event_id=1",
+            headers={"Last-Event-ID": "2"},
+        )
+        events = _parse_sse_events(response.text)
+
+        assert [event["event"] for event in events] == [TEXT_DELTA, DONE]
+        assert events[0]["data"]["text"] == "three"
+
+    @pytest.mark.asyncio
     async def test_missing_stream_returns_agent_error_in_sse_body(self, app_client) -> None:
         set_stream_manager(StreamManager())
 
@@ -226,6 +374,9 @@ class TestChatStreamEndpointContract:
         # Tagged so the client can recover quietly (e.g. after a backend restart)
         # instead of surfacing the raw message as an alarming toast.
         assert events[0]["data"]["code"] == "JOB_NOT_FOUND"
+        # This event belongs to no surviving replay sequence.  Leaving it
+        # unnumbered lets a client with a high Last-Event-ID receive it.
+        assert "id" not in events[0]
 
     @pytest.mark.asyncio
     async def test_active_jobs_exposes_terminal_step_without_done(self, app_client) -> None:

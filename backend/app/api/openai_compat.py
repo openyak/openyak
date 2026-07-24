@@ -39,7 +39,11 @@ from app.streaming.events import (
     TOOL_RESULT,
     SSEEvent,
 )
-from app.streaming.manager import GenerationJob, StreamManager
+from app.streaming.manager import (
+    GenerationCapacityError,
+    GenerationJob,
+    StreamManager,
+)
 from app.utils.id import generate_ulid
 
 logger = logging.getLogger(__name__)
@@ -250,16 +254,30 @@ def _on_task_done(task: asyncio.Task[None], *, job: GenerationJob) -> None:
 
 
 async def _run_with_semaphore(sm: StreamManager, job: GenerationJob, coro) -> None:
+    started = False
     try:
-        await asyncio.wait_for(sm._semaphore.acquire(), timeout=30)
-    except asyncio.TimeoutError:
+        async with sm.generation_slot(owner=job):
+            started = True
+            await coro
+    except GenerationCapacityError:
         job.publish(SSEEvent(AGENT_ERROR, {"error_message": "Server busy."}))
         job.complete()
-        return
-    try:
-        await coro
     finally:
-        sm._semaphore.release()
+        if not started:
+            close = getattr(coro, "close", None)
+            if close is not None:
+                close()
+            if job.abort_event.is_set() and not job.completed:
+                job.publish(
+                    SSEEvent(
+                        DONE,
+                        {
+                            "session_id": job.session_id,
+                            "finish_reason": "aborted",
+                        },
+                    )
+                )
+                job.complete()
 
 
 async def _get_or_create_session(
@@ -466,6 +484,8 @@ async def _stream_openai_chunks(
 
     except asyncio.CancelledError:
         pass
+    finally:
+        job.unsubscribe(queue)
 
 
 async def _collect_response(
@@ -478,23 +498,26 @@ async def _collect_response(
     text_parts: list[str] = []
     error_msg: str | None = None
 
-    while True:
-        try:
-            event = await asyncio.wait_for(queue.get(), timeout=300)
-        except asyncio.TimeoutError:
-            error_msg = "Generation timed out."
-            break
+    try:
+        while True:
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=300)
+            except asyncio.TimeoutError:
+                error_msg = "Generation timed out."
+                break
 
-        if event is None:
-            break
+            if event is None:
+                break
 
-        if event.event == TEXT_DELTA:
-            text_parts.append(event.data.get("text", ""))
-        elif event.event == DONE:
-            break
-        elif event.event == AGENT_ERROR:
-            error_msg = event.data.get("error_message", "Unknown error")
-            break
+            if event.event == TEXT_DELTA:
+                text_parts.append(event.data.get("text", ""))
+            elif event.event == DONE:
+                break
+            elif event.event == AGENT_ERROR:
+                error_msg = event.data.get("error_message", "Unknown error")
+                break
+    finally:
+        job.unsubscribe(queue)
 
     content = "".join(text_parts)
     if error_msg and not content:

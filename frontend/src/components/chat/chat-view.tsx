@@ -15,6 +15,7 @@ import { api } from "@/lib/api";
 import { API, queryKeys } from "@/lib/constants";
 import { ChatHeader } from "./chat-header";
 import { ChatForm } from "./chat-form";
+import { StreamStatusLine } from "./stream-status-line";
 import { MessageList } from "@/components/messages/message-list";
 import { PermissionDialog } from "@/components/interactive/permission-dialog";
 import { QuestionPrompt } from "@/components/interactive/question-prompt";
@@ -29,7 +30,6 @@ interface ChatViewProps {
 export function ChatView({ sessionId }: ChatViewProps) {
   const {
     sendMessage,
-    sendTaskBatch,
     editAndResend,
     stopGeneration,
     respondToPermission,
@@ -46,6 +46,7 @@ export function ChatView({ sessionId }: ChatViewProps) {
     pendingPermission,
     pendingQuestion,
     pendingPlanReview,
+    isStopped,
   } = useChat(sessionId);
 
   const { messages, isLoading, hasPreviousPage, isFetchingPreviousPage, fetchPreviousPage } = useMessages(sessionId);
@@ -56,6 +57,14 @@ export function ChatView({ sessionId }: ChatViewProps) {
   const { data: session } = useQuery({
     queryKey: queryKeys.sessions.detail(sessionId),
     queryFn: () => api.get<SessionResponse>(API.SESSIONS.DETAIL(sessionId)),
+    staleTime: 30_000,
+  });
+  const parentSessionId = session?.parent_id ?? null;
+  const { data: parentSession } = useQuery({
+    queryKey: queryKeys.sessions.detail(parentSessionId ?? "__parent__"),
+    queryFn: () =>
+      api.get<SessionResponse>(API.SESSIONS.DETAIL(parentSessionId!)),
+    enabled: !!parentSessionId,
     staleTime: 30_000,
   });
 
@@ -89,34 +98,40 @@ export function ChatView({ sessionId }: ChatViewProps) {
     useChatStore.getState().setFocusedSession(sessionId);
     useArtifactStore.getState().clearAll();
     useActivityStore.getState().close();
-    useWorkspaceStore.getState().resetForSession();
+    useWorkspaceStore.getState().activateSession(sessionId);
 
     api.get<SessionResponse>(API.SESSIONS.DETAIL(sessionId)).then((s) => {
-      if (s.directory) {
-        useWorkspaceStore.getState().setActiveWorkspacePath(s.directory);
-      }
+      useWorkspaceStore
+        .getState()
+        .setActiveWorkspacePathForSession(sessionId, s.directory);
     }).catch(() => {});
 
     api.get<{ todos: Array<{ content: string; status: string; activeForm?: string }> }>(
       API.SESSIONS.TODOS(sessionId),
     ).then((res) => {
-      if (res.todos && res.todos.length > 0) {
-        useWorkspaceStore.getState().setTodos(res.todos as WorkspaceTodo[]);
-        useWorkspaceStore.getState().open();
+      const todos = (res.todos ?? []) as WorkspaceTodo[];
+      useWorkspaceStore.getState().setTodosForSession(sessionId, todos);
+      if (todos.length > 0) {
+        useWorkspaceStore.getState().openForSession(sessionId);
       }
     }).catch(() => {});
 
     api.get<{ files: Array<{ name: string; path: string; type: string; tool: string }> }>(
       API.SESSIONS.FILES(sessionId),
     ).then((res) => {
-      if (res.files && res.files.length > 0) {
-        useWorkspaceStore.getState().setWorkspaceFiles(
-          res.files.map((f) => ({ name: f.name, path: f.path, type: f.type as WorkspaceFile["type"] })),
-        );
-      }
+      useWorkspaceStore.getState().setWorkspaceFilesForSession(
+        sessionId,
+        (res.files ?? []).map((f) => ({
+          name: f.name,
+          path: f.path,
+          type: f.type as WorkspaceFile["type"],
+          ...(f.tool ? { tool: f.tool } : {}),
+        })),
+      );
     }).catch(() => {});
 
     return () => {
+      useWorkspaceStore.getState().deactivateSession(sessionId);
       // Only clear focus if we are still the focused session on unmount —
       // a fast route swap to another ChatView would otherwise wipe the
       // other view's focus claim on its way in.
@@ -164,14 +179,20 @@ export function ChatView({ sessionId }: ChatViewProps) {
 
   return (
     <div className="relative flex flex-1 flex-col h-full overflow-hidden bg-[var(--surface-chat)]">
-      <OfflineOverlay />
-      <ChatHeader sessionId={sessionId} />
+      <OfflineOverlay sessionId={sessionId} />
+      <ChatHeader
+        sessionId={sessionId}
+        sessionTitle={session?.title ?? null}
+        parentSessionId={parentSessionId}
+        parentTitle={parentSession?.title ?? null}
+      />
 
       {/* Message list */}
       <MessageList
         messages={messages}
         isLoading={isLoading}
         isGenerating={isGenerating}
+        isStopped={isStopped}
         streamId={streamId}
         pendingUserText={pendingUserText}
         pendingAttachments={pendingAttachments}
@@ -185,6 +206,8 @@ export function ChatView({ sessionId }: ChatViewProps) {
         isFetchingPreviousPage={isFetchingPreviousPage}
         fetchPreviousPage={fetchPreviousPage}
       />
+
+      <StreamStatusLine sessionId={sessionId} />
 
       {/* Interactive prompts */}
       {pendingPermission && (
@@ -209,10 +232,10 @@ export function ChatView({ sessionId }: ChatViewProps) {
           isGenerating={isGenerating}
           isCompacting={isCompacting || !!session?.time_compacting}
           onSend={sendMessage}
-          onSendTaskBatch={sendTaskBatch}
           onStop={stopGeneration}
           sessionId={sessionId}
           directory={session?.directory}
+          isSubagentSession={!!session?.parent_id}
         />
       )}
     </div>

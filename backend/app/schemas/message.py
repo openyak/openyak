@@ -68,6 +68,63 @@ class SubtaskPart(BaseModel):
     session_id: str
     title: str
     description: str = ""
+    task_id: str | None = None
+    parent_id: str | None = None
+    agent: str | None = None
+    status: Literal[
+        "pending",
+        "running",
+        "waiting_input",
+        "completed",
+        "failed",
+        "cancelled",
+    ] | None = None
+    depth: int | None = None
+    revision: int | None = None
+    resumed: bool = False
+    error: str | None = None
+    cost: float = 0.0
+    tokens: dict[str, int] = {}
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
+class SwarmMemberPart(BaseModel):
+    agent_run_id: str
+    session_id: str
+    ordinal: int
+    title: str
+    agent: str
+    provider_id: str | None = None
+    model_id: str | None = None
+    depth: int = 1
+    status: Literal[
+        "pending",
+        "running",
+        "waiting_input",
+        "completed",
+        "failed",
+        "cancelled",
+    ]
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    error: str | None = None
+    cost: float = 0.0
+    tokens: dict[str, int] = {}
+
+
+class SwarmPart(BaseModel):
+    type: Literal["swarm"] = "swarm"
+    schema_version: int = 1
+    swarm_id: str
+    parent_session_id: str
+    revision: int
+    status: Literal["running", "completed", "partial", "failed", "cancelled"]
+    strategy: Literal["parallel"] = "parallel"
+    failure_policy: Literal["continue"] = "continue"
+    started_at: datetime
+    finished_at: datetime | None = None
+    members: list[SwarmMemberPart] = []
 
 
 class FilePart(BaseModel):
@@ -89,6 +146,7 @@ PartData = (
     | StepFinishPart
     | CompactionPart
     | SubtaskPart
+    | SwarmPart
     | FilePart
 )
 

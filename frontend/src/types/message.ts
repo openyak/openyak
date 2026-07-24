@@ -67,6 +67,57 @@ export interface SubtaskPart {
   session_id: string;
   title: string;
   description: string;
+  task_id?: string | null;
+  parent_id?: string | null;
+  agent?: string | null;
+  status?: AgentRunStatus | null;
+  depth?: number | null;
+  revision?: number | null;
+  resumed?: boolean;
+  error?: string | null;
+  cost?: number;
+  tokens?: Record<string, number>;
+  started_at?: string | null;
+  finished_at?: string | null;
+}
+
+export type AgentRunStatus =
+  | "pending"
+  | "running"
+  | "waiting_input"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface SwarmMemberPart {
+  agent_run_id: string;
+  session_id: string;
+  ordinal: number;
+  title: string;
+  agent: string;
+  provider_id?: string | null;
+  model_id?: string | null;
+  depth: number;
+  status: AgentRunStatus;
+  started_at?: string | null;
+  finished_at?: string | null;
+  error?: string | null;
+  cost: number;
+  tokens: Record<string, number>;
+}
+
+export interface SwarmPart {
+  type: "swarm";
+  schema_version: 1;
+  swarm_id: string;
+  parent_session_id: string;
+  revision: number;
+  status: "running" | "completed" | "partial" | "failed" | "cancelled";
+  strategy: "parallel";
+  failure_policy: "continue";
+  started_at: string;
+  finished_at?: string | null;
+  members: SwarmMemberPart[];
 }
 
 export interface FilePart {
@@ -88,6 +139,7 @@ export type PartData =
   | StepFinishPart
   | CompactionPart
   | SubtaskPart
+  | SwarmPart
   | FilePart;
 
 // ─── Message info types ───

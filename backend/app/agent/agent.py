@@ -24,6 +24,9 @@ def _load_prompt(name: str) -> str:
     return ""
 
 
+ULTRA_PROMPT = _load_prompt("ultra")
+
+
 # --- Built-in agent definitions ---
 
 BUILTIN_AGENTS: dict[str, AgentInfo] = {
@@ -51,6 +54,8 @@ BUILTIN_AGENTS: dict[str, AgentInfo] = {
             PermissionRule(action="allow", permission="*"),
             PermissionRule(action="deny", permission="write"),
             PermissionRule(action="deny", permission="edit"),
+            PermissionRule(action="deny", permission="apply_patch"),
+            PermissionRule(action="deny", permission="artifact"),
             PermissionRule(action="deny", permission="bash"),
             PermissionRule(action="deny", permission="code_execute"),
             PermissionRule(action="allow", permission="read"),
@@ -76,6 +81,23 @@ BUILTIN_AGENTS: dict[str, AgentInfo] = {
             PermissionRule(action="allow", permission="bash"),
             PermissionRule(action="allow", permission="web_fetch"),
             PermissionRule(action="allow", permission="web_search"),
+        ]),
+        system_prompt=_load_prompt("explore"),
+    ),
+    "research": AgentInfo(
+        name="research",
+        description="Read-only research worker for parallel Agent swarms",
+        mode="subagent",
+        tools=["read", "glob", "grep", "search", "web_fetch", "web_search", "skill"],
+        permissions=Ruleset(rules=[
+            PermissionRule(action="deny", permission="*"),
+            PermissionRule(action="allow", permission="read"),
+            PermissionRule(action="allow", permission="glob"),
+            PermissionRule(action="allow", permission="grep"),
+            PermissionRule(action="allow", permission="search"),
+            PermissionRule(action="allow", permission="web_fetch"),
+            PermissionRule(action="allow", permission="web_search"),
+            PermissionRule(action="allow", permission="skill"),
         ]),
         system_prompt=_load_prompt("explore"),
     ),

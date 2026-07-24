@@ -9,6 +9,7 @@ import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { API } from "@/lib/constants";
+import { shouldRenderCodeBlockAsSource } from "@/lib/streaming-markdown";
 import { useArtifactStore } from "@/stores/artifact-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import {
@@ -65,7 +66,15 @@ function ProseParagraph({ children, ...props }: React.HTMLAttributes<HTMLParagra
   );
 }
 
-function CodeBlock({ className, children, ...props }: React.HTMLAttributes<HTMLElement> & { children?: React.ReactNode }) {
+function CodeBlock({
+  className,
+  children,
+  isStreaming = false,
+  ...props
+}: React.HTMLAttributes<HTMLElement> & {
+  children?: React.ReactNode;
+  isStreaming?: boolean;
+}) {
   const [copied, setCopied] = useState(false);
   const match = /language-(\w+)/.exec(className || "");
   const lang = match?.[1] ?? "";
@@ -218,7 +227,7 @@ function CodeBlock({ className, children, ...props }: React.HTMLAttributes<HTMLE
   }
 
   // Detect mermaid code blocks
-  if (lang === "mermaid") {
+  if (lang === "mermaid" && !shouldRenderCodeBlockAsSource(lang, isStreaming)) {
     return <MermaidBlock code={code} />;
   }
 
@@ -282,7 +291,9 @@ export const TextPart = memo(function TextPart({ data, isStreaming, sources = []
 
   const components = useMemo(
     () => ({
-      code: CodeBlock,
+      code: (props: React.HTMLAttributes<HTMLElement> & { children?: React.ReactNode }) => (
+        <CodeBlock {...props} isStreaming={isStreaming} />
+      ),
       p: ProseParagraph,
       // Wrap tables in a rounded, scrollable container
       table: ({ children }: { children?: React.ReactNode }) => (
@@ -326,7 +337,7 @@ export const TextPart = memo(function TextPart({ data, isStreaming, sources = []
         );
       },
     }),
-    [sourceMap],
+    [isStreaming, sourceMap],
   );
 
   // Skip expensive syntax highlighting during streaming — code blocks are

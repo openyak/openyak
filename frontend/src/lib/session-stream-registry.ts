@@ -12,11 +12,20 @@ import { notifyBackgroundFinish } from "@/lib/background-notify";
 import { useChatStore } from "@/stores/chat-store";
 import { useConnectionStore } from "@/stores/connection-store";
 import { useArtifactStore } from "@/stores/artifact-store";
-import { useWorkspaceStore, type WorkspaceTodo, type WorkspaceFile, type WorkspaceTaskBatch } from "@/stores/workspace-store";
+import { useWorkspaceStore, type WorkspaceTodo, type WorkspaceFile } from "@/stores/workspace-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import type { SessionResponse } from "@/types/session";
 import type { ArtifactType } from "@/types/artifact";
-import type { PaginatedMessages } from "@/types/message";
+import type {
+  AgentRunStatus,
+  PaginatedMessages,
+  SubtaskPart,
+  SwarmPart,
+} from "@/types/message";
+import {
+  shouldHydrateStreamJob,
+  type ActiveStreamJob,
+} from "@/lib/active-stream-job";
 
 /**
  * Module-level registry of live SSE streams, keyed by sessionId.
@@ -34,6 +43,30 @@ import type { PaginatedMessages } from "@/types/message";
  */
 
 const PROGRESSIVE_BUFFER_INTERVAL_MS = 60;
+
+const AGENT_RUN_STATUSES = new Set<AgentRunStatus>([
+  "pending",
+  "running",
+  "waiting_input",
+  "completed",
+  "failed",
+  "cancelled",
+]);
+const SWARM_STATUSES = new Set<SwarmPart["status"]>([
+  "running",
+  "completed",
+  "partial",
+  "failed",
+  "cancelled",
+]);
+
+function isAgentRunStatus(status: string | null | undefined): status is AgentRunStatus {
+  return !!status && AGENT_RUN_STATUSES.has(status as AgentRunStatus);
+}
+
+function isSwarmStatus(status: string | null | undefined): status is SwarmPart["status"] {
+  return !!status && SWARM_STATUSES.has(status as SwarmPart["status"]);
+}
 
 // After a desktop backend restart, wait a beat before reconciling: the
 // companion onBackendRestart handler in constants.ts (registered at module
@@ -95,22 +128,34 @@ interface StreamInstance {
   idleCheckTimer: ReturnType<typeof setInterval> | null;
   mobilePauseTimer: ReturnType<typeof setTimeout> | null;
   lastEventTimestamp: number;
+  suppressFinishNotification: boolean;
+}
+
+export interface StartStreamOptions {
+  suppressFinishNotification?: boolean;
 }
 
 const instances = new Map<string, StreamInstance>();
 
-// Sessions whose startStream() is mid-setup (parked on the async backend
-// url/token fetch). startStream only registers its instance *after* that await,
-// so without this guard a second concurrent start for the same session — e.g.
-// restart reconcile firing while a user prompt's start is still in flight —
-// would build a second SSEClient, duplicating deltas and leaking an EventSource.
-const pendingStarts = new Set<string>();
+// Latest-wins reservation for startStream() setup. The symbol is an epoch:
+// after the async backend setup boundary, only the newest caller for a Session
+// may register an EventSource. This prevents a stopped/superseded setup from
+// attaching its stale stream to the new generation bucket.
+const pendingStarts = new Map<string, symbol>();
 
 let queryClientRef: QueryClient | null = null;
 let globalListenersInstalled = false;
 let unlistenBackendRestarting: (() => void) | null = null;
 let unlistenBackendRestarted: (() => void) | null = null;
 let unlistenVisibilityChange: (() => void) | null = null;
+
+function invalidateSubagents(parentSessionId: string): void {
+  const qc = queryClientRef;
+  if (!qc) return;
+  void qc.invalidateQueries({
+    queryKey: queryKeys.subagents(parentSessionId),
+  });
+}
 
 /**
  * Inject the React Query client. Must be called once before any start().
@@ -132,10 +177,13 @@ export function getActiveStreamId(sessionId: string): string | null {
 
 /** Stop a session's stream (used by the abort flow). Idempotent. */
 export function stopStream(sessionId: string): void {
+  // Invalidate setup even when no StreamInstance exists yet.
+  pendingStarts.delete(sessionId);
   const instance = instances.get(sessionId);
   if (!instance) return;
   disposeInstance(instance);
   instances.delete(sessionId);
+  useConnectionStore.getState().clearSessionState(sessionId);
   if (instances.size === 0) {
     useConnectionStore.getState().setStatus("idle");
   }
@@ -170,25 +218,41 @@ function disposeInstance(instance: StreamInstance): void {
  * same (sessionId, streamId) pair twice is a no-op; starting a new streamId
  * for an already-active session closes the old stream first.
  */
-export async function startStream(sessionId: string, streamId: string): Promise<void> {
+export async function startStream(
+  sessionId: string,
+  streamId: string,
+  options: StartStreamOptions = {},
+): Promise<void> {
   const existing = instances.get(sessionId);
   if (existing) {
-    if (existing.streamId === streamId) return;
+    if (existing.streamId === streamId) {
+      existing.suppressFinishNotification ||= (
+        options.suppressFinishNotification ?? false
+      );
+      return;
+    }
     // New stream id for the same session — replace.
     stopStream(sessionId);
   }
 
-  // Reserve this session across the one async gap below. Everything from here
-  // to instances.set() is synchronous, so this is enough to serialize starts.
-  if (pendingStarts.has(sessionId)) return;
-  pendingStarts.add(sessionId);
-
-  if (IS_DESKTOP) {
-    try {
+  // Reserve this Session across the async setup gap. A later call replaces
+  // this token; the stale caller then exits without creating a client.
+  const startToken = Symbol(streamId);
+  pendingStarts.set(sessionId, startToken);
+  try {
+    if (IS_DESKTOP) {
       await Promise.all([getBackendUrl(), getBackendToken()]);
-    } catch (err) {
+    } else {
+      // Keep setup ordering identical across runtimes. startStream() is an
+      // asynchronous public API; this boundary lets a same-tick Stop or newer
+      // start supersede setup before any EventSource is registered.
+      await Promise.resolve();
+    }
+
+    if (pendingStarts.get(sessionId) !== startToken) return;
+  } finally {
+    if (pendingStarts.get(sessionId) === startToken) {
       pendingStarts.delete(sessionId);
-      throw err;
     }
   }
 
@@ -243,7 +307,7 @@ export async function startStream(sessionId: string, streamId: string): Promise<
 
     // Do not finalize while the backend still reports this session as active.
     try {
-      const activeJobs = await api.get<Array<{ stream_id: string; session_id: string }>>(
+      const activeJobs = await api.get<ActiveStreamJob[]>(
         API.CHAT.ACTIVE,
       );
       const ourStreamId = store.getState().sessions[sid]?.streamId;
@@ -278,11 +342,12 @@ export async function startStream(sessionId: string, streamId: string): Promise<
     store.getState().finishGeneration(sid);
     if (instances.size === 0) connectionStore.getState().setStatus("idle");
     const workspace = useWorkspaceStore.getState();
+    const sessionWorkspace = workspace.getSessionState(sid);
     if (
-      workspace.todos.length > 0 &&
-      workspace.todos.every((todo) => todo.status === "completed")
+      sessionWorkspace.todos.length > 0 &&
+      sessionWorkspace.todos.every((todo) => todo.status === "completed")
     ) {
-      workspace.collapseSection("progress");
+      workspace.collapseSectionForSession(sid, "progress");
     }
     if (qc) qc.invalidateQueries({ queryKey: queryKeys.sessions.all });
     return true;
@@ -292,26 +357,46 @@ export async function startStream(sessionId: string, streamId: string): Promise<
     url: API.CHAT.STREAM(streamId),
     urlProvider: () => API.CHAT.STREAM(streamId),
     initialLastEventId: 0,
-    onEvent: () => {
+    onEvent: (eventType) => {
       const inst = instances.get(sessionId);
       if (inst) inst.lastEventTimestamp = Date.now();
+      const sessionConnection = connectionStore.getState().sessionStates[sessionId];
+      if (eventType !== SSE_EVENTS.RETRY && sessionConnection?.status === "retrying") {
+        connectionStore.getState().setSessionState(sessionId, {
+          status: "connected",
+          message: null,
+        });
+      }
     },
     onStatusChange: (status) => {
       connectionStore.getState().setStatus(status);
+      connectionStore.getState().setSessionState(sessionId, {
+        status,
+        message: status === "connecting"
+          ? "Connecting…"
+          : status === "reconnecting"
+            ? "Reconnecting…"
+            : status === "disconnected"
+              ? "Connection lost"
+              : null,
+      });
       if (status === "disconnected") {
         toast.error("Connection lost. Response may be incomplete.");
-        (async () => {
-          try {
-            const finished = await finishFromDatabase(sessionId);
+        void finishFromDatabase(sessionId)
+          .then((finished) => {
+            // A disconnected transport is not a terminal Agent state. Keep
+            // the Session locked while the backend still owns the job so a
+            // second prompt cannot create a concurrent run in this Session.
             if (finished) {
               stopStream(sessionId);
-              return;
             }
-          } finally {
-            store.getState().finishGeneration(sessionId);
-            stopStream(sessionId);
-          }
-        })();
+          })
+          .catch((error) => {
+            console.warn(
+              "[stream-registry] Could not confirm disconnected stream state:",
+              error,
+            );
+          });
       }
     },
   });
@@ -326,6 +411,7 @@ export async function startStream(sessionId: string, streamId: string): Promise<
     idleCheckTimer: null,
     mobilePauseTimer: null,
     lastEventTimestamp: Date.now(),
+    suppressFinishNotification: options.suppressFinishNotification ?? false,
   };
 
   const cancelPendingStepFinish = () => {
@@ -356,6 +442,12 @@ export async function startStream(sessionId: string, streamId: string): Promise<
   client.on(SSE_EVENTS.TOOL_START, (data) => {
     cancelPendingStepFinish();
     if (data.tool && data.call_id) {
+      // Preserve the server's event order across the 60 ms progressive
+      // buffers. A tool boundary must commit preceding prose/reasoning before
+      // the ToolPart is appended, otherwise the timeline can render the tool
+      // above its lead-in text and leave a stale cursor on that text.
+      textBuffer.flush();
+      reasoningBuffer.flush();
       store.getState().addToolStart(
         sessionId,
         data.tool,
@@ -395,20 +487,36 @@ export async function startStream(sessionId: string, streamId: string): Promise<
     if (data.tool === "todo" && data.metadata) {
       const meta = data.metadata as { todos?: Array<{ content: string; status: string; activeForm?: string }> };
       if (meta.todos) {
-        useWorkspaceStore.getState().setTodos(meta.todos as WorkspaceTodo[]);
+        useWorkspaceStore
+          .getState()
+          .setTodosForSession(sessionId, meta.todos as WorkspaceTodo[]);
         const ws = useWorkspaceStore.getState();
-        if (!ws.isOpen) ws.open();
-        ws.expandSection("progress");
+        const sessionWorkspace = ws.getSessionState(sessionId);
+        if (!sessionWorkspace.isOpen) ws.openForSession(sessionId);
+        ws.expandSectionForSession(sessionId, "progress");
       }
     }
 
     if (data.tool && ["write", "edit", "bash", "artifact"].includes(data.tool)) {
-      api.get<{ files: Array<{ name: string; path: string; type: string }> }>(
+      api.get<{
+        files: Array<{
+          name: string;
+          path: string;
+          type: string;
+          tool: string;
+        }>;
+      }>(
         API.SESSIONS.FILES(sessionId),
       ).then((res) => {
         if (res.files) {
-          useWorkspaceStore.getState().setWorkspaceFiles(
-            res.files.map((f) => ({ name: f.name, path: f.path, type: f.type as WorkspaceFile["type"] })),
+          useWorkspaceStore.getState().setWorkspaceFilesForSession(
+            sessionId,
+            res.files.map((f) => ({
+              name: f.name,
+              path: f.path,
+              type: f.type as WorkspaceFile["type"],
+              ...(f.tool ? { tool: f.tool } : {}),
+            })),
           );
         }
       }).catch((e) => console.warn("[stream-registry] Failed to refresh workspace files:", e));
@@ -438,6 +546,74 @@ export async function startStream(sessionId: string, streamId: string): Promise<
     if (data.call_id) {
       store.getState().setToolError(sessionId, data.call_id, data.output ?? data.error_message ?? "Error");
     }
+  });
+
+  client.on(SSE_EVENTS.SWARM_STATE, (data) => {
+    cancelPendingStepFinish();
+    if (
+      !data.swarm_id ||
+      data.revision == null ||
+      !data.started_at ||
+      !Array.isArray(data.members) ||
+      !isSwarmStatus(data.status)
+    ) {
+      console.warn("[stream-registry] Ignoring malformed swarm-state event", data);
+      return;
+    }
+
+    // Preserve visual ordering when a state snapshot follows buffered prose.
+    textBuffer.flush();
+    reasoningBuffer.flush();
+    store.getState().upsertSwarmState(sessionId, {
+      type: "swarm",
+      schema_version: 1,
+      swarm_id: data.swarm_id,
+      parent_session_id: data.parent_session_id ?? sessionId,
+      revision: data.revision,
+      status: data.status,
+      strategy: "parallel",
+      failure_policy: "continue",
+      started_at: data.started_at,
+      finished_at: data.finished_at,
+      members: data.members,
+    });
+    invalidateSubagents(data.parent_session_id ?? sessionId);
+  });
+
+  client.on(SSE_EVENTS.SUBTASK_STATE, (data) => {
+    cancelPendingStepFinish();
+    if (!data.session_id || !data.title) {
+      console.warn("[stream-registry] Ignoring malformed subtask-state event", data);
+      return;
+    }
+    const subtaskStatus = isAgentRunStatus(data.status) ? data.status : null;
+    if (data.status && !subtaskStatus) {
+      console.warn("[stream-registry] Ignoring subtask-state with unknown status", data);
+      return;
+    }
+
+    textBuffer.flush();
+    reasoningBuffer.flush();
+    const subtask: SubtaskPart = {
+      type: "subtask",
+      session_id: data.session_id,
+      task_id: data.task_id,
+      parent_id: data.parent_id,
+      title: data.title,
+      description: data.description ?? "",
+      agent: data.agent,
+      status: subtaskStatus,
+      depth: data.depth,
+      revision: data.revision,
+      resumed: data.resumed ?? false,
+      error: data.error,
+      cost: data.cost ?? 0,
+      tokens: data.tokens ?? {},
+      started_at: data.started_at,
+      finished_at: data.finished_at,
+    };
+    store.getState().upsertSubtaskState(sessionId, subtask);
+    invalidateSubagents(data.parent_id ?? sessionId);
   });
 
   client.on(SSE_EVENTS.STEP_START, (data) => {
@@ -476,43 +652,12 @@ export async function startStream(sessionId: string, streamId: string): Promise<
       instance.stepFinishTimer = setTimeout(async () => {
         instance.stepFinishTimer = null;
         if (!store.getState().sessions[sessionId]?.isGenerating) return;
-        console.warn("SSE safety net: forcing finishGeneration after step_finish timeout");
-        try {
-          const f = await finishFromDatabase(sessionId);
-          if (f) {
-            stopStream(sessionId);
-            return;
-          }
-        } finally {
-          store.getState().finishGeneration(sessionId);
+        const finished = await finishFromDatabase(sessionId);
+        if (finished) {
+          stopStream(sessionId);
         }
-        stopStream(sessionId);
       }, 8_000);
     }, 1_200);
-  });
-
-  const updateTaskBatch = (data: { batch_id?: string | null; mode?: string | null; tasks?: unknown[] | null }) => {
-    if (!data.batch_id || !data.mode || !Array.isArray(data.tasks)) return;
-    const ws = useWorkspaceStore.getState();
-    ws.setTaskBatch({
-      batch_id: data.batch_id,
-      mode: data.mode === "sequential" ? "sequential" : "parallel",
-      tasks: data.tasks as WorkspaceTaskBatch["tasks"],
-    });
-    if (!ws.isOpen) ws.open();
-    ws.expandSection("progress");
-  };
-
-  client.on(SSE_EVENTS.TASK_BATCH_START, (data) => {
-    cancelPendingStepFinish();
-    updateTaskBatch(data);
-  });
-  client.on(SSE_EVENTS.TASK_BATCH_UPDATE, (data) => {
-    cancelPendingStepFinish();
-    updateTaskBatch(data);
-  });
-  client.on(SSE_EVENTS.TASK_BATCH_FINISH, (data) => {
-    updateTaskBatch(data);
   });
 
   client.on(SSE_EVENTS.COMPACTION_START, (data) => {
@@ -622,6 +767,23 @@ export async function startStream(sessionId: string, streamId: string): Promise<
     // No-op: the SSEClient resets its heartbeat timer on any event
   });
 
+  client.on(SSE_EVENTS.RETRY, (data) => {
+    const delaySeconds = Math.max(0, data.delay ?? 0);
+    const roundedDelaySeconds = Math.ceil(delaySeconds);
+    connectionStore.getState().setSessionState(sessionId, {
+      status: "retrying",
+      message: roundedDelaySeconds > 0
+        ? `Retrying in ${roundedDelaySeconds}s…`
+        : "Retrying…",
+      retry: {
+        attempt: Math.max(0, data.attempt ?? 0),
+        maxRetries: Math.max(0, data.max_retries ?? 0),
+        delayMs: Math.round(delaySeconds * 1_000),
+        reason: data.reason ?? null,
+      },
+    });
+  });
+
   client.on(SSE_EVENTS.DESYNC, () => {
     const qc = queryClientRef;
     if (qc) qc.invalidateQueries({ queryKey: queryKeys.messages.list(sessionId) });
@@ -636,6 +798,7 @@ export async function startStream(sessionId: string, streamId: string): Promise<
     // DONE, so the dying EventSource must not schedule a reconnect to a job
     // that is already complete (→ a spurious "Job not found").
     client.close();
+    connectionStore.getState().clearSessionState(sessionId);
     cancelPendingStepFinish();
     textBuffer.flush();
     reasoningBuffer.flush();
@@ -652,7 +815,10 @@ export async function startStream(sessionId: string, streamId: string): Promise<
       qc.invalidateQueries({ queryKey: queryKeys.sessions.all });
       qc.invalidateQueries({ queryKey: queryKeys.sessions.detail(sessionId) });
     }
-    maybeNotifyFinish(sessionId, "done");
+    invalidateSubagents(sessionId);
+    if (!instance.suppressFinishNotification) {
+      maybeNotifyFinish(sessionId, "done");
+    }
     stopStream(sessionId);
   });
 
@@ -662,6 +828,7 @@ export async function startStream(sessionId: string, streamId: string): Promise<
     // EventSource would otherwise fire onerror mid-await and schedule a
     // reconnect to a stream the backend no longer has.
     client.close();
+    connectionStore.getState().clearSessionState(sessionId);
 
     const message = data.error_message ?? "Unknown stream error";
     // A missing job almost always means the local backend restarted out from
@@ -691,7 +858,10 @@ export async function startStream(sessionId: string, streamId: string): Promise<
       }, 500);
       qc.invalidateQueries({ queryKey: queryKeys.sessions.detail(sessionId) });
     }
-    if (!streamGone) maybeNotifyFinish(sessionId, "error", message);
+    invalidateSubagents(sessionId);
+    if (!streamGone && !instance.suppressFinishNotification) {
+      maybeNotifyFinish(sessionId, "error", message);
+    }
     stopStream(sessionId);
   };
   client.on(SSE_EVENTS.AGENT_ERROR, handleAgentError);
@@ -723,7 +893,6 @@ export async function startStream(sessionId: string, streamId: string): Promise<
   }, IDLE_CHECK_INTERVAL_MS);
 
   instances.set(sessionId, instance);
-  pendingStarts.delete(sessionId);
 }
 
 // ─── Global cross-stream listeners (installed once on first start) ───
@@ -792,10 +961,10 @@ function store_isGenerating(sessionId: string): boolean {
 async function reconcileStreamsAfterRestart(): Promise<void> {
   if (instances.size === 0) return;
 
-  let activeJobs: Array<{ stream_id: string; session_id: string }> | null = null;
+  let activeJobs: ActiveStreamJob[] | null = null;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      activeJobs = await api.get<Array<{ stream_id: string; session_id: string }>>(API.CHAT.ACTIVE);
+      activeJobs = await api.get<ActiveStreamJob[]>(API.CHAT.ACTIVE);
       break;
     } catch {
       // New backend not serving yet — back off and retry.
@@ -827,7 +996,9 @@ async function reconcileStreamsAfterRestart(): Promise<void> {
     } else if (liveStreamId) {
       stopStream(inst.sessionId);
       useChatStore.getState().startGeneration(inst.sessionId, liveStreamId);
-      void startStream(inst.sessionId, liveStreamId);
+      void startStream(inst.sessionId, liveStreamId, {
+        suppressFinishNotification: inst.suppressFinishNotification,
+      });
     } else {
       await finalizeInterruptedStream(inst.sessionId);
     }
@@ -836,6 +1007,7 @@ async function reconcileStreamsAfterRestart(): Promise<void> {
   // Attach any still-running jobs we are not yet tracking (parity with boot
   // hydration — e.g. a background session started just before the restart).
   for (const job of activeJobs) {
+    if (!shouldHydrateStreamJob(job)) continue;
     if (handledSessions.has(job.session_id) || instances.has(job.session_id)) continue;
     useChatStore.getState().startGeneration(job.session_id, job.stream_id);
     void startStream(job.session_id, job.stream_id);
@@ -883,9 +1055,14 @@ function maybeNotifyFinish(sessionId: string, kind: "done" | "error", errorMessa
 
 /** Cleanup, for tests / hot reload. Not used in production app code. */
 export function disposeAllStreams(): void {
-  for (const inst of instances.values()) disposeInstance(inst);
+  const connectionStore = useConnectionStore.getState();
+  for (const inst of instances.values()) {
+    disposeInstance(inst);
+    connectionStore.clearSessionState(inst.sessionId);
+  }
   instances.clear();
   pendingStarts.clear();
+  connectionStore.setStatus("idle");
   unlistenBackendRestarting?.();
   unlistenBackendRestarted?.();
   unlistenVisibilityChange?.();

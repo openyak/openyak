@@ -1,12 +1,10 @@
 "use client";
 
-import { CheckCircle2, Circle, Loader2, ChevronDown, XCircle, Ban, GitBranch } from "lucide-react";
+import { CheckCircle2, Circle, Loader2, ChevronDown } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTranslation } from "react-i18next";
-import Link from "next/link";
-import { useWorkspaceStore, type WorkspaceAgentTask, type WorkspaceTodo } from "@/stores/workspace-store";
+import { useWorkspaceStore, type WorkspaceTodo } from "@/stores/workspace-store";
 import { cn } from "@/lib/utils";
-import { getChatRoute } from "@/lib/routes";
 
 function TodoItem({ todo }: { todo: WorkspaceTodo }) {
   return (
@@ -15,7 +13,7 @@ function TodoItem({ todo }: { todo: WorkspaceTodo }) {
         {todo.status === "completed" ? (
           <CheckCircle2 className="h-4 w-4 text-[var(--tool-completed)]" />
         ) : todo.status === "in_progress" ? (
-          <Loader2 className="h-4 w-4 text-[var(--text-accent)] animate-spin" />
+          <Loader2 className="h-4 w-4 text-[var(--brand-primary)] animate-spin" />
         ) : (
           <Circle className="h-4 w-4 text-[var(--text-quaternary)]" />
         )}
@@ -43,94 +41,37 @@ function TodoItem({ todo }: { todo: WorkspaceTodo }) {
   );
 }
 
-function AgentTaskIcon({ status }: { status: WorkspaceAgentTask["status"] }) {
-  if (status === "completed") {
-    return <CheckCircle2 className="h-4 w-4 text-[var(--tool-completed)]" />;
-  }
-  if (status === "running") {
-    return <Loader2 className="h-4 w-4 text-[var(--text-accent)] animate-spin" />;
-  }
-  if (status === "failed") {
-    return <XCircle className="h-4 w-4 text-[var(--tool-error)]" />;
-  }
-  if (status === "cancelled") {
-    return <Ban className="h-4 w-4 text-[var(--text-tertiary)]" />;
-  }
-  return <Circle className="h-4 w-4 text-[var(--text-quaternary)]" />;
-}
-
-function AgentTaskItem({ task }: { task: WorkspaceAgentTask }) {
-  const meta = [task.agent, task.model].filter(Boolean).join(" / ");
-  const content = (
-    <div className="flex items-start gap-2.5 py-1">
-      <div className="mt-0.5 shrink-0">
-        <AgentTaskIcon status={task.status} />
-      </div>
-      <div className="min-w-0 flex-1">
-        <p
-          className={cn(
-            "truncate text-[13px] leading-snug",
-            task.status === "completed"
-              ? "text-[var(--text-tertiary)]"
-              : task.status === "failed"
-                ? "text-[var(--tool-error)]"
-                : task.status === "running"
-                  ? "text-[var(--text-primary)]"
-                  : "text-[var(--text-secondary)]",
-          )}
-        >
-          {task.title}
-        </p>
-        <p className="mt-0.5 truncate text-[11px] text-[var(--text-tertiary)]">
-          {task.error || meta || task.status}
-        </p>
-      </div>
-      {task.session_id && (
-        <GitBranch className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)]" />
-      )}
-    </div>
-  );
-
-  if (!task.session_id) return content;
-  return (
-    <Link href={getChatRoute(task.session_id)} className="block rounded-md hover:bg-white/[0.03]">
-      {content}
-    </Link>
-  );
-}
-
 export function ProgressCard() {
   const { t } = useTranslation("chat");
   const todos = useWorkspaceStore((s) => s.todos);
-  const taskBatch = useWorkspaceStore((s) => s.taskBatch);
   const collapsed = useWorkspaceStore((s) => s.collapsedSections["progress"]);
   const toggleSection = useWorkspaceStore((s) => s.toggleSection);
-  const agentTasks = taskBatch?.tasks ?? [];
-  const activeCount =
-    todos.filter((todo) => todo.status !== "completed").length +
-    agentTasks.filter((task) => !["completed", "failed", "cancelled"].includes(task.status)).length;
-  const totalCount = todos.length + agentTasks.length;
-  const previewItems = [
-    ...todos.slice(0, 3).map((todo) => ({ key: todo.content, status: todo.status })),
-    ...agentTasks.slice(0, 3).map((task) => ({ key: task.task_id, status: task.status })),
-  ].slice(0, 3);
+  const activeCount = todos.filter((todo) => todo.status !== "completed").length;
+  const totalCount = todos.length;
+  const previewItems = todos.slice(0, 3).map((todo) => ({ key: todo.content, status: todo.status }));
 
   if (totalCount === 0) return null;
 
+  const progressSummary =
+    activeCount === 0
+      ? t("tasksCompleted", { count: totalCount })
+      : t("activeTaskCount", { count: activeCount });
+
   return (
-    <div className="overflow-hidden rounded-3xl border border-white/8 bg-white/[0.03] shadow-[0_0_0_1px_rgba(255,255,255,0.02)_inset] backdrop-blur-sm">
+    <section className="overflow-hidden border-b border-[var(--border-subtle)]">
       <button
-        className="flex w-full items-start justify-between px-4 py-4 text-left transition-colors hover:bg-white/[0.02]"
+        className="flex w-full items-start justify-between px-4 py-4 text-left transition-colors hover:bg-[var(--surface-tertiary)]"
         onClick={() => toggleSection("progress")}
+        aria-expanded={!collapsed}
+        aria-controls="workspace-progress-content"
+        aria-label={`Progress. ${progressSummary}`}
       >
         <div className="min-w-0 flex-1">
-          <span className="block text-[13px] font-medium text-[var(--text-primary)]">
+          <h2 className="block text-base font-normal text-[var(--text-tertiary)]">
             Progress
-          </span>
+          </h2>
           <span className="mt-1 block text-[12px] text-[var(--text-tertiary)]">
-            {activeCount === 0
-              ? t("tasksCompleted", { count: totalCount })
-              : t("activeTaskCount", { count: activeCount })}
+            {progressSummary}
           </span>
           <div className="mt-3 flex items-center gap-1.5">
             {previewItems.map((item, i) => (
@@ -139,33 +80,29 @@ export function ProgressCard() {
                   className={cn(
                     "h-6 w-6 rounded-full border flex items-center justify-center",
                     item.status === "completed"
-                      ? "border-white/20 bg-white/[0.06] text-[var(--tool-completed)]"
-                      : item.status === "in_progress" || item.status === "running"
+                      ? "border-[var(--border-default)] bg-[var(--surface-tertiary)] text-[var(--tool-completed)]"
+                      : item.status === "in_progress"
                         ? "border-[var(--text-accent)]/50 bg-[var(--text-accent)]/10 text-[var(--text-accent)]"
-                        : item.status === "failed"
-                          ? "border-[var(--tool-error)]/40 bg-[var(--tool-error)]/10 text-[var(--tool-error)]"
                         : "border-[var(--border-default)] text-[var(--text-quaternary)]",
                   )}
                 >
                   {item.status === "completed" ? (
                     <CheckCircle2 className="h-3.5 w-3.5" />
-                  ) : item.status === "in_progress" || item.status === "running" ? (
+                  ) : item.status === "in_progress" ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : item.status === "failed" ? (
-                    <XCircle className="h-3.5 w-3.5" />
                   ) : (
                     <Circle className="h-3.5 w-3.5" />
                   )}
                 </span>
                 {i < previewItems.length - 1 && (
-                  <span className="h-px w-3 bg-white/10" />
+                  <span className="h-px w-3 bg-[var(--border-default)]" />
                 )}
               </div>
             ))}
           </div>
         </div>
         <div className="ml-3 flex items-center gap-2">
-          <span className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-0.5 text-[10px] font-medium text-[var(--text-tertiary)]">
+          <span className="rounded-full border border-[var(--border-default)] bg-[var(--surface-tertiary)] px-2 py-0.5 text-[10px] font-medium text-[var(--text-tertiary)]">
             {totalCount}
           </span>
           <ChevronDown
@@ -179,23 +116,14 @@ export function ProgressCard() {
       <AnimatePresence initial={false}>
         {!collapsed && (
           <motion.div
+            id="workspace-progress-content"
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ type: "spring", damping: 25, stiffness: 300 }}
             className="overflow-hidden"
           >
-            <div className="border-t border-white/6 px-4 pb-4 pt-2 space-y-0.5">
-              {taskBatch && (
-                <div className="pb-1">
-                  <p className="px-0 pb-1 pt-1 text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-quaternary)]">
-                    {taskBatch.mode}
-                  </p>
-                  {agentTasks.map((task) => (
-                    <AgentTaskItem key={task.task_id} task={task} />
-                  ))}
-                </div>
-              )}
+            <div className="border-t border-[var(--border-subtle)] px-4 pb-4 pt-2 space-y-0.5">
               {todos.map((todo, i) => (
                 <TodoItem key={`${todo.content}-${i}`} todo={todo} />
               ))}
@@ -203,6 +131,6 @@ export function ProgressCard() {
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
+    </section>
   );
 }

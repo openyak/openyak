@@ -24,7 +24,10 @@ export const MessageItem = memo(function MessageItem({ message, onRegenerate, on
 
   return (
     <div className="px-4 py-3">
-      <div className="mx-auto max-w-3xl xl:max-w-4xl">
+      <div
+        className="conversation-rail mx-auto"
+        data-conversation-rail
+      >
         {role === "user" ? (
           <UserMessage
             message={message}

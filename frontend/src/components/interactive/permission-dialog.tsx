@@ -473,7 +473,7 @@ export function PermissionDialog({ permission, onRespond }: PermissionDialogProp
   // Desktop layout (unchanged)
   return (
     <div className="px-4 pb-3">
-      <div className="mx-auto max-w-3xl xl:max-w-4xl">
+      <div className="mx-auto max-w-[736px]">
         <div className="rounded-xl border-2 border-[var(--color-warning)]/40 bg-[var(--color-warning)]/5 p-4 animate-slide-up">
           <div className="flex items-start gap-3">
             <ShieldAlert className="h-5 w-5 text-[var(--color-warning)] shrink-0 mt-0.5" />

@@ -1,10 +1,12 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import type { PartData, ToolPart, StepStartPart, StepFinishPart } from "@/types/message";
 import { TextPart } from "@/components/parts/text-part";
 import { ReasoningPart } from "@/components/parts/reasoning-part";
+import { CompactionPart } from "@/components/parts/compaction-part";
 import { SubtaskPart } from "@/components/parts/subtask-part";
+import { SwarmPart } from "@/components/parts/swarm-part";
 import { ArtifactCard } from "@/components/parts/artifact-card";
 import { FileArtifactCard } from "@/components/parts/file-artifact-card";
 import { PlanFileCard } from "@/components/parts/plan-file-card";
@@ -13,10 +15,16 @@ import { ActivitySummary } from "@/components/activity/activity-summary";
 import { TodoProgress, type TodoItem } from "@/components/parts/todo-progress";
 import { extractSources } from "@/lib/sources";
 import { cn } from "@/lib/utils";
+import {
+  buildWorkEventTimeline,
+  type WorkActivityEvent,
+} from "@/lib/work-event-timeline";
 import type { ActivityData, ChainItem } from "@/stores/activity-store";
 
 interface MessageContentProps {
   parts: PartData[];
+  /** Parent task that owns child-agent parts in this message. */
+  parentSessionId?: string | null;
   /** Whether this is the currently streaming message. */
   isStreaming?: boolean;
   /** Stable key identifying the message — used by ActivitySummary to toggle the activity panel. */
@@ -107,7 +115,12 @@ function fileCardsForTool(part: ToolPart, presentedFilePaths: Set<string>) {
  * When streaming: reasoning + tools are folded into a single "Thinking" line.
  * When complete: reasoning + tools are folded into a single "Activity" summary.
  */
-export function MessageContent({ parts, isStreaming, activityKey }: MessageContentProps) {
+export function MessageContent({
+  parts,
+  parentSessionId,
+  isStreaming,
+  activityKey,
+}: MessageContentProps) {
   // Thinking duration reported by ReasoningPart's live timer
   const [thinkingDuration, setThinkingDuration] = useState<number | undefined>();
   const handleDurationChange = useCallback((secs: number) => setThinkingDuration(secs), []);
@@ -120,33 +133,21 @@ export function MessageContent({ parts, isStreaming, activityKey }: MessageConte
       break;
     }
   }
+  const hasVisibleWorkAfterLastText =
+    lastTextIndex >= 0 &&
+    parts.slice(lastTextIndex + 1).some((part) =>
+      part.type === "reasoning" ||
+      part.type === "tool" ||
+      part.type === "subtask" ||
+      part.type === "swarm" ||
+      part.type === "compaction",
+    );
 
-  // Collect all reasoning texts into a single array
-  const reasoningTexts = useMemo(
-    () =>
-      parts
-        .filter((p): p is PartData & { type: "reasoning" } => p.type === "reasoning")
-        .map((p) => p.text),
-    [parts],
-  );
-
+  const timeline = useMemo(() => buildWorkEventTimeline(parts), [parts]);
   const toolParts = useMemo(
     () => parts.filter((p): p is ToolPart => p.type === "tool"),
     [parts],
   );
-
-  const stepParts = useMemo(
-    () =>
-      parts.filter(
-        (p): p is StepStartPart | StepFinishPart =>
-          p.type === "step-start" || p.type === "step-finish",
-      ),
-    [parts],
-  );
-
-  const hasReasoning = reasoningTexts.length > 0;
-  const hasTools = toolParts.length > 0;
-  const hasActivity = hasReasoning || hasTools;
 
   const presentedFilePaths = useMemo(() => {
     const paths = new Set<string>();
@@ -159,137 +160,69 @@ export function MessageContent({ parts, isStreaming, activityKey }: MessageConte
     return paths;
   }, [toolParts]);
 
-  // Only show activity during streaming if there's meaningful content:
-  // - At least one reasoning text with non-empty firstLine, OR
-  // - At least one tool part (running or completed)
-  const hasMeaningfulActivity = useMemo(() => {
-    if (!hasActivity) return false;
-    if (!isStreaming) return true; // Always show when message is complete
-
-    // During streaming: check for meaningful content
-    const hasReasoningContent = reasoningTexts.some(text => {
-      // Mirror the firstLine extraction from reasoning-part.tsx:45
-      const firstLine = text?.split(/[。.!\n]/)[0]?.trim() ?? "";
-      return firstLine.length > 0;
-    });
-
-    return hasReasoningContent || toolParts.length > 0;
-  }, [hasActivity, isStreaming, reasoningTexts, toolParts]);
-
-  // Track whether the thinking section is still active (reasoning or tools running)
-  // Build ordered chain from parts (preserves interleaving of reasoning + tools)
-  const chain = useMemo<ChainItem[]>(() => {
-    const items: ChainItem[] = [];
-    for (const p of parts) {
-      if (p.type === "reasoning") items.push({ type: "reasoning", text: (p as PartData & { type: "reasoning" }).text });
-      else if (p.type === "tool") items.push({ type: "tool", data: p as ToolPart });
-    }
-    return items;
-  }, [parts]);
-
-  // Activity data for the summary/panel
-  const activityData = useMemo<ActivityData | null>(
-    () =>
-      hasActivity
-        ? {
-            sourceKey: activityKey,
-            reasoningTexts,
-            toolParts,
-            thinkingDuration,
-            stepParts,
-            hasVisibleOutput: parts.some((p) =>
-              p.type === "text" ||
-              p.type === "file" ||
-              p.type === "compaction" ||
-              p.type === "subtask" ||
-              (p.type === "tool" && VISIBLE_TOOL_PARTS.has((p as ToolPart).tool)),
-            ),
-            chain,
-          }
-        : null,
-    [hasActivity, reasoningTexts, toolParts, thinkingDuration, stepParts, chain, parts, activityKey],
-  );
-
-  // Content parts: text, subtask, and deliverable tool calls (shown as inline cards)
-  // Exclude error-status artifact calls (e.g. failed update attempts) — they have no content to display
-  const contentParts = useMemo(
-    () =>
-      parts.filter(
-        (p) =>
-          p.type !== "compaction" &&
-          p.type !== "reasoning" &&
-          p.type !== "step-start" &&
-          p.type !== "step-finish" &&
-          !(
-            p.type === "tool" &&
-            !VISIBLE_TOOL_PARTS.has((p as ToolPart).tool) &&
-            !(
-              GENERATED_FILE_TOOL_PARTS.has((p as ToolPart).tool) &&
-              fileCardsForTool(p as ToolPart, presentedFilePaths).length > 0
-            )
-          ) &&
-          !(p.type === "tool" && (p as ToolPart).tool === "artifact" && (p as ToolPart).state.status === "error"),
-      ),
-    [parts, presentedFilePaths],
-  );
-
   // Extract sources from web_search / web_fetch tool parts for citation rendering
   const sources = useMemo(() => extractSources(parts), [parts]);
 
-  // Extract latest todo list from the most recent todo tool call
-  const latestTodos = useMemo<TodoItem[]>(() => {
+  // Keep the latest progress list beside the activity batch that produced it.
+  const latestTodo = useMemo<{ callId: string; todos: TodoItem[] } | null>(() => {
     for (let i = toolParts.length - 1; i >= 0; i--) {
       const tp = toolParts[i];
       if (tp.tool === "todo" && tp.state.metadata?.todos) {
-        return tp.state.metadata.todos as TodoItem[];
+        return {
+          callId: tp.call_id,
+          todos: tp.state.metadata.todos as TodoItem[],
+        };
       }
     }
-    return [];
+    return null;
   }, [toolParts]);
 
-  return (
-    <div className="space-y-3">
-      {/* Reasoning + tools: only show inline while streaming */}
-      {isStreaming && hasActivity && hasMeaningfulActivity && (
-        <ReasoningPart
-          texts={reasoningTexts}
-          toolParts={toolParts}
-          isStreaming={isStreaming}
-          onDurationChange={handleDurationChange}
-        />
-      )}
+  const renderActivityOutputs = (
+    batchTools: ToolPart[],
+    eventStartIndex: number,
+  ): ReactNode[] => {
+    const outputTools = batchTools.filter(
+      (tool) =>
+        !(
+          tool.tool === "artifact" &&
+          tool.state.status === "error"
+        ) &&
+        (VISIBLE_TOOL_PARTS.has(tool.tool) ||
+          (GENERATED_FILE_TOOL_PARTS.has(tool.tool) &&
+            fileCardsForTool(tool, presentedFilePaths).length > 0)),
+    );
+    const output: ReactNode[] = [];
 
-      {/* Activity summary — replaces ReasoningPart once streaming is done */}
-      {!isStreaming && activityData && <ActivitySummary data={activityData} />}
+    for (let index = 0; index < outputTools.length; index += 1) {
+      const tool = outputTools[index];
 
-      {/* Todo progress — visible only while streaming, folds into activity summary when done */}
-      {isStreaming && latestTodos.length > 0 && <TodoProgress todos={latestTodos} />}
+      if (isFileCardToolPart(tool)) {
+        const group: Array<{
+          filePath: string;
+          title?: string;
+          source: ToolPart;
+        }> = [];
+        const seen = new Set<string>();
+        let groupEnd = index;
 
-      {/* Content parts (text, subtask, artifacts, presented files) */}
-      {contentParts.map((part, contentIndex) => {
-        if (isFileCardToolPart(part)) {
-          if (contentIndex > 0 && isFileCardToolPart(contentParts[contentIndex - 1])) {
-            return null;
+        while (
+          groupEnd < outputTools.length &&
+          isFileCardToolPart(outputTools[groupEnd])
+        ) {
+          const candidate = outputTools[groupEnd];
+          for (const item of fileCardsForTool(candidate, presentedFilePaths)) {
+            if (seen.has(item.filePath)) continue;
+            seen.add(item.filePath);
+            group.push({ ...item, source: candidate });
           }
+          groupEnd += 1;
+        }
+        index = groupEnd - 1;
 
-          const group: Array<{ filePath: string; title?: string; source: ToolPart }> = [];
-          const seen = new Set<string>();
-          for (let i = contentIndex; i < contentParts.length; i += 1) {
-            const candidate = contentParts[i];
-            if (!isFileCardToolPart(candidate)) break;
-            for (const item of fileCardsForTool(candidate as ToolPart, presentedFilePaths)) {
-              if (seen.has(item.filePath)) continue;
-              seen.add(item.filePath);
-              group.push({ ...item, source: candidate as ToolPart });
-            }
-          }
-
-          if (group.length === 0) return null;
-
-          const originalIndex = parts.indexOf(part);
-          return (
+        if (group.length > 0) {
+          output.push(
             <div
-              key={`present-file-group-${originalIndex}`}
+              key={`file-group-${eventStartIndex}-${tool.call_id}`}
               className={cn(
                 "grid gap-2",
                 group.length > 1 && "sm:grid-cols-2",
@@ -305,28 +238,146 @@ export function MessageContent({ parts, isStreaming, activityKey }: MessageConte
                   compact={group.length > 1}
                 />
               ))}
-            </div>
+            </div>,
           );
         }
+        continue;
+      }
 
-        const originalIndex = parts.indexOf(part);
+      if (tool.tool === "submit_plan") {
+        output.push(<PlanFileCard key={tool.call_id} data={tool} />);
+      } else if (tool.tool === "artifact") {
+        output.push(<ArtifactCard key={tool.call_id} data={tool} />);
+      }
+    }
+
+    return output;
+  };
+
+  const renderActivityEvent = (
+    event: WorkActivityEvent,
+    eventIndex: number,
+  ) => {
+    const reasoningTexts = event.parts
+      .filter((part) => part.type === "reasoning")
+      .map((part) => part.text);
+    const batchTools = event.parts.filter(
+      (part): part is ToolPart => part.type === "tool",
+    );
+    if (reasoningTexts.length === 0 && batchTools.length === 0) return null;
+
+    const stepParts = event.parts.filter(
+      (part): part is StepStartPart | StepFinishPart =>
+        part.type === "step-start" || part.type === "step-finish",
+    );
+    const chain: ChainItem[] = [];
+    for (const part of event.parts) {
+      if (part.type === "reasoning") {
+        chain.push({ type: "reasoning", text: part.text });
+      } else if (part.type === "tool") {
+        chain.push({ type: "tool", data: part });
+      }
+    }
+    const terminalStep = [...stepParts]
+      .reverse()
+      .find(
+        (part): part is StepFinishPart =>
+          part.type === "step-finish" && part.reason !== "tool_use",
+      );
+    const isLiveBatch =
+      !!isStreaming &&
+      eventIndex === timeline.length - 1 &&
+      !terminalStep;
+    const hasReasoningContent = reasoningTexts.some(
+      (text) => (text?.split(/[。.!\n]/)[0]?.trim() ?? "").length > 0,
+    );
+    const data: ActivityData = {
+      sourceKey: activityKey
+        ? `${activityKey}:activity:${event.startIndex}`
+        : undefined,
+      reasoningTexts,
+      toolParts: batchTools,
+      thinkingDuration,
+      stepParts,
+      hasVisibleOutput:
+        batchTools.some((tool) => VISIBLE_TOOL_PARTS.has(tool.tool)) ||
+        batchTools.some(
+          (tool) =>
+            GENERATED_FILE_TOOL_PARTS.has(tool.tool) &&
+            fileCardsForTool(tool, presentedFilePaths).length > 0,
+        ),
+      chain,
+    };
+    const activityOutput = renderActivityOutputs(
+      batchTools,
+      event.startIndex,
+    );
+    const showsLatestTodo =
+      !!isStreaming &&
+      !!latestTodo &&
+      batchTools.some((tool) => tool.call_id === latestTodo.callId);
+
+    return (
+      <div
+        key={`activity-${event.startIndex}`}
+        className="space-y-3"
+        data-work-event="activity"
+      >
+        {isLiveBatch && (hasReasoningContent || batchTools.length > 0) ? (
+          <ReasoningPart
+            texts={reasoningTexts}
+            toolParts={batchTools}
+            isStreaming
+            onDurationChange={handleDurationChange}
+          />
+        ) : (
+          <ActivitySummary data={data} completed />
+        )}
+        {showsLatestTodo && <TodoProgress todos={latestTodo.todos} />}
+        {activityOutput}
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-3">
+      {timeline.map((event, eventIndex) => {
+        if (event.type === "activity") {
+          return renderActivityEvent(event, eventIndex);
+        }
+
+        const { part, index } = event;
         switch (part.type) {
           case "text":
             return (
               <TextPart
-                key={originalIndex}
+                key={`text-${index}`}
                 data={part}
-                isStreaming={isStreaming && originalIndex === lastTextIndex}
+                isStreaming={
+                  isStreaming &&
+                  index === lastTextIndex &&
+                  !hasVisibleWorkAfterLastText
+                }
                 sources={sources}
               />
             );
+          case "compaction":
+            return (
+              <CompactionPart
+                key={`compaction-${index}`}
+                data={part}
+              />
+            );
           case "subtask":
-            return <SubtaskPart key={originalIndex} data={part} />;
-          case "tool": {
-            const tp = part as ToolPart;
-            if (tp.tool === "submit_plan") return <PlanFileCard key={originalIndex} data={tp} />;
-            return <ArtifactCard key={originalIndex} data={tp} />;
-          }
+            return (
+              <SubtaskPart
+                key={`subtask-${index}`}
+                data={part}
+                parentSessionId={parentSessionId}
+              />
+            );
+          case "swarm":
+            return <SwarmPart key={`swarm-${index}`} data={part} />;
           default:
             return null;
         }

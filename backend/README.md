@@ -30,8 +30,9 @@ app/
 ├── config.py            # Pydantic Settings configuration
 ├── dependencies.py      # FastAPI dependency injection
 │
-├── agent/               # Agent system (7 built-in agents)
-│   ├── agent.py         #   AgentRegistry + build/plan/explore/general/compaction/title/summary
+├── agent/               # Agent system (8 built-in agents)
+│   ├── agent.py         #   Registry + build/plan/explore/research/general/compaction/title/summary
+│   ├── swarm.py         #   Ultra fork/join coordinator + AgentRun state
 │   ├── permission.py    #   4-layer permission engine (global → agent → user → session)
 │   └── prompts/         #   System prompt templates per agent
 │
@@ -42,7 +43,7 @@ app/
 │   ├── truncation.py    #   Output truncation (~30K chars)
 │   └── builtin/         #   read, write, edit, bash, glob, grep, task, question, todo,
 │                        #   web_fetch, web_search, code_execute, artifact, plan, skill,
-│                        #   memory, apply_patch, search, submit_plan, ...
+│                        #   memory, apply_patch, search, submit_plan; swarm.py = SwarmTool Adapter
 │
 ├── session/             # Core execution loop
 │   ├── processor.py     #   THE CORE — full agent loop (multi-step tool calling, doom loop
@@ -122,6 +123,7 @@ app/
 | `build` | Primary | Full-featured assistant with all tools; asks permission for bash/write/edit |
 | `plan` | Primary | Read-only analysis mode (denies write/edit/bash) |
 | `explore` | Subagent | Fast search & exploration (read/glob/grep/bash/web) |
+| `research` | Subagent | Strictly read-only research worker for parallel Swarms |
 | `general` | Subagent | General-purpose with full tool access |
 | `compaction` | Hidden | Context summarization (no tools) |
 | `title` | Hidden | Auto-generates session titles |
@@ -143,6 +145,7 @@ app/
 | `question` | Ask user for input (blocking) |
 | `todo` | Manage task todo list |
 | `task` | Launch subtask (recursive agent) |
+| `swarm` (`SwarmTool`) | In Ultra mode, fork/join 2–4 model-directed child AgentRuns |
 | `plan` | Switch to plan mode (read-only) |
 | `submit_plan` | Submit plan for execution |
 | `artifact` | Store/retrieve content blocks |
@@ -231,7 +234,7 @@ User Input → Create UserMessage → Build system prompt → Resolve tools
 │    │     ├── Tool fixing (case correction → invalid    │
 │    │     │   fallback)                                 │
 │    │     ├── Save ToolPart (input/output/state)        │
-│    │     └── If task tool → launch sub-agent loop      │
+│    │     └── task → one child; swarm → bounded fork/join│
 │    └── usage → check context overflow → trigger        │
 │          two-stage compression                         │
 │                                                        │
@@ -242,6 +245,18 @@ User Input → Create UserMessage → Build system prompt → Resolve tools
     ↓
 Auto-generate title on first turn → publish done event
 ```
+
+## Ultra Agent Swarm Protocol
+
+Ultra is an execution overlay, separate from Plan / Ask / Auto permissions. It exposes the model-directed `swarm` Tool to the parent Agent; the normal composer remains the only user entry point.
+
+- The coordinator forks 2–4 durable child Sessions and joins their persisted results in task order.
+- Children inherit the parent Workspace, Project, Provider, model, reasoning setting, and effective permission ceiling. Interactive requests are routed through the parent GenerationJob.
+- Independent `research` AgentRuns execute concurrently. Mutation-capable AgentRuns acquire a per-Workspace lease and serialize.
+- Unknown/custom Tools are conservatively mutation-capable; MCP Tools are read-only only when they declare `readOnlyHint`.
+- A hard per-generation reservation budget caps child Agents across repeated `swarm` calls.
+- One parent `SwarmPart` is updated in place using `schema_version: 1` and monotonic `revision`. A complete `swarm-state` snapshot is committed before each SSE publication.
+- Child failures do not stop siblings; the join can report `partial`. Deleting a parent Session deletes its descendant Session tree.
 
 ## Permission System
 

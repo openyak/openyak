@@ -18,7 +18,7 @@ class TestToolRegistry:
     def test_all_builtin_tools_registered(self, registry: ToolRegistry):
         tool_ids = {t.id for t in registry.all_tools()}
         expected = {"read", "write", "edit", "apply_patch", "bash", "code_execute",
-                    "glob", "grep", "question", "todo", "task",
+                    "glob", "grep", "question", "todo", "task", "swarm",
                     "web_fetch", "web_search", "invalid",
                     "plan", "submit_plan", "artifact", "present_file", "skill"}
         assert tool_ids == expected

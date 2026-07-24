@@ -32,12 +32,37 @@ import { useIsMacOS } from "@/hooks/use-platform";
 import { useTraySync } from "@/hooks/use-tray-sync";
 import { useActivityStore } from "@/stores/activity-store";
 import { useArtifactStore } from "@/stores/artifact-store";
-import { IS_DESKTOP, TITLE_BAR_HEIGHT } from "@/lib/constants";
+import { useWorkspaceStore } from "@/stores/workspace-store";
+import {
+  IS_DESKTOP,
+  TITLE_BAR_HEIGHT,
+  WORKSPACE_PANEL_WIDTH,
+} from "@/lib/constants";
 import { useIsDesktop } from "@/hooks/use-is-desktop";
 import { useGlobalShortcuts } from "@/hooks/use-global-shortcuts";
 import { desktopAPI } from "@/lib/tauri-api";
 import { useTranslation } from "react-i18next";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
+
+const WORK_MODE_READING_RAIL_WIDTH = 736;
+const WORKSPACE_OVERLAY_GAP = 16;
+
+function useUsesOverlayWorkspace(leftGutter: number) {
+  const [usesOverlayWorkspace, setUsesOverlayWorkspace] = useState(false);
+  useEffect(() => {
+    const update = () => {
+      const availableWidth = window.innerWidth - leftGutter;
+      const minimumOverlayWidth =
+        WORK_MODE_READING_RAIL_WIDTH +
+        2 * (WORKSPACE_PANEL_WIDTH + WORKSPACE_OVERLAY_GAP);
+      setUsesOverlayWorkspace(availableWidth >= minimumOverlayWidth);
+    };
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, [leftGutter]);
+  return usesOverlayWorkspace;
+}
 
 export default function MainLayout({ children }: { children: React.ReactNode }) {
   const { t } = useTranslation("common");
@@ -47,6 +72,10 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   const toggleSidebar = useSidebarStore((s) => s.toggle);
   const sidebarWidth = useSidebarStore((s) => s.width);
   const isDesktop = useIsDesktop();
+  const chatSidebarGutter =
+    isDesktop && !isCollapsed ? sidebarWidth : 0;
+  const usesOverlayWorkspace =
+    useUsesOverlayWorkspace(chatSidebarGutter);
   const isMac = useIsMacOS();
   useAutoDetectProvider();
   useTraySync();
@@ -126,6 +155,10 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   const closeActivity = useActivityStore((s) => s.close);
   const closeArtifact = useArtifactStore((s) => s.close);
   const closePlanReview = usePlanReviewStore((s) => s.close);
+  const activityIsOpen = useActivityStore((s) => s.isOpen);
+  const artifactIsOpen = useArtifactStore((s) => s.isOpen);
+  const planReviewIsOpen = usePlanReviewStore((s) => s.isOpen);
+  const workspaceIsOpen = useWorkspaceStore((s) => s.isOpen);
   useEffect(() => {
     closeActivity();
     closeArtifact();
@@ -140,7 +173,18 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     isDesktop && (isSettingsPage || !isCollapsed) ? sidebarWidth : 0;
   const taskPanelOpen = useTaskPanelOpen(isActiveChat);
   const taskPanelWidth = useTaskPanelWidth();
-  const marginRight = isDesktop && taskPanelOpen ? taskPanelWidth : 0;
+  const workspaceOnly =
+    isActiveChat &&
+    workspaceIsOpen &&
+    !planReviewIsOpen &&
+    !artifactIsOpen &&
+    !activityIsOpen;
+  const marginRight =
+    isDesktop &&
+    taskPanelOpen &&
+    !(workspaceOnly && usesOverlayWorkspace)
+      ? taskPanelWidth
+      : 0;
 
   // macOS uses native traffic lights overlay — page headers extend to the top.
   // Windows/Linux keep the custom title bar as a real 32px row.

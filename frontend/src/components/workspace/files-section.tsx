@@ -1,11 +1,47 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronDown, ChevronRight, FileText, FolderOpen } from "lucide-react";
+import { ChevronDown, ChevronRight, FileText } from "lucide-react";
 import { useWorkspaceStore, type WorkspaceFile } from "@/stores/workspace-store";
 import { useArtifactStore } from "@/stores/artifact-store";
 import { cn } from "@/lib/utils";
+import type { EvidenceOrigin } from "@/types/subagent";
+
+const INITIAL_VISIBLE_FILES = 5;
+
+function describeOrigins(origins: EvidenceOrigin[]): string | null {
+  if (origins.length === 0) return null;
+  return `Origins: ${origins
+    .map((origin) =>
+      [
+        origin.agentTitle,
+        `agent ${origin.agent}`,
+        `session ${origin.sessionId}`,
+        origin.agentRunId ? `run ${origin.agentRunId}` : null,
+        origin.status,
+        `via ${origin.source}`,
+        origin.tool ? `using ${origin.tool}` : "tool unavailable",
+      ]
+        .filter(Boolean)
+        .join(", "),
+    )
+    .join("; ")}`;
+}
+
+function visibleChildOrigin(origins: EvidenceOrigin[]): string | null {
+  const childOrigins = origins.filter((origin) => origin.source !== "parent");
+  if (childOrigins.length === 0) return null;
+  const lead = childOrigins[0];
+  return [
+    origins.length > 1 ? `${origins.length} origins` : null,
+    lead.agentTitle,
+    lead.status,
+    lead.tool,
+  ]
+    .filter(Boolean)
+    .join(" \u00b7 ");
+}
 
 function FileItem({ file }: { file: WorkspaceFile }) {
   const handleClick = () => {
@@ -32,15 +68,27 @@ function FileItem({ file }: { file: WorkspaceFile }) {
 
   const displayName =
     file.type === "instructions" ? `Instructions \u00b7 ${file.name}` : file.name;
+  const origins = file.origins ?? [];
+  const visibleProvenance = visibleChildOrigin(origins);
+  const lineage = describeOrigins(origins);
 
   return (
     <button
-      className="w-full flex items-center gap-2.5 px-4 py-1.5 text-left transition-colors"
+      className="flex w-full items-center gap-3 px-4 py-1.5 text-left transition-colors hover:bg-[var(--surface-tertiary)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[var(--ring)]"
       onClick={handleClick}
+      aria-label={lineage ? `${displayName}. ${lineage}` : displayName}
+      title={lineage ? `${file.path} — ${lineage}` : file.path}
     >
-      <FileText className="h-4 w-4 shrink-0 text-[var(--text-tertiary)]" />
-      <span className="text-[13px] text-[var(--text-secondary)] truncate">
-        {displayName}
+      <FileText className="size-4 shrink-0 text-[var(--text-secondary)]" />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[15px] leading-5 text-[var(--text-primary)]">
+          {displayName}
+        </span>
+        {visibleProvenance ? (
+          <span className="block truncate text-[11px] leading-4 text-[var(--text-tertiary)]">
+            {visibleProvenance}
+          </span>
+        ) : null}
       </span>
     </button>
   );
@@ -91,84 +139,97 @@ function Scratchpad() {
   );
 }
 
-export function FilesCard() {
-  const workspaceFiles = useWorkspaceStore((s) => s.workspaceFiles);
+export function FilesCard({ files }: { files: WorkspaceFile[] }) {
+  const workspaceFiles = files;
   const scratchpadContent = useWorkspaceStore((s) => s.scratchpadContent);
   const collapsed = useWorkspaceStore((s) => s.collapsedSections["files"]);
   const toggleSection = useWorkspaceStore((s) => s.toggleSection);
+  const expandSection = useWorkspaceStore((s) => s.expandSection);
+  const [showAll, setShowAll] = useState(false);
+  const filesListId = useId();
   const hasContent = workspaceFiles.length > 0 || scratchpadContent.trim().length > 0;
-  const latestFile = workspaceFiles[workspaceFiles.length - 1];
+  const visibleFiles = showAll
+    ? workspaceFiles
+    : workspaceFiles.slice(0, INITIAL_VISIBLE_FILES);
+  const hiddenFileCount = workspaceFiles.length - visibleFiles.length;
+  const fileSummary =
+    workspaceFiles.length > 0
+      ? `${workspaceFiles.length} generated file${workspaceFiles.length === 1 ? "" : "s"}`
+      : hasContent
+        ? "Notes available"
+        : "No files yet";
+
+  // Completed Work Mode tasks surface their deliverables immediately. The
+  // effect keys off the count, so a deliberate user collapse remains stable
+  // until a genuinely new output arrives.
+  useEffect(() => {
+    if (workspaceFiles.length > 0) {
+      expandSection("files");
+    }
+  }, [expandSection, workspaceFiles.length]);
+
+  if (!hasContent) return null;
 
   return (
-    <div className="overflow-hidden rounded-3xl border border-white/8 bg-white/[0.03] shadow-[0_0_0_1px_rgba(255,255,255,0.02)_inset] backdrop-blur-sm">
+    <section className="overflow-hidden">
       <button
-        className="flex w-full items-start justify-between px-4 py-4 text-left transition-colors hover:bg-white/[0.02]"
+        className="flex h-12 w-full items-center justify-between px-4 text-left transition-colors hover:bg-[var(--surface-tertiary)]"
         onClick={() => toggleSection("files")}
+        aria-expanded={!collapsed}
+        aria-controls="workspace-outputs-content"
+        aria-label={`Outputs. ${fileSummary}`}
       >
-        <div className="flex min-w-0 flex-1 items-start gap-3">
-          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-2xl border border-white/8 bg-white/[0.04]">
-            <FolderOpen className="h-4 w-4 text-[var(--text-tertiary)]" />
-          </div>
-          <div className="min-w-0">
-            <span className="block text-[13px] font-medium text-[var(--text-primary)]">
-              Files
-            </span>
-            <span className="mt-1 block text-[12px] text-[var(--text-tertiary)]">
-              {workspaceFiles.length > 0
-                ? `${workspaceFiles.length} generated file${workspaceFiles.length === 1 ? "" : "s"}`
-                : hasContent
-                  ? "Notes available"
-                  : "No files yet"}
-            </span>
-            {latestFile && (
-              <span className="mt-2 block truncate text-[12px] text-[var(--text-secondary)]">
-                Latest: {latestFile.name}
-              </span>
-            )}
-          </div>
-        </div>
-        <div className="ml-3 flex items-center gap-2">
-          {workspaceFiles.length > 0 && (
-            <span className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-0.5 text-[10px] font-medium text-[var(--text-tertiary)]">
-              {workspaceFiles.length}
-            </span>
+        <h2 className="text-base font-normal text-[var(--text-tertiary)]">
+          Outputs
+        </h2>
+        <ChevronDown
+          className={cn(
+            "size-4 text-[var(--text-tertiary)] transition-transform duration-200",
+            collapsed && "-rotate-90",
           )}
-          <ChevronDown
-            className={cn(
-              "h-4 w-4 text-[var(--text-tertiary)] transition-transform duration-200",
-              collapsed && "-rotate-90",
-            )}
-          />
-        </div>
+          aria-hidden="true"
+        />
       </button>
       <AnimatePresence initial={false}>
         {!collapsed && (
           <motion.div
+            id="workspace-outputs-content"
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ type: "spring", damping: 25, stiffness: 300 }}
             className="overflow-hidden"
           >
-            <div className="border-t border-white/6 pb-1 pt-2">
+            <div className="pb-2">
               {workspaceFiles.length > 0 ? (
-                <div className="space-y-0.5">
-                  {workspaceFiles.map((file) => (
+                <div id={filesListId}>
+                  {visibleFiles.map((file) => (
                     <FileItem key={file.path} file={file} />
                   ))}
                 </div>
               ) : (
-                <p className="px-4 py-2 text-[12px] text-[var(--text-quaternary)]">
-                  No files yet
+                <p className="px-4 py-1.5 text-[13px] text-[var(--text-quaternary)]">
+                  No outputs yet
                 </p>
               )}
-              <div className="mt-2">
+              {workspaceFiles.length > INITIAL_VISIBLE_FILES && (
+                <button
+                  type="button"
+                  className="mx-4 mt-1 rounded-md py-1 text-[13px] text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)]"
+                  onClick={() => setShowAll((current) => !current)}
+                  aria-expanded={showAll}
+                  aria-controls={filesListId}
+                >
+                  {showAll ? "Show less" : `Show ${hiddenFileCount} more`}
+                </button>
+              )}
+              <div className="mt-2 border-t border-[var(--border-subtle)] pt-3">
                 <Scratchpad />
               </div>
             </div>
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
+    </section>
   );
 }

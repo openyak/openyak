@@ -134,6 +134,10 @@ class Settings(BaseSettings):
     bash_max_timeout: int = 600  # maximum bash timeout (seconds)
     subtask_max_depth: int = 3  # max nesting for sub-agent tasks
     subtask_timeout: int = 600  # seconds — sub-agent task timeout
+    swarm_max_agents: int = 4  # max child Agents per Ultra fork/join
+    swarm_max_total_agents_per_generation: int = 4  # hard Ultra turn budget
+    swarm_max_concurrency: int = 4  # bounded parallel child generations
+    swarm_timeout: int = 600  # seconds — timeout per child Agent
 
     # --- Loop Detection ---
     loop_warn_threshold: int = 3  # warn after N repeated identical tool calls

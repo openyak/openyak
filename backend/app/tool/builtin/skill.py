@@ -28,6 +28,11 @@ class SkillTool(ToolDefinition):
     def id(self) -> str:
         return "skill"
 
+    @property
+    def is_concurrency_safe(self) -> bool:
+        # Loading instructions and bundled resources is read-only.
+        return True
+
     # Maximum number of skills to list in the tool description.
     # Beyond this limit, remaining skills are noted as "(and N more)".
     _MAX_LISTED_SKILLS = 40

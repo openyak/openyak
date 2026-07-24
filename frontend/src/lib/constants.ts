@@ -212,7 +212,6 @@ export function resolveApiUrl(path: string): string {
 export const API = {
   CHAT: {
     PROMPT: "/api/chat/prompt",
-    TASK_BATCH: "/api/chat/task-batch",
     EDIT: "/api/chat/edit",
     COMPACT: "/api/chat/compact",
     STREAM: (streamId: string) => {
@@ -245,6 +244,8 @@ export const API = {
     LIST: (sessionId: string, limit = 50, offset = -1) =>
       `/api/messages/${sessionId}?limit=${limit}&offset=${offset}`,
   },
+  SUBAGENTS: (parentSessionId: string) =>
+    `/api/subagents?parent_session_id=${encodeURIComponent(parentSessionId)}`,
   FILES: {
     UPLOAD: "/api/files/upload",
     BROWSE: "/api/files/browse",
@@ -394,6 +395,8 @@ export const queryKeys = {
   messages: {
     list: (sessionId: string) => ["messages", sessionId] as const,
   },
+  subagents: (parentSessionId: string | null) =>
+    ["subagents", parentSessionId ?? "none"] as const,
   models: ["models"] as const,
   agents: ["agents"] as const,
   tools: ["tools"] as const,

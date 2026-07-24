@@ -921,32 +921,51 @@ async def delete_session_cascade(
     session_id: str,
     stream_manager: StreamManager,
 ) -> dict[str, bool]:
-    """Delete a session, abort in-flight streams, and clean up FTS.
+    """Delete a Session tree, abort in-flight streams, and clean up FTS.
 
-    Streams are aborted *before* the row delete so in-flight DB writes
-    don't trip foreign-key constraints. Raises :class:`NotFound` if no
-    row was deleted.
+    Child Agent Sessions are durable rows, so deleting only their parent would
+    orphan hidden work. Descendants are discovered first, then stopped and
+    deleted leaf-first. Raises :class:`NotFound` when the root does not exist.
     """
     from app.dependencies import get_index_manager
 
-    if stream_manager is not None:
-        stream_manager.abort_session(session_id)
-
-    await delete_session_uploads(db, session_id)
-    deleted = await delete_by_id(db, Session, session_id)
-    if not deleted:
+    if await get_session(db, session_id) is None:
         raise NotFound("Session not found")
+
+    session_ids = [session_id]
+    seen = {session_id}
+    frontier = [session_id]
+    while frontier:
+        result = await db.execute(
+            select(Session.id).where(Session.parent_id.in_(frontier))
+        )
+        frontier = [
+            child_id
+            for child_id in result.scalars().all()
+            if child_id not in seen
+        ]
+        seen.update(frontier)
+        session_ids.extend(frontier)
+
+    for tree_session_id in session_ids:
+        if stream_manager is not None:
+            stream_manager.abort_session(tree_session_id)
+        await delete_session_uploads(db, tree_session_id)
+
+    for tree_session_id in reversed(session_ids):
+        await delete_by_id(db, Session, tree_session_id)
 
     index_manager = get_index_manager()
     if index_manager is not None:
-        try:
-            await index_manager.cleanup_session(session_id)
-        except Exception:
-            logger.warning(
-                "FTS cleanup failed for session %s",
-                session_id,
-                exc_info=True,
-            )
+        for tree_session_id in session_ids:
+            try:
+                await index_manager.cleanup_session(tree_session_id)
+            except Exception:
+                logger.warning(
+                    "FTS cleanup failed for session %s",
+                    tree_session_id,
+                    exc_info=True,
+                )
 
     return {"deleted": True}
 

@@ -56,6 +56,7 @@ class Part(Base, TimestampMixin):
     - StepFinishPart: {type:"step-finish", reason, tokens, cost}
     - CompactionPart: {type:"compaction", auto}
     - SubtaskPart: {type:"subtask", session_id, title, description}
+    - SwarmPart: {type:"swarm", swarm_id, revision, status, members}
     """
 
     __tablename__ = "part"

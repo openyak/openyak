@@ -3,8 +3,8 @@
 import { useState, useCallback } from "react";
 import { useTranslation } from 'react-i18next';
 import { useRouter } from "next/navigation";
-import { Share2, Loader2, List, PanelRightClose, PanelRightOpen } from "lucide-react";
-import { HeaderModelDropdown } from "@/components/selectors/header-model-dropdown";
+import Link from "next/link";
+import { ArrowLeft, FolderClosed, Share2, Loader2, List, PanelRightClose, PanelRightOpen } from "lucide-react";
 import { ContextIndicator } from "@/components/chat/context-indicator";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
@@ -23,13 +23,23 @@ import {
 import { apiFetch } from "@/lib/api";
 import { API, IS_DESKTOP } from "@/lib/constants";
 import { isRemoteMode } from "@/lib/remote-connection";
+import { getChatRoute } from "@/lib/routes";
 
 interface ChatHeaderProps {
   sessionId?: string;
+  sessionTitle?: string | null;
+  parentSessionId?: string | null;
+  parentTitle?: string | null;
 }
 
-export function ChatHeader({ sessionId }: ChatHeaderProps) {
+export function ChatHeader({
+  sessionId,
+  sessionTitle,
+  parentSessionId,
+  parentTitle,
+}: ChatHeaderProps) {
   const { t } = useTranslation('chat');
+  const { t: tCommon } = useTranslation("common");
   const router = useRouter();
   const isCollapsed = useSidebarStore((s) => s.isCollapsed);
   const { messages } = useMessages(sessionId);
@@ -143,6 +153,7 @@ export function ChatHeader({ sessionId }: ChatHeaderProps) {
   return (
     <TooltipProvider delayDuration={200}>
       <header
+        role="banner"
         className="relative z-10 flex h-13 items-center gap-1 pr-3 backdrop-blur-sm"
         style={{ paddingLeft: leftPad }}
       >
@@ -163,9 +174,40 @@ export function ChatHeader({ sessionId }: ChatHeaderProps) {
             (desktop non-remote) so they stay at the window's left edge across
             sidebar states. */}
 
-        <div className="flex items-center gap-2 min-w-0 shrink-0">
-          <HeaderModelDropdown />
-        </div>
+        {sessionId && (
+          <div
+            className="flex min-w-0 max-w-[min(46vw,520px)] items-center gap-2 px-2"
+            title={sessionTitle ?? undefined}
+          >
+            <FolderClosed
+              className="size-4 shrink-0 text-[var(--text-tertiary)]"
+              aria-hidden="true"
+            />
+            <h1 className="truncate text-[13px] font-semibold text-[var(--text-primary)]">
+              {sessionTitle ?? tCommon("untitledTask", "Untitled task")}
+            </h1>
+          </div>
+        )}
+
+        {parentSessionId && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Link
+                href={getChatRoute(parentSessionId)}
+                className="ml-1 flex h-8 min-w-0 max-w-[240px] items-center gap-1.5 rounded-lg px-2 text-xs text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-secondary)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)]"
+                aria-label={`${tCommon("backToParentTask")}: ${parentTitle ?? tCommon("backToParentTask")}`}
+              >
+                <ArrowLeft className="size-3.5 shrink-0" aria-hidden="true" />
+                <span className="truncate">
+                  {parentTitle ?? tCommon("backToParentTask")}
+                </span>
+              </Link>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {tCommon("backToParentTask")}
+            </TooltipContent>
+          </Tooltip>
+        )}
 
         <div
           {...macDragProps}

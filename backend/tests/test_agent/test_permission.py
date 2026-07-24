@@ -7,6 +7,7 @@ from app.agent.permission import (
     evaluate,
     merge_rulesets,
     parse_session_permissions,
+    presets_to_ruleset,
 )
 from app.schemas.agent import PermissionRule, Ruleset
 
@@ -193,7 +194,14 @@ class TestGlobalDefaults:
         assert evaluate("bash", "*", GLOBAL_DEFAULTS) == "ask"
 
     def test_defaults_ask_write(self):
-        assert evaluate("write", "*", GLOBAL_DEFAULTS) == "ask"
+        for permission in (
+            "write",
+            "edit",
+            "apply_patch",
+            "artifact",
+            "code_execute",
+        ):
+            assert evaluate(permission, "*", GLOBAL_DEFAULTS) == "ask"
 
     def test_defaults_deny_question(self):
         assert evaluate("question", "*", GLOBAL_DEFAULTS) == "deny"
@@ -236,3 +244,43 @@ class TestParseSessionPermissions:
         # The invalid one should be skipped
         assert len(rs.rules) == 1
         assert rs.rules[0].permission == "read"
+
+
+class TestPermissionPresets:
+    def test_ask_mode_covers_every_mutation_adapter(self):
+        ruleset = merge_rulesets(
+            GLOBAL_DEFAULTS,
+            presets_to_ruleset({
+                "file_changes": False,
+                "run_commands": False,
+            }),
+        )
+
+        for permission in (
+            "write",
+            "edit",
+            "apply_patch",
+            "artifact",
+            "bash",
+            "code_execute",
+        ):
+            assert evaluate(permission, "*", ruleset) == "ask"
+
+    def test_auto_mode_allows_every_mutation_adapter(self):
+        ruleset = merge_rulesets(
+            GLOBAL_DEFAULTS,
+            presets_to_ruleset({
+                "file_changes": True,
+                "run_commands": True,
+            }),
+        )
+
+        for permission in (
+            "write",
+            "edit",
+            "apply_patch",
+            "artifact",
+            "bash",
+            "code_execute",
+        ):
+            assert evaluate(permission, "*", ruleset) == "allow"

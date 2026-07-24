@@ -2,7 +2,7 @@
 
 import { useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, type InfiniteData, type QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { API, queryKeys } from "@/lib/constants";
@@ -13,8 +13,12 @@ import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useActivityStore } from "@/stores/activity-store";
 import { startStream, stopStream } from "@/lib/session-stream-registry";
 import { useRemoteGenerationSync } from "./use-remote-generation-sync";
-import type { InfiniteData } from "@tanstack/react-query";
-import type { FileAttachment, PromptResponse, RespondRequest, TaskBatchRequest } from "@/types/chat";
+import type {
+  ExecutionMode,
+  FileAttachment,
+  PromptResponse,
+  RespondRequest,
+} from "@/types/chat";
 import type { PaginatedMessages } from "@/types/message";
 import type { SessionResponse } from "@/types/session";
 import type { ModelInfo } from "@/types/model";
@@ -57,10 +61,37 @@ function isUnsupportedImagesError(err: unknown): boolean {
   );
 }
 
-function formatTaskBatchPrompt(batch: Pick<TaskBatchRequest, "mode" | "tasks">): string {
-  const heading = batch.mode === "parallel" ? "Run tasks in parallel" : "Run tasks sequentially";
-  const lines = batch.tasks.map((task, index) => `${index + 1}. ${task.title}`);
-  return [heading, ...lines].join("\n");
+function requestStreamAbort(streamId: string): void {
+  void api.post(API.CHAT.ABORT, { stream_id: streamId }).catch((err) => {
+    console.error("Failed to abort — backend may still be generating:", err);
+  });
+}
+
+async function resolveExecutionMode(
+  queryClient: QueryClient,
+  sessionId: string | undefined,
+  requestedMode: ExecutionMode,
+): Promise<ExecutionMode> {
+  if (!sessionId) return requestedMode;
+
+  let session = queryClient.getQueryData<SessionResponse>(
+    queryKeys.sessions.detail(sessionId),
+  );
+  if (!session) {
+    try {
+      session = await queryClient.fetchQuery({
+        queryKey: queryKeys.sessions.detail(sessionId),
+        queryFn: () => api.get<SessionResponse>(API.SESSIONS.DETAIL(sessionId)),
+        staleTime: 30_000,
+      });
+    } catch {
+      // Conservative fallback: never recursively orchestrate from an
+      // unidentified existing session.
+      return "standard";
+    }
+  }
+  if (!session) return "standard";
+  return session.parent_id ? "standard" : requestedMode;
 }
 
 /**
@@ -70,7 +101,10 @@ function formatTaskBatchPrompt(batch: Pick<TaskBatchRequest, "mode" | "tasks">):
  * bucket takes over and the actual SSE stream is owned by the
  * SessionStreamRegistry, not by this hook.
  */
-export function useChat(currentSessionId?: string) {
+export function useChat(
+  currentSessionId?: string,
+  options: { syncRemote?: boolean } = {},
+) {
   const router = useRouter();
   const queryClient = useQueryClient();
 
@@ -79,7 +113,9 @@ export function useChat(currentSessionId?: string) {
   const session = useChatSession(currentSessionId ?? null);
 
   // Polling sync for streams started by other clients (e.g. mobile)
-  useRemoteGenerationSync(currentSessionId);
+  useRemoteGenerationSync(
+    options.syncRemote === false ? undefined : currentSessionId,
+  );
 
   const sendMessage = useCallback(
     async (text: string, attachments?: FileAttachment[]): Promise<boolean> => {
@@ -130,12 +166,16 @@ export function useChat(currentSessionId?: string) {
           file_changes: presets.fileChanges,
           run_commands: presets.runCommands,
         };
-        const hasActivePresets = Object.values(permissionPresets).some(Boolean);
         const permissionRules = settingsState.savedPermissions.map((rule) => ({
           action: rule.allow ? "allow" as const : "deny" as const,
           permission: rule.tool,
           pattern: rule.pattern ?? "*",
         }));
+        const executionMode = await resolveExecutionMode(
+          queryClient,
+          currentSessionId,
+          settingsState.executionMode,
+        );
 
         const res = await api.post<PromptResponse>(API.CHAT.PROMPT, {
           text: text.trim(),
@@ -144,17 +184,24 @@ export function useChat(currentSessionId?: string) {
           provider_id: settingsState.selectedProviderId,
           agent: settingsState.selectedAgent,
           attachments: attachments ?? [],
-          permission_presets: hasActivePresets ? permissionPresets : null,
+          permission_presets: permissionPresets,
           permission_rules: permissionRules.length > 0 ? permissionRules : null,
           reasoning: settingsState.reasoningEnabled,
           workspace: settingsState.workspaceDirectory,
+          execution_mode: executionMode,
         });
 
         // Seed the keyed bucket (carries over the draft contents if any) and
         // attach the SSE stream. Order matters: store update first so the
         // registry's handlers see a bucket they can write into.
         chatState.startGeneration(res.session_id, res.stream_id);
-        void startStream(res.session_id, res.stream_id);
+        const generationWasStopped =
+          useChatStore.getState().sessions[res.session_id]?.stopRequested === true;
+        if (generationWasStopped) {
+          requestStreamAbort(res.stream_id);
+        } else {
+          void startStream(res.session_id, res.stream_id);
+        }
 
         if (!currentSessionId) {
           const tempSession: SessionResponse = {
@@ -211,130 +258,29 @@ export function useChat(currentSessionId?: string) {
     [currentSessionId, router, queryClient],
   );
 
-  const sendTaskBatch = useCallback(
-    async (batch: Pick<TaskBatchRequest, "mode" | "tasks">): Promise<boolean> => {
-      const chatState = useChatStore.getState();
-      const settingsState = useSettingsStore.getState();
-      const targetSessionId = currentSessionId ?? null;
-      const currentBucket = targetSessionId === null
-        ? chatState.draftSession
-        : chatState.sessions[targetSessionId];
-
-      const tasks = batch.tasks
-        .map((task) => ({
-          ...task,
-          title: task.title.trim(),
-          prompt: task.prompt.trim(),
-          agent: task.agent || settingsState.selectedAgent,
-          model: task.model || settingsState.selectedModel,
-          provider_id: task.provider_id || settingsState.selectedProviderId,
-        }))
-        .filter((task) => task.title && task.prompt);
-
-      if (currentBucket?.isGenerating || currentBucket?.isCompacting || tasks.length === 0) return false;
-
-      if (!currentSessionId) {
-        chatState.resetSession(null);
-      }
-
-      useActivityStore.getState().close();
-      try {
-        const { useArtifactStore } = require("@/stores/artifact-store");
-        useArtifactStore.getState().close();
-      } catch {}
-      try {
-        const { usePlanReviewStore } = require("@/stores/plan-review-store");
-        usePlanReviewStore.getState().close();
-      } catch {}
-
-      const optimisticText = formatTaskBatchPrompt({ mode: batch.mode, tasks });
-      chatState.beginSending(targetSessionId, optimisticText);
-
-      try {
-        const res = await api.post<PromptResponse>(API.CHAT.TASK_BATCH, {
-          session_id: currentSessionId ?? null,
-          mode: batch.mode,
-          tasks,
-          workspace: settingsState.workspaceDirectory,
-        });
-
-        chatState.startGeneration(res.session_id, res.stream_id);
-        void startStream(res.session_id, res.stream_id);
-
-        if (!currentSessionId) {
-          const tempSession: SessionResponse = {
-            id: res.session_id,
-            project_id: null,
-            parent_id: null,
-            slug: null,
-            directory: settingsState.workspaceDirectory || null,
-            title: tasks[0]?.title?.slice(0, 60) || "Multi-agent task batch",
-            version: 0,
-            summary_additions: 0,
-            summary_deletions: 0,
-            summary_files: 0,
-            summary_diffs: [],
-            is_pinned: false,
-            permission: {},
-            model_id: settingsState.selectedModel,
-            provider_id: settingsState.selectedProviderId,
-            time_created: new Date().toISOString(),
-            time_updated: new Date().toISOString(),
-            time_compacting: null,
-            time_archived: null,
-          };
-          queryClient.setQueryData<InfiniteData<SessionResponse[]>>(
-            queryKeys.sessions.all,
-            (old) => {
-              if (!old) return { pages: [[tempSession]], pageParams: [0] };
-              return {
-                ...old,
-                pages: [[tempSession, ...old.pages[0]], ...old.pages.slice(1)],
-              };
-            },
-          );
-          router.push(getChatRoute(res.session_id));
-        }
-        return true;
-      } catch (err) {
-        console.error("Failed to start task batch:", err);
-        chatState.resetSession(targetSessionId);
-
-        if (err instanceof ApiError) {
-          toast.error(err.message, { duration: 8000 });
-          return false;
-        }
-
-        toast.error("Failed to start task batch", { duration: 8000 });
-        return false;
-      }
-    },
-    [currentSessionId, router, queryClient],
-  );
-
-  const stopGeneration = useCallback(async () => {
+  const stopGeneration = useCallback(() => {
     const chatState = useChatStore.getState();
     const targetSessionId = currentSessionId ?? null;
     const bucket = targetSessionId === null
       ? chatState.draftSession
       : chatState.sessions[targetSessionId];
     const streamId = bucket?.streamId;
-    if (!streamId) return;
-    try {
-      await api.post(API.CHAT.ABORT, { stream_id: streamId });
-    } catch (err) {
-      console.error("Failed to abort — backend may still be generating:", err);
-    }
-    // Stop the SSE stream and clear local state immediately — don't wait for
-    // backend DONE (backend may delay DONE while doing post-generation work
-    // like title generation).
-    if (targetSessionId !== null) stopStream(targetSessionId);
-    chatState.finishGeneration(targetSessionId);
+    if (!bucket?.isGenerating && !bucket?.isCompacting) return;
+
+    // The stop control is an immediate local interaction. Tear down the live
+    // view and re-enable the composer before waiting for the backend abort
+    // acknowledgement, which can be slow or unavailable on a weak network.
+    if (targetSessionId !== null && streamId) stopStream(targetSessionId);
+    chatState.stopGeneration(targetSessionId);
 
     const ws = useWorkspaceStore.getState();
-    if (ws.todos.some((t) => t.status === "in_progress")) {
-      ws.setTodos(
-        ws.todos.map((t) =>
+    const sessionWorkspace = targetSessionId
+      ? ws.getSessionState(targetSessionId)
+      : null;
+    if (targetSessionId && sessionWorkspace?.todos.some((t) => t.status === "in_progress")) {
+      ws.setTodosForSession(
+        targetSessionId,
+        sessionWorkspace.todos.map((t) =>
           t.status === "in_progress" ? { ...t, status: "pending" as const, activeForm: undefined } : t,
         ),
       );
@@ -344,6 +290,7 @@ export function useChat(currentSessionId?: string) {
       queryClient.invalidateQueries({ queryKey: queryKeys.sessions.detail(targetSessionId) });
     }
     queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all });
+    if (streamId) requestStreamAbort(streamId);
   }, [currentSessionId, queryClient]);
 
   const respondToPermission = useCallback(
@@ -419,12 +366,16 @@ export function useChat(currentSessionId?: string) {
           file_changes: presets.fileChanges,
           run_commands: presets.runCommands,
         };
-        const hasActivePresets = Object.values(permissionPresets).some(Boolean);
         const permissionRules = settingsState.savedPermissions.map((rule) => ({
           action: rule.allow ? "allow" as const : "deny" as const,
           permission: rule.tool,
           pattern: rule.pattern ?? "*",
         }));
+        const executionMode = await resolveExecutionMode(
+          queryClient,
+          currentSessionId,
+          settingsState.executionMode,
+        );
 
         const res = await api.post<PromptResponse>(API.CHAT.EDIT, {
           session_id: currentSessionId,
@@ -434,17 +385,24 @@ export function useChat(currentSessionId?: string) {
           provider_id: settingsState.selectedProviderId,
           agent: settingsState.selectedAgent,
           attachments: attachments ?? [],
-          permission_presets: hasActivePresets ? permissionPresets : null,
+          permission_presets: permissionPresets,
           permission_rules: permissionRules.length > 0 ? permissionRules : null,
           reasoning: settingsState.reasoningEnabled,
           workspace: settingsState.workspaceDirectory,
+          execution_mode: executionMode,
         });
 
         chatState.startGeneration(res.session_id, res.stream_id);
-        void startStream(res.session_id, res.stream_id);
+        const generationWasStopped =
+          useChatStore.getState().sessions[res.session_id]?.stopRequested === true;
+        if (generationWasStopped) {
+          requestStreamAbort(res.stream_id);
+        } else {
+          void startStream(res.session_id, res.stream_id);
+        }
 
-        useWorkspaceStore.getState().setTodos([]);
-        useWorkspaceStore.getState().setWorkspaceFiles([]);
+        useWorkspaceStore.getState().setTodosForSession(currentSessionId, []);
+        useWorkspaceStore.getState().setWorkspaceFilesForSession(currentSessionId, []);
 
         const trimmed = newText.trim();
         queryClient.setQueryData<InfiniteData<PaginatedMessages>>(
@@ -592,13 +550,13 @@ export function useChat(currentSessionId?: string) {
 
   return {
     sendMessage,
-    sendTaskBatch,
     editAndResend,
     stopGeneration,
     respondToPermission,
     respondToQuestion,
     respondToPlanReview,
     isGenerating: session.isGenerating,
+    isStopped: session.isStopped,
     isCompacting: session.isCompacting,
     streamId: session.streamId,
     pendingUserText: session.pendingUserText,

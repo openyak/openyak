@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Any, Callable, Awaitable
+from typing import Any, Callable, Awaitable, Literal
 
 from app.schemas.agent import AgentInfo
 
@@ -38,6 +38,17 @@ class ToolContext:
 
     # Deferred-tools discovery state (shared reference with SessionPrompt)
     discovered_tools: set[str] | None = None
+
+    # Explicit Agent runtime scope. New composed Tools should use these fields
+    # instead of reaching through undocumented dynamic attributes.
+    model_id: str | None = None
+    provider_id: str | None = None
+    permission_rules: tuple[dict[str, Any], ...] = ()
+    reasoning: bool | None = None
+    execution_mode: Literal["standard", "ultra"] = "standard"
+    depth: int = 0
+    job: Any | None = None
+    app_state: dict[str, Any] | None = None
 
     # Callbacks set by the session processor
     _publish_fn: Callable[[str, dict[str, Any]], None] | None = None

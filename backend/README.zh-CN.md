@@ -30,8 +30,9 @@ app/
 ├── config.py            # Pydantic Settings 配置
 ├── dependencies.py      # FastAPI 依赖注入
 │
-├── agent/               # Agent 系统（7 个内置 agent）
-│   ├── agent.py         #   AgentRegistry + build/plan/explore/general/compaction/title/summary
+├── agent/               # Agent 系统（8 个内置 agent）
+│   ├── agent.py         #   Registry + build/plan/explore/research/general/compaction/title/summary
+│   ├── swarm.py         #   Ultra fork/join 协调器 + AgentRun 状态
 │   ├── permission.py    #   4 层权限引擎（全局 → agent → 用户 → 会话）
 │   └── prompts/         #   每个 agent 的 system prompt 模板
 │
@@ -42,7 +43,7 @@ app/
 │   ├── truncation.py    #   输出截断（~30K 字符）
 │   └── builtin/         #   read, write, edit, bash, glob, grep, task, question, todo,
 │                        #   web_fetch, web_search, code_execute, artifact, plan, skill,
-│                        #   memory, apply_patch, search, submit_plan, ...
+│                        #   memory, apply_patch, search, submit_plan；swarm.py = SwarmTool Adapter
 │
 ├── session/             # 核心执行循环
 │   ├── processor.py     #   THE CORE — 完整 agent loop（多步工具调用、doom loop 检测、
@@ -122,6 +123,7 @@ app/
 | `build` | 主 Agent | 全功能助手，拥有所有工具；bash/write/edit 需请求权限 |
 | `plan` | 主 Agent | 只读分析模式（拒绝 write/edit/bash） |
 | `explore` | 子 Agent | 快速搜索与探索（read/glob/grep/bash/web） |
+| `research` | 子 Agent | 面向并行 Swarm 的严格只读研究 Agent |
 | `general` | 子 Agent | 通用型，拥有所有工具访问权限 |
 | `compaction` | 隐藏 | 上下文摘要压缩（无工具） |
 | `title` | 隐藏 | 自动生成会话标题 |
@@ -143,6 +145,7 @@ app/
 | `question` | 向用户提问（阻塞等待） |
 | `todo` | 管理待办列表 |
 | `task` | 启动子任务（递归 agent） |
+| `swarm`（`SwarmTool`） | 在 Ultra 模式下 fork/join 2–4 个模型自主规划的子 AgentRun |
 | `plan` | 切换到计划模式（只读） |
 | `submit_plan` | 提交计划执行 |
 | `artifact` | 存储/检索内容块 |
@@ -229,7 +232,7 @@ app/
 │    ├── tool-call → doom loop 检测 → 权限检查 → 执行工具   │
 │    │     ├── 工具修复（大小写修正 → invalid 回退）         │
 │    │     ├── 保存 ToolPart（input/output/state）         │
-│    │     └── 如果是 task 工具 → 启动子 agent 循环         │
+│    │     └── task → 单个子 Agent；swarm → 有界 fork/join  │
 │    └── usage → 检查上下文溢出 → 触发两阶段压缩            │
 │                                                         │
 │  无工具调用 → break                                      │
@@ -238,6 +241,18 @@ app/
     ↓
 首轮自动生成标题 → 发布 done 事件
 ```
+
+## Ultra Agent Swarm 协议
+
+Ultra 是独立于 Plan / Ask / Auto 权限模式的执行 overlay。它向父 Agent 开放模型自主调用的 `swarm` 工具；用户仍只需在普通输入框描述目标。
+
+- 协调器 fork 2–4 个持久化子 Session，并按任务顺序 join 已持久化的结果。
+- 子级继承父级 Workspace、Project、Provider、模型、reasoning 设置和有效权限上限；交互请求统一经父 GenerationJob 转发。
+- 相互独立的 `research` AgentRun 并行执行；可修改 Workspace 的 AgentRun 必须获取 Workspace 级租约并串行执行。
+- 未知/自定义工具按可能写入保守处理；MCP 工具只有声明 `readOnlyHint` 才按只读并发。
+- 每个父 generation 有硬性的子 Agent 总预留预算，重复调用 `swarm` 也不能绕过。
+- 父消息中只维护一个 `SwarmPart`，使用 `schema_version: 1` 和单调递增的 `revision` 原地更新；每次先提交完整快照，再发布 `swarm-state` SSE。
+- 单个子级失败不会中止其他子级，join 可返回 `partial`；删除父 Session 时会一并删除完整后代 Session 树。
 
 ## 权限系统
 

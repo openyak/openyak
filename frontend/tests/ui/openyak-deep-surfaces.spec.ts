@@ -185,10 +185,13 @@ test.describe("OpenYak deep claimed-feature GUI surfaces", () => {
     await page.getByRole("button", { name: /Progress/i }).click();
     await expect(page.getByText("Draft outline")).toBeVisible();
 
-    const filesCard = page.getByRole("button", { name: /Files 5 generated files/i });
+    const filesCard = page.getByRole("button", { name: /Outputs\. 5 generated files/i });
     await expect(filesCard).toBeVisible();
-    await filesCard.click();
-    await page.getByRole("button", { name: "Scratchpad" }).click();
+    const scratchpadToggle = page.getByRole("button", { name: "Scratchpad" });
+    if (!(await scratchpadToggle.isVisible())) {
+      await filesCard.click();
+    }
+    await scratchpadToggle.click();
     const scratchpad = page.getByPlaceholder("Notes, ideas, reminders...");
     await scratchpad.fill("Remember to verify the GUI artifact path.");
     await expect(scratchpad).toHaveValue("Remember to verify the GUI artifact path.");

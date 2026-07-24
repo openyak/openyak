@@ -8,12 +8,14 @@ from app.session.manager import (
     create_message,
     create_part,
     create_session,
+    delete_session_cascade,
     get_message_history_for_llm,
     get_messages,
     get_session,
     list_sessions,
     update_session_title,
 )
+from app.streaming.manager import StreamManager
 
 
 class TestSessionManager:
@@ -48,6 +50,37 @@ class TestSessionManager:
         await update_session_title(db, session.id, "New")
         updated = await get_session(db, session.id)
         assert updated.title == "New"
+
+    @pytest.mark.asyncio
+    async def test_delete_parent_cascades_through_child_agent_sessions(
+        self,
+        db: AsyncSession,
+    ):
+        parent = await create_session(db, id="parent")
+        child = await create_session(db, id="child", parent_id=parent.id)
+        grandchild = await create_session(
+            db,
+            id="grandchild",
+            parent_id=child.id,
+        )
+        stream_manager = StreamManager()
+        jobs = [
+            stream_manager.create_job("parent-stream", parent.id),
+            stream_manager.create_job("child-stream", child.id),
+            stream_manager.create_job("grandchild-stream", grandchild.id),
+        ]
+
+        result = await delete_session_cascade(
+            db,
+            parent.id,
+            stream_manager,
+        )
+
+        assert result == {"deleted": True}
+        assert await get_session(db, parent.id) is None
+        assert await get_session(db, child.id) is None
+        assert await get_session(db, grandchild.id) is None
+        assert all(job.abort_event.is_set() for job in jobs)
 
 
 class TestMessageManager:

@@ -73,6 +73,8 @@ interface MessageListProps {
   messages: MessageResponse[];
   isLoading: boolean;
   isGenerating: boolean;
+  /** Whether the live response was explicitly stopped and remains local. */
+  isStopped: boolean;
   /** Stream ID — only set after the backend confirms the generation. */
   streamId: string | null;
   /** Optimistic user message text shown before the API confirms. */
@@ -100,6 +102,7 @@ export function MessageList({
   messages,
   isLoading,
   isGenerating,
+  isStopped,
   streamId,
   pendingUserText,
   pendingAttachments,
@@ -284,7 +287,7 @@ export function MessageList({
   if (isFirstLoad) {
     // When generating, skip skeletons and show the streaming message directly
     // to avoid a jarring skeleton → content transition during page navigation
-    if (isGenerating || !!streamId) {
+    if (isGenerating || !!streamId || isStopped) {
       return (
         <div
           ref={scrollRef}
@@ -295,10 +298,10 @@ export function MessageList({
               away between navigation and message fetch completion */}
           {pendingUserText && (
             <div className="px-4 py-3">
-              <div className="mx-auto max-w-3xl xl:max-w-4xl">
+              <div className="conversation-rail mx-auto">
                 <div className="flex justify-end">
-                  <div className="max-w-[85%] sm:max-w-[70%] rounded-2xl bg-[var(--user-bubble-bg)] px-4 py-2.5 shadow-[var(--shadow-sm)] border border-[var(--border-default)]">
-                    <div className="text-[13px] text-[var(--text-primary)] whitespace-pre-wrap break-words leading-relaxed">
+                  <div className="conversation-user-bubble max-w-[85%] rounded-2xl px-3.5 py-2.5 sm:max-w-[70%]">
+                    <div className="whitespace-pre-wrap break-words">
                       {pendingUserText}
                     </div>
                     {pendingAttachments && pendingAttachments.length > 0 && (
@@ -314,12 +317,13 @@ export function MessageList({
             </div>
           )}
           <div className="px-4 py-5">
-            <div className="mx-auto max-w-3xl xl:max-w-4xl">
+            <div className="mx-auto max-w-[736px]">
               <StreamingMessage
                 sessionId={sessionId ?? null}
                 parts={streamingParts}
                 streamingText={streamingText}
                 streamingReasoning={streamingReasoning}
+                isStopped={isStopped}
               />
             </div>
           </div>
@@ -331,7 +335,7 @@ export function MessageList({
     return (
       <div className="flex-1 overflow-y-auto p-4">
         <div
-          className="mx-auto max-w-3xl xl:max-w-4xl space-y-6 animate-fade-in"
+          className="mx-auto max-w-[736px] space-y-6 animate-fade-in"
           style={{ animationDelay: "150ms", animationFillMode: "backwards" }}
         >
           {/* User message skeleton — right aligned */}
@@ -369,7 +373,7 @@ export function MessageList({
   // turn that should stay untouched.
   const lastGroupForCover = groups[groups.length - 1];
   if (
-    (hasActiveStream || showStreamingFallback) &&
+    (hasActiveStream || showStreamingFallback || isStopped) &&
     !showPendingBubble &&
     lastGroupForCover?.kind === "assistant"
   ) {
@@ -406,7 +410,7 @@ export function MessageList({
           </div>
         )}
 
-        {messages.length === 0 && !isGenerating ? (
+        {messages.length === 0 && !isGenerating && !isStopped ? (
           <div className="flex items-center justify-center h-full text-[var(--text-tertiary)] text-sm">
             No messages yet
           </div>
@@ -461,7 +465,7 @@ export function MessageList({
                 !group.messages.some((m) => streamedHandoffIdsRef.current.has(m.id));
 
               if (
-                (hasActiveStream || showStreamingFallback) &&
+                (hasActiveStream || showStreamingFallback || isStopped) &&
                 hasVisibleStreamingReplacement &&
                 isLastOverall &&
                 !showPendingBubble
@@ -483,20 +487,18 @@ export function MessageList({
                 avoid duplicates after page navigation. */}
             {showPendingBubble && (
               <div className="px-4 py-5">
-                <div className="mx-auto max-w-3xl xl:max-w-4xl">
+                <div className="conversation-rail mx-auto">
                   <motion.div
                     className="flex justify-end"
-                    initial={{ opacity: 0, y: 6 }}
+                    initial={{ opacity: 0, y: 3 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{
-                      type: "spring",
-                      stiffness: 300,
-                      damping: 30,
-                      opacity: { duration: 0.2 },
+                      duration: 0.16,
+                      ease: [0.2, 0, 0, 1],
                     }}
                   >
-                    <div className="max-w-[85%] sm:max-w-[70%] rounded-2xl bg-[var(--user-bubble-bg)] px-4 py-2.5 shadow-[var(--shadow-sm)] border border-[var(--border-default)]">
-                      <div className="text-[13px] text-[var(--text-primary)] whitespace-pre-wrap break-words leading-relaxed">
+                    <div className="conversation-user-bubble max-w-[85%] rounded-2xl px-3.5 py-2.5 sm:max-w-[70%]">
+                      <div className="whitespace-pre-wrap break-words">
                         {pendingUserText}
                       </div>
                       {pendingAttachments && pendingAttachments.length > 0 && (
@@ -514,14 +516,15 @@ export function MessageList({
 
             {/* Currently streaming message — kept visible briefly after
                 generation finishes so DB messages can mount first. */}
-            {(isGenerating || !!streamId || showStreamingFallback) && (
+            {(isGenerating || !!streamId || showStreamingFallback || isStopped) && (
               <div className="px-4 py-5">
-                <div className="mx-auto max-w-3xl xl:max-w-4xl">
+                <div className="mx-auto max-w-[736px]">
                   <StreamingMessage
                     sessionId={sessionId ?? null}
                     parts={streamingParts}
                     streamingText={streamingText}
                     streamingReasoning={streamingReasoning}
+                    isStopped={isStopped}
                   />
                 </div>
               </div>

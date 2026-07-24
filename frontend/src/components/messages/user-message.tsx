@@ -43,7 +43,6 @@ interface UserMessageProps {
 }
 
 export function UserMessage({ message, isNew = true, onEditAndResend, isGenerating, directory, sessionId }: UserMessageProps) {
-  const [hovered, setHovered] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState("");
   const [copied, setCopied] = useState(false);
@@ -219,7 +218,7 @@ export function UserMessage({ message, isNew = true, onEditAndResend, isGenerati
   if (editing) {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] sm:max-w-[70%] w-full rounded-2xl bg-[var(--surface-secondary)] border border-[var(--border-heavy)] p-4 shadow-[var(--shadow-sm)] relative">
+        <div className="conversation-user-bubble max-w-[85%] sm:max-w-[70%] w-full rounded-2xl p-4 relative text-[15px] leading-[1.55]">
           {hasWorkspace && (
             <FileMentionPopup
               query={mentionQuery}
@@ -310,20 +309,19 @@ export function UserMessage({ message, isNew = true, onEditAndResend, isGenerati
   return (
     <motion.div
       className="flex flex-col items-end"
-      initial={isNew ? { opacity: 0, y: 6 } : false}
+      initial={isNew ? { opacity: 0, y: 3 } : false}
       animate={{ opacity: 1, y: 0 }}
       transition={{
-        type: "spring",
-        stiffness: 300,
-        damping: 30,
-        opacity: { duration: 0.2 },
+        duration: 0.16,
+        ease: [0.2, 0, 0, 1],
       }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
     >
-      <div className="max-w-[85%] sm:max-w-[70%] rounded-2xl bg-[var(--user-bubble-bg)] px-4 py-2.5 shadow-[var(--shadow-sm)] border border-[var(--border-default)]">
+      <div
+        className="conversation-user-bubble max-w-[85%] sm:max-w-[70%] rounded-2xl px-3.5 py-2.5 text-[15px] leading-[1.55]"
+        data-message-author="user"
+      >
         {text && (
-          <div className="text-[13px] text-[var(--text-primary)] whitespace-pre-wrap break-words leading-relaxed">
+          <div className="whitespace-pre-wrap break-words">
             {text}
           </div>
         )}
@@ -336,9 +334,10 @@ export function UserMessage({ message, isNew = true, onEditAndResend, isGenerati
         )}
       </div>
 
-      {/* Action icons — always in DOM to avoid layout shift, opacity-only toggle */}
+      {/* Actions stay subtly present instead of being hover-only. */}
       <div
-        className={`flex items-center gap-0.5 mt-1 mr-1 transition-opacity duration-150 ${hovered ? "opacity-100" : "opacity-0 pointer-events-none"}`}
+        className="conversation-message-actions mt-1 mr-1 flex items-center gap-0.5"
+        data-message-actions
       >
         {text && (
           <button
@@ -351,10 +350,10 @@ export function UserMessage({ message, isNew = true, onEditAndResend, isGenerati
               {copied ? (
                 <motion.span
                   key="check"
-                  initial={{ scale: 0, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
-                  exit={{ scale: 0, opacity: 0 }}
-                  transition={{ type: "spring", stiffness: 500, damping: 25 }}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.14, ease: "easeOut" }}
                   className="flex items-center justify-center"
                 >
                   <Check className="h-3.5 w-3.5 text-[var(--color-success)]" />
@@ -362,10 +361,10 @@ export function UserMessage({ message, isNew = true, onEditAndResend, isGenerati
               ) : (
                 <motion.span
                   key="copy"
-                  initial={{ scale: 0, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
-                  exit={{ scale: 0, opacity: 0 }}
-                  transition={{ duration: 0.15 }}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.14, ease: "easeOut" }}
                   className="flex items-center justify-center"
                 >
                   <Copy className="h-3.5 w-3.5" />

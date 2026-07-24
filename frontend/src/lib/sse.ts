@@ -42,8 +42,8 @@ export interface SSEClientOptions {
   onClose?: () => void;
   /** Called when connection status changes */
   onStatusChange?: (status: SSEConnectionStatus) => void;
-  /** Called on any received event (for idle timeout tracking). */
-  onEvent?: () => void;
+  /** Called on any received event (for idle timeout/status tracking). */
+  onEvent?: (eventType: string) => void;
 }
 
 export class SSEClient {
@@ -111,8 +111,8 @@ export class SSEClient {
   checkHealth(): void {
     if (this.closed) return;
     if (
-      !this.eventSource ||
-      this.eventSource.readyState === EventSource.CLOSED
+      this.eventSource?.readyState === EventSource.CLOSED ||
+      (!this.eventSource && !this.abortController)
     ) {
       // Connection is dead — force reconnect
       this.doConnect();
@@ -182,21 +182,37 @@ export class SSEClient {
 
   /** Dispatch a parsed SSE event to registered handlers. */
   private dispatchEvent(eventType: string, data: string, id: string): void {
-    if (id) {
-      this.lastEventId = parseInt(id, 10);
-    }
-
-    this.nativeReconnectCount = 0;
-    this.lastEventTime = Date.now();
-    this.resetHeartbeat();
-    this.options.onEvent?.();
-
     let parsed: SSEEventData;
     try {
       parsed = JSON.parse(data) as SSEEventData;
     } catch {
       parsed = {} as SSEEventData;
     }
+
+    // Native EventSource exposes the connection's cumulative lastEventId.
+    // Consequently an unnumbered heartbeat (or the JOB_NOT_FOUND recovery
+    // event returned after backend restart) can still carry the previous
+    // numbered event's id.  These events live outside the replay sequence and
+    // must always reach their handlers.
+    const isOutOfBandEvent =
+      eventType === "heartbeat" ||
+      (eventType === "agent-error" && parsed.code === "JOB_NOT_FOUND");
+
+    if (id && !isOutOfBandEvent) {
+      const eventId = Number(id);
+      if (Number.isSafeInteger(eventId)) {
+        // A resumed stream may replay the last acknowledged event (or an
+        // older buffered range). Drop it before any handler side effects so
+        // text, tools, and terminal events remain exactly-once in the client.
+        if (eventId <= this.lastEventId) return;
+        this.lastEventId = eventId;
+      }
+    }
+
+    this.nativeReconnectCount = 0;
+    this.lastEventTime = Date.now();
+    this.resetHeartbeat();
+    this.options.onEvent?.(eventType);
 
     const handlers = this.handlers.get(eventType) ?? [];
     for (const handler of handlers) {
@@ -324,10 +340,13 @@ export class SSEClient {
     if (this.heartbeatTimer) clearTimeout(this.heartbeatTimer);
     this.heartbeatTimer = setTimeout(() => {
       // No heartbeat received — server may be dead
-      if (this.eventSource && !this.closed) {
-        this.eventSource.close();
-        this.scheduleReconnect();
-      }
+      if (this.closed) return;
+      if (!this.eventSource && !this.abortController) return;
+      this.eventSource?.close();
+      this.eventSource = null;
+      this.abortController?.abort();
+      this.abortController = null;
+      this.scheduleReconnect();
     }, SSE_HEARTBEAT_TIMEOUT);
   }
 
@@ -369,12 +388,17 @@ export class SSEClient {
   private startStaleCheck(): void {
     if (this.staleCheckInterval) clearInterval(this.staleCheckInterval);
     this.staleCheckInterval = setInterval(() => {
-      if (this.closed || !this.eventSource) return;
+      if (
+        this.closed ||
+        (!this.eventSource && !this.abortController)
+      ) return;
       const staleMs = Date.now() - this.lastEventTime;
       if (staleMs > SSE_HEARTBEAT_TIMEOUT) {
         // Connection is stale — force reconnect
-        this.eventSource.close();
+        this.eventSource?.close();
         this.eventSource = null;
+        this.abortController?.abort();
+        this.abortController = null;
         this.scheduleReconnect();
       }
     }, 15_000);

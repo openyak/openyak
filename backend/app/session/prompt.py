@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
 from app.agent.agent import AgentRegistry
+from app.agent.agent import ULTRA_PROMPT
 from app.agent.permission import (
     GLOBAL_DEFAULTS,
     merge_rulesets,
@@ -28,6 +29,7 @@ from app.agent.permission import (
 )
 from app.models.message import Message, Part
 from app.provider.registry import ProviderRegistry
+from app.schemas.agent import Ruleset
 from app.schemas.chat import PromptRequest
 from app.session.manager import (
     create_message,
@@ -258,6 +260,11 @@ class SessionPrompt:
                 async with db.begin():
                     session = await get_session(db, self.job.session_id)
                     if session is not None:
+                        if (
+                            session.parent_id is not None
+                            and self.request.execution_mode == "ultra"
+                        ):
+                            self.request.execution_mode = "standard"
                         session.model_id = self.model_id
                         session.provider_id = self.provider.id
         else:
@@ -271,6 +278,11 @@ class SessionPrompt:
                             directory=self.request.workspace or ".",
                         )
                         self.is_first_turn = True
+                    elif (
+                        session.parent_id is not None
+                        and self.request.execution_mode == "ultra"
+                    ):
+                        self.request.execution_mode = "standard"
 
                     # Remember the model used for this session so the selector
                     # can be restored when the user returns to it later
@@ -281,7 +293,11 @@ class SessionPrompt:
                     user_msg = await create_message(
                         db,
                         session_id=session.id,
-                        data={"role": "user", "agent": self.agent.name},
+                        data={
+                            "role": "user",
+                            "agent": self.agent.name,
+                            "variant": self.request.execution_mode,
+                        },
                     )
                     await create_part(
                         db,
@@ -364,13 +380,7 @@ class SessionPrompt:
         self.session_permissions = parse_session_permissions(self.session_permission_data)
         self.preset_permissions = presets_to_ruleset(self.request.permission_presets)
         self.request_permissions = parse_session_permissions(self.request.permission_rules)
-        self.merged_permissions = merge_rulesets(
-            GLOBAL_DEFAULTS,
-            self.agent.permissions,
-            self.preset_permissions,
-            self.request_permissions,
-            self.session_permissions,
-        )
+        self.merged_permissions = self._merge_effective_permissions()
 
         # --- Reconstruct artifact cache from message history ---
         # Allows update/rewrite operations to work across generations.
@@ -541,6 +551,7 @@ class SessionPrompt:
                         "agent": self.agent.name,
                         "model_id": self.model_id,
                         "provider_id": self.provider.id,
+                        "mode": self.request.execution_mode,
                     },
                 )
         self.assistant_msg_id = assistant_msg.id
@@ -893,18 +904,32 @@ class SessionPrompt:
 
         Called by SessionProcessor when the plan tool switches agents.
         """
-        self.merged_permissions = merge_rulesets(
+        self.merged_permissions = self._merge_effective_permissions()
+        self.system_prompt_parts = self._build_system_prompt_parts()
+
+    # ------------------------------------------------------------------
+    # Internal: gather impure inputs and call the pure assemble().
+    # ------------------------------------------------------------------
+
+    def _merge_effective_permissions(self) -> Ruleset:
+        """Merge permissions without letting presets weaken Plan mode."""
+        if self.agent.name == "plan":
+            # Plan is a hard read-only ceiling, not a preset. Remembered user
+            # approvals and Auto/Ask presets must never reopen mutation Tools.
+            return merge_rulesets(
+                GLOBAL_DEFAULTS,
+                self.preset_permissions,
+                self.request_permissions,
+                self.session_permissions,
+                self.agent.permissions,
+            )
+        return merge_rulesets(
             GLOBAL_DEFAULTS,
             self.agent.permissions,
             self.preset_permissions,
             self.request_permissions,
             self.session_permissions,
         )
-        self.system_prompt_parts = self._build_system_prompt_parts()
-
-    # ------------------------------------------------------------------
-    # Internal: gather impure inputs and call the pure assemble().
-    # ------------------------------------------------------------------
 
     def _build_system_prompt_parts(self) -> SystemPromptParts:
         """Resolve every impure input and call :func:`assemble_system_prompt`.
@@ -913,7 +938,7 @@ class SessionPrompt:
         :meth:`rebuild_permissions_and_prompt` so the call sites stay
         single-line and the impure surface is visible in one place.
         """
-        return assemble_system_prompt(
+        parts = assemble_system_prompt(
             self.agent,
             cwd=self.directory or os.getcwd(),
             workspace=self.workspace,
@@ -925,6 +950,12 @@ class SessionPrompt:
             tz_name=default_tz_name(),
             platform_name=default_platform_name(),
         )
+        if self.request.execution_mode == "ultra" and ULTRA_PROMPT:
+            cached = "\n\n".join(
+                part for part in (parts.cached, ULTRA_PROMPT) if part
+            )
+            return SystemPromptParts(cached=cached, dynamic=parts.dynamic)
+        return parts
 
 
 def _collapsed_row_stats(rows: list[Message]) -> tuple[int, int, int, int]:

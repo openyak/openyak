@@ -85,11 +85,14 @@ interface ActiveJobMock {
   stream_id: string;
   session_id: string;
   needs_input?: boolean;
+  parent_session_id?: string;
 }
 
 export interface OpenYakMockOptions {
   failUploads?: string[];
   promptErrors?: PromptErrorMock[];
+  promptDelayMs?: number;
+  abortDelayMs?: number;
   binaryFailures?: string[];
   healthStatus?: number;
   ollamaStatusCode?: number;
@@ -1566,6 +1569,21 @@ function sseStreamBody(streamId: string) {
     ].join("\n");
   }
 
+  if (streamId === "stream-text-then-tool") {
+    return [
+      sseEvent(1, "text-delta", {
+        text: "Text completed before the tool starts.",
+      }),
+      sseEvent(2, "tool-call", {
+        call_id: "read-after-text",
+        tool: "read",
+        arguments: { file_path: "/workspace/README.md" },
+        title: "Read README",
+      }),
+      "",
+    ].join("\n");
+  }
+
   if (streamId === "stream-slow") {
     return [
       sseEvent(1, "text-delta", {
@@ -1573,6 +1591,67 @@ function sseStreamBody(streamId: string) {
       }),
       sseEvent(2, "reasoning-delta", {
         text: "Waiting for the user to test stop generation.",
+      }),
+      "",
+    ].join("\n");
+  }
+
+  if (streamId === "stream-slow-swarm") {
+    return [
+      sseEvent(1, "tool-call", {
+        call_id: "swarm-stop-regression",
+        tool: "swarm",
+        arguments: {
+          assignments: [
+            {
+              title: "Streaming UX audit",
+              prompt: "Audit the stopped-stream experience.",
+            },
+          ],
+        },
+        title: "Agent swarm",
+      }),
+      sseEvent(2, "tool-result", {
+        call_id: "swarm-stop-regression",
+        tool: "swarm",
+        output: "Swarm started.",
+        title: "Agent swarm",
+      }),
+      sseEvent(3, "swarm-state", {
+        schema_version: 1,
+        swarm_id: "swarm-stop-regression",
+        parent_session_id: "session-new",
+        revision: 1,
+        status: "running",
+        strategy: "parallel",
+        failure_policy: "continue",
+        started_at: now,
+        finished_at: null,
+        members: [
+          {
+            agent_run_id: "run-streaming-ux-audit",
+            session_id: "child-streaming-ux-audit",
+            ordinal: 0,
+            title: "Streaming UX audit",
+            agent: "research",
+            depth: 1,
+            status: "running",
+            started_at: now,
+            finished_at: null,
+            error: null,
+            cost: 0,
+            tokens: {},
+          },
+        ],
+      }),
+      "",
+    ].join("\n");
+  }
+
+  if (streamId === "stream-text-only") {
+    return [
+      sseEvent(1, "text-delta", {
+        text: "Only visible text is streaming.",
       }),
       "",
     ].join("\n");
@@ -1718,6 +1797,12 @@ export async function mockOpenYakApi(
     if (path === "/api/agents")
       return fulfillJson(route, [{ name: "build" }, { name: "plan" }]);
     if (path === "/api/tools") return fulfillJson(route, []);
+    if (path === "/api/subagents")
+      return fulfillJson(route, {
+        active: [],
+        done: [],
+        counts: { active: 0, done: 0, total: 0 },
+      });
     if (path === "/api/chat/active")
       return fulfillJson(route, options.activeJobs ?? []);
     if (path === "/api/config/api-key") {
@@ -2095,7 +2180,15 @@ export async function mockOpenYakApi(
       if (/permission/i.test(text)) streamId = "stream-permission";
       if (/question/i.test(text)) streamId = "stream-question";
       if (/plan review/i.test(text)) streamId = "stream-plan";
+      if (/text then tool cursor/i.test(text))
+        streamId = "stream-text-then-tool";
       if (/slow stream|stop generation/i.test(text)) streamId = "stream-slow";
+      if (/slow swarm|swarm stop/i.test(text))
+        streamId = "stream-slow-swarm";
+      if (/text-only stream/i.test(text)) streamId = "stream-text-only";
+      if (options.promptDelayMs) {
+        await new Promise((resolve) => setTimeout(resolve, options.promptDelayMs));
+      }
       return fulfillJson(route, {
         stream_id: streamId,
         session_id: "session-new",
@@ -2119,6 +2212,9 @@ export async function mockOpenYakApi(
     }
     if (path === "/api/chat/abort") {
       state.abortRequests.push(requestJson(request));
+      if (options.abortDelayMs) {
+        await new Promise((resolve) => setTimeout(resolve, options.abortDelayMs));
+      }
       return fulfillJson(route, { success: true });
     }
 

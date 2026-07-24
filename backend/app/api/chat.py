@@ -32,20 +32,22 @@ from app.schemas.chat import (
     PromptRequest,
     PromptResponse,
     RespondRequest,
-    TaskBatchRequest,
 )
 from app.session.compaction import run_compaction
 from app.session.manager import get_session
 from app.session.manager import delete_messages_after, update_message_file_parts, update_message_text
 from app.session.processor import run_generation
-from app.session.task_batch import run_task_batch
 from app.session.utils import (
     compute_usable_context_window,
     get_effective_context_window,
     has_image_attachments,
 )
 from app.streaming.events import AGENT_ERROR, COMPACTION_ERROR, DONE, PERMISSION_RESOLVED, QUESTION_RESOLVED, SSEEvent
-from app.streaming.manager import GenerationJob, StreamManager
+from app.streaming.manager import (
+    GenerationCapacityError,
+    GenerationJob,
+    StreamManager,
+)
 from app.utils.id import generate_ulid
 
 logger = logging.getLogger(__name__)
@@ -112,16 +114,30 @@ def _on_task_done(task: asyncio.Task[None], *, job: GenerationJob) -> None:
 
 async def _run_with_semaphore(sm: StreamManager, job: GenerationJob, coro) -> None:
     """Run generation under the concurrency semaphore."""
+    started = False
     try:
-        await asyncio.wait_for(sm._semaphore.acquire(), timeout=30)
-    except asyncio.TimeoutError:
+        async with sm.generation_slot(owner=job):
+            started = True
+            await coro
+    except GenerationCapacityError:
         job.publish(SSEEvent(AGENT_ERROR, {"error_message": "Server is busy. Please try again shortly."}))
         job.complete()
-        return
-    try:
-        await coro
     finally:
-        sm._semaphore.release()
+        if not started:
+            close = getattr(coro, "close", None)
+            if close is not None:
+                close()
+            if job.abort_event.is_set() and not job.completed:
+                job.publish(
+                    SSEEvent(
+                        DONE,
+                        {
+                            "session_id": job.session_id,
+                            "finish_reason": "aborted",
+                        },
+                    )
+                )
+                job.complete()
 
 
 async def _get_session_context_usage_ratio(
@@ -212,42 +228,6 @@ async def start_prompt(
     )
     task.add_done_callback(functools.partial(_on_task_done, job=job))
     job.task = task  # prevent GC from silently cancelling the task
-
-    return PromptResponse(stream_id=stream_id, session_id=session_id)
-
-
-@router.post("/chat/task-batch", response_model=PromptResponse)
-async def start_task_batch(
-    body: TaskBatchRequest,
-    sm: StreamManagerDep,
-    session_factory: SessionFactoryDep,
-    provider_registry: ProviderRegistryDep,
-    agent_registry: AgentRegistryDep,
-    tool_registry: ToolRegistryDep,
-    index_manager: IndexManagerDep,
-) -> PromptResponse:
-    """Start an explicit sequential or parallel multi-agent task batch."""
-    session_id = body.session_id or generate_ulid()
-    stream_id = generate_ulid()
-
-    job = sm.create_job(stream_id=stream_id, session_id=session_id)
-    job.interactive = True
-
-    coro = run_task_batch(
-        job,
-        body,
-        session_factory=session_factory,
-        provider_registry=provider_registry,
-        agent_registry=agent_registry,
-        tool_registry=tool_registry,
-        index_manager=index_manager,
-    )
-    task = asyncio.create_task(
-        _run_with_semaphore(sm, job, coro),
-        name=f"task-batch-{stream_id}",
-    )
-    task.add_done_callback(functools.partial(_on_task_done, job=job))
-    job.task = task
 
     return PromptResponse(stream_id=stream_id, session_id=session_id)
 
@@ -384,6 +364,7 @@ async def edit_and_resend(
         permission_rules=body.permission_rules,
         reasoning=body.reasoning,
         workspace=body.workspace,
+        execution_mode=body.execution_mode,
     )
 
     coro = run_generation(
@@ -418,19 +399,15 @@ async def stream_events(
     Includes heartbeat every 15s to prevent proxy/CDN timeouts (matching OpenCode).
     Sets job.interactive=True to enable permission ask and question blocking.
     """
-    # Native EventSource reconnects send Last-Event-ID as an HTTP header rather
-    # than as a query param. The local desktop app uses native EventSource for
-    # SSE, so if we only honor ?last_event_id=... then auto-reconnect falls back
-    # to replaying from event 0, which can stall or desync the frontend on long
-    # generations. Prefer the explicit query param when provided, otherwise
-    # accept the standard header.
-    if last_event_id == 0:
-        header_value = request.headers.get("last-event-id")
-        if header_value:
-            try:
-                last_event_id = int(header_value)
-            except ValueError:
-                last_event_id = 0
+    # Native EventSource reconnects send Last-Event-ID as an HTTP header.  A
+    # manually rebuilt URL can also contain the query value, so accept the
+    # newest valid cursor instead of letting a stale query force extra replay.
+    header_value = request.headers.get("last-event-id")
+    if header_value:
+        try:
+            last_event_id = max(last_event_id, int(header_value))
+        except ValueError:
+            pass
 
     job = sm.get_job(stream_id)
 
@@ -478,6 +455,7 @@ async def stream_events(
         except asyncio.CancelledError:
             pass
         finally:
+            job.unsubscribe(queue)
             if done_sent:
                 # Yield an SSE comment to force an extra write/flush cycle.
                 # Prevents the TCP connection from closing before the DONE
@@ -501,7 +479,7 @@ async def abort_generation(sm: StreamManagerDep, body: AbortRequest) -> dict:
     job = sm.get_job(body.stream_id)
     if job is None:
         return {"status": "not_found"}
-    job.abort()
+    sm.abort_job(body.stream_id)
     return {"status": "aborted"}
 
 
@@ -525,10 +503,27 @@ async def respond_to_prompt(request: Request, sm: StreamManagerDep, body: Respon
     allowed = body.response
     if isinstance(body.response, dict) and "allowed" in body.response:
         allowed = body.response.get("allowed")
+    resolved_views = sm.interaction_views(job, body.call_id)
     if isinstance(allowed, bool):
-        job.publish(SSEEvent(PERMISSION_RESOLVED, {"call_id": body.call_id, "allowed": allowed, "source": source}))
+        for view_job, view_call_id in resolved_views:
+            view_job.publish(
+                SSEEvent(
+                    PERMISSION_RESOLVED,
+                    {
+                        "call_id": view_call_id,
+                        "allowed": allowed,
+                        "source": source,
+                    },
+                )
+            )
     else:
-        job.publish(SSEEvent(QUESTION_RESOLVED, {"call_id": body.call_id, "source": source}))
+        for view_job, view_call_id in resolved_views:
+            view_job.publish(
+                SSEEvent(
+                    QUESTION_RESOLVED,
+                    {"call_id": view_call_id, "source": source},
+                )
+            )
 
     return {"status": "submitted"}
 
@@ -538,11 +533,13 @@ async def _error_stream(message: str, code: str | None = None):
 
     ``code`` is an optional machine-readable tag (e.g. ``"JOB_NOT_FOUND"``) so
     the client can recover quietly from benign cases instead of surfacing the
-    raw message as an alarming toast.
+    raw message as an alarming toast.  This out-of-band event intentionally
+    has no numeric id: after a backend restart the browser may reconnect with
+    a high Last-Event-ID from the evicted job, and assigning a fresh ``id: 1``
+    would make a replay-safe client discard the terminal recovery signal.
     """
     data: dict[str, Any] = {"error_message": message}
     if code is not None:
         data["code"] = code
     event = SSEEvent(AGENT_ERROR, data)
-    event.id = 1
     yield event.encode()

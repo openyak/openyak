@@ -2,7 +2,15 @@
 
 import { create } from "zustand";
 import { useMemo } from "react";
-import type { CompactionPart, CompactionPhase, CompactionPhaseStatus, PartData, ToolPart } from "@/types/message";
+import type {
+  CompactionPart,
+  CompactionPhase,
+  CompactionPhaseStatus,
+  PartData,
+  SubtaskPart,
+  SwarmPart,
+  ToolPart,
+} from "@/types/message";
 import type { PermissionRequest, QuestionRequest, PlanReviewRequest } from "@/types/streaming";
 import type { FileAttachment } from "@/types/chat";
 
@@ -67,6 +75,10 @@ const DRAFT_KEY = "__draft__";
 export interface ChatSessionState {
   streamId: string | null;
   isGenerating: boolean;
+  /** The latest generation was explicitly stopped by this user. */
+  isStopped: boolean;
+  /** Sticky intent used while a prompt is still waiting for its stream id. */
+  stopRequested: boolean;
   isCompacting: boolean;
   isModelLoading: boolean;
 
@@ -87,6 +99,8 @@ export interface ChatSessionState {
 export const EMPTY_SESSION_STATE: ChatSessionState = {
   streamId: null,
   isGenerating: false,
+  isStopped: false,
+  stopRequested: false,
   isCompacting: false,
   isModelLoading: false,
   pendingUserText: null,
@@ -147,6 +161,10 @@ interface ChatStore {
   updateCompactionPhase: (sessionId: string | null, phase: string, status: string) => void;
   updateCompactionProgress: (sessionId: string | null, phase: string, chars: number) => void;
   addSubtask: (sessionId: string | null, subtaskSessionId: string, title: string, description: string) => void;
+  /** Idempotently apply a full subtask lifecycle snapshot. */
+  upsertSubtaskState: (sessionId: string | null, data: SubtaskPart) => void;
+  /** Idempotently apply a revisioned Swarm lifecycle snapshot. */
+  upsertSwarmState: (sessionId: string | null, data: SwarmPart) => void;
   setPermissionRequest: (sessionId: string | null, req: PermissionRequest) => void;
   clearPermissionRequest: (sessionId: string | null) => void;
   setQuestion: (sessionId: string | null, req: QuestionRequest) => void;
@@ -156,6 +174,7 @@ interface ChatStore {
   setModelLoading: (sessionId: string | null, loading: boolean) => void;
   setCompacting: (sessionId: string | null, compacting: boolean) => void;
   clearStreamingContent: (sessionId: string | null) => void;
+  stopGeneration: (sessionId: string | null) => void;
   finishGeneration: (sessionId: string | null) => void;
 }
 
@@ -229,6 +248,8 @@ export const useChatStore = create<ChatStore>((set) => ({
       mutateBucket(s, sessionId, (prev) => ({
         ...prev,
         isGenerating: true,
+        isStopped: false,
+        stopRequested: false,
         isCompacting: false,
         isModelLoading: false,
         pendingUserText: text,
@@ -260,10 +281,13 @@ export const useChatStore = create<ChatStore>((set) => ({
       const draft = s.draftSession;
       const existing = s.sessions[sessionId];
       const base: ChatSessionState = existing ?? draft ?? EMPTY_SESSION_STATE;
+      const wasStoppedBeforeConnect = base.stopRequested;
       const next: ChatSessionState = {
         ...base,
-        streamId,
-        isGenerating: true,
+        streamId: wasStoppedBeforeConnect ? null : streamId,
+        isGenerating: !wasStoppedBeforeConnect,
+        isStopped: wasStoppedBeforeConnect,
+        stopRequested: wasStoppedBeforeConnect,
         isCompacting: false,
         streamingParts: [],
         streamingText: "",
@@ -572,6 +596,67 @@ export const useChatStore = create<ChatStore>((set) => ({
       })),
     ),
 
+  upsertSubtaskState: (sessionId, data) =>
+    set((s) =>
+      mutateBucket(s, sessionId, (prev) => {
+        const identity = data.task_id ?? data.session_id;
+        const existingIndex = prev.streamingParts.findIndex(
+          (part) =>
+            part.type === "subtask" &&
+            (part.task_id ?? part.session_id) === identity,
+        );
+
+        if (existingIndex >= 0) {
+          const existing = prev.streamingParts[existingIndex] as SubtaskPart;
+          if ((existing.revision ?? -1) >= (data.revision ?? 0)) return prev;
+          const nextParts = [...prev.streamingParts];
+          nextParts[existingIndex] = data;
+          return { ...prev, streamingParts: nextParts };
+        }
+
+        const { parts, text, reasoning } = flushBuffers(
+          prev.streamingParts,
+          prev.streamingText,
+          prev.streamingReasoning,
+        );
+        return {
+          ...prev,
+          streamingParts: [...parts, data],
+          streamingText: text,
+          streamingReasoning: reasoning,
+        };
+      }),
+    ),
+
+  upsertSwarmState: (sessionId, data) =>
+    set((s) =>
+      mutateBucket(s, sessionId, (prev) => {
+        const existingIndex = prev.streamingParts.findIndex(
+          (part) => part.type === "swarm" && part.swarm_id === data.swarm_id,
+        );
+
+        if (existingIndex >= 0) {
+          const existing = prev.streamingParts[existingIndex] as SwarmPart;
+          if (existing.revision >= data.revision) return prev;
+          const nextParts = [...prev.streamingParts];
+          nextParts[existingIndex] = data;
+          return { ...prev, streamingParts: nextParts };
+        }
+
+        const { parts, text, reasoning } = flushBuffers(
+          prev.streamingParts,
+          prev.streamingText,
+          prev.streamingReasoning,
+        );
+        return {
+          ...prev,
+          streamingParts: [...parts, data],
+          streamingText: text,
+          streamingReasoning: reasoning,
+        };
+      }),
+    ),
+
   setPermissionRequest: (sessionId, req) =>
     set((s) => mutateBucket(s, sessionId, (prev) => ({ ...prev, pendingPermission: req }))),
   clearPermissionRequest: (sessionId) =>
@@ -603,6 +688,68 @@ export const useChatStore = create<ChatStore>((set) => ({
       })),
     ),
 
+  stopGeneration: (sessionId) =>
+    set((s) =>
+      mutateBucket(s, sessionId, (prev) => {
+        const { parts } = flushBuffers(
+          prev.streamingParts,
+          prev.streamingText,
+          prev.streamingReasoning,
+        );
+        const stoppedAt = new Date().toISOString();
+        const stoppedParts = parts.map((part) => {
+          if (part.type === "swarm" && part.status === "running") {
+            return {
+              ...part,
+              revision: part.revision + 1,
+              status: "cancelled" as const,
+              finished_at: stoppedAt,
+              members: part.members.map((member) =>
+                member.status === "running" ||
+                member.status === "pending" ||
+                member.status === "waiting_input"
+                  ? {
+                      ...member,
+                      status: "cancelled" as const,
+                      finished_at: stoppedAt,
+                    }
+                  : member,
+              ),
+            };
+          }
+          if (
+            part.type === "subtask" &&
+            (part.status === "running" ||
+              part.status === "pending" ||
+              part.status === "waiting_input")
+          ) {
+            return {
+              ...part,
+              revision: (part.revision ?? 0) + 1,
+              status: "cancelled" as const,
+              finished_at: stoppedAt,
+            };
+          }
+          return part;
+        });
+        return {
+          ...prev,
+          streamId: null,
+          isGenerating: false,
+          isStopped: true,
+          stopRequested: true,
+          isCompacting: false,
+          isModelLoading: false,
+          pendingPermission: null,
+          pendingQuestion: null,
+          pendingPlanReview: null,
+          streamingParts: stoppedParts,
+          streamingText: "",
+          streamingReasoning: "",
+        };
+      }),
+    ),
+
   finishGeneration: (sessionId) => {
     // Free the per-session dedup set — the stream is over, no more replays
     // will arrive for these event ids. Without this the outer Map grows
@@ -620,6 +767,8 @@ export const useChatStore = create<ChatStore>((set) => ({
           ...prev,
           streamId: null,
           isGenerating: false,
+          isStopped: false,
+          stopRequested: false,
           isCompacting: false,
           isModelLoading: false,
           pendingUserText: null,
@@ -667,4 +816,3 @@ export function useAnySessionGenerating(): boolean {
     return false;
   });
 }
-
