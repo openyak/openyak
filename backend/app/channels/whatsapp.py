@@ -255,16 +255,11 @@ class WhatsAppChannel(BaseChannel):
             # Extract media paths (images/documents/videos downloaded by the bridge)
             media_paths = data.get("media") or []
 
-            # Handle voice transcription if it's a voice message
-            if content == "[Voice Message]":
+            is_voice_message = content == "[Voice Message]"
+            # Keep voice messages as downloaded media plus a placeholder in content.
+            if is_voice_message:
                 if media_paths:
-                    logger.info("Transcribing voice message from %s...", sender_id)
-                    transcription = await self.transcribe_audio(media_paths[0])
-                    if transcription:
-                        content = transcription
-                        logger.info("Transcribed voice from %s: %s...", sender_id, transcription[:50])
-                    else:
-                        content = "[Voice Message: Transcription failed]"
+                    content = ""
                 else:
                     content = "[Voice Message: Audio not available]"
 
@@ -272,7 +267,12 @@ class WhatsAppChannel(BaseChannel):
             if media_paths:
                 for p in media_paths:
                     mime, _ = mimetypes.guess_type(p)
-                    media_type = "image" if mime and mime.startswith("image/") else "file"
+                    if is_voice_message or (mime and mime.startswith("audio/")):
+                        media_type = "audio"
+                    elif mime and mime.startswith("image/"):
+                        media_type = "image"
+                    else:
+                        media_type = "file"
                     media_tag = f"[{media_type}: {p}]"
                     content = f"{content}\n{media_tag}" if content else media_tag
 
