@@ -60,17 +60,22 @@ def get_default_output_dir(workspace: str | None) -> str | None:
 def resolve_for_write(file_path: str, workspace: str | None) -> str:
     """Resolve a file path for write operations.
 
-    If *workspace* is set and *file_path* is relative (not absolute),
-    resolve it against ``{workspace}/openyak_written/`` instead of cwd.
-    Workspace restriction is still enforced afterwards.
+    If *workspace* is set and *file_path* is relative (not absolute), resolve it
+    against ``{workspace}/openyak_written/`` instead of cwd. A relative path
+    already beginning with ``openyak_written/`` is treated idempotently rather
+    than duplicating the output-directory prefix. Workspace restriction is
+    still enforced afterwards.
 
     Returns the resolved absolute path string.
     Raises :class:`WorkspaceViolation` if the path escapes the workspace.
     """
     p = Path(file_path)
     if workspace and not p.is_absolute():
-        output_dir = Path(workspace).resolve() / "openyak_written"
-        resolved = (output_dir / file_path).resolve()
+        workspace_dir = Path(workspace).resolve()
+        if p.parts and p.parts[0] == "openyak_written":
+            resolved = (workspace_dir / p).resolve()
+        else:
+            resolved = (workspace_dir / "openyak_written" / p).resolve()
     else:
         resolved = p.resolve()
 

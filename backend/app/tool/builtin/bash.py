@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
+from pathlib import Path
 from typing import Any
 
 from app.tool.base import ToolDefinition, ToolResult
@@ -36,7 +37,10 @@ class BashTool(ToolDefinition):
     def description(self) -> str:
         return (
             "Execute a shell command. Returns stdout and stderr. "
-            "Commands run in the project directory. "
+            "With an active workspace, commands default to the "
+            "workspace/openyak_written directory. For requested output files, "
+            "use relative filenames and omit cwd. Set cwd only when the command "
+            "must run in a specific existing workspace directory. "
             "Timeout defaults to 120 seconds (max 600)."
         )
 
@@ -55,7 +59,11 @@ class BashTool(ToolDefinition):
                 },
                 "cwd": {
                     "type": "string",
-                    "description": "Working directory for the command",
+                    "description": (
+                        "Optional working directory inside the workspace. Omit for "
+                        "user-requested output files so the command runs in "
+                        "workspace/openyak_written."
+                    ),
                 },
             },
             "required": ["command"],
@@ -77,12 +85,12 @@ class BashTool(ToolDefinition):
 
         # Ensure cwd exists — openyak_written/ may not have been created yet
         if cwd:
-            import pathlib
             try:
-                pathlib.Path(cwd).mkdir(parents=True, exist_ok=True)
+                Path(cwd).mkdir(parents=True, exist_ok=True)
             except OSError:
                 # If we can't create it, fall back to workspace or None
                 cwd = ctx.workspace or None
+        cwd_scope = _classify_cwd_scope(cwd, ctx.workspace)
 
         extra_kwargs = get_subprocess_kwargs()
         shell_prefix = find_shell()
@@ -104,7 +112,7 @@ class BashTool(ToolDefinition):
         except subprocess.TimeoutExpired:
             return ToolResult(
                 error=f"Command timed out after {timeout}s",
-                metadata={"timeout": True},
+                metadata={"timeout": True, "cwd_scope": cwd_scope},
             )
         except FileNotFoundError:
             return ToolResult(error="Shell not found")
@@ -129,6 +137,19 @@ class BashTool(ToolDefinition):
         return ToolResult(
             output=output,
             title=command[:80],
-            metadata={"exit_code": exit_code},
+            metadata={"exit_code": exit_code, "cwd_scope": cwd_scope},
             error=f"Command failed with exit code {exit_code}" if exit_code != 0 else None,
         )
+
+
+def _classify_cwd_scope(cwd: str | None, workspace: str | None) -> str:
+    """Classify the resolved working directory without exposing its path."""
+    if not workspace:
+        return "external"
+    workspace_path = Path(workspace).resolve()
+    cwd_path = Path(cwd).resolve() if cwd else workspace_path
+    if cwd_path == workspace_path / "openyak_written":
+        return "default_output"
+    if cwd_path == workspace_path:
+        return "workspace_root"
+    return "workspace_subdir"

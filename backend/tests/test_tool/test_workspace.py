@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -50,6 +49,11 @@ class TestResolveAndValidate:
 class TestResolveForWrite:
     def test_relative_path_to_openyak_written(self, tmp_path: Path):
         result = resolve_for_write("output.txt", str(tmp_path))
+        expected = str((tmp_path / "openyak_written" / "output.txt").resolve())
+        assert result == expected
+
+    def test_explicit_output_prefix_is_not_duplicated(self, tmp_path: Path):
+        result = resolve_for_write("openyak_written/output.txt", str(tmp_path))
         expected = str((tmp_path / "openyak_written" / "output.txt").resolve())
         assert result == expected
 

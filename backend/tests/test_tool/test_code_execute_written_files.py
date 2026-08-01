@@ -52,3 +52,24 @@ async def test_tracks_written_files_inside_workspace(tmp_path: Path):
 
     assert result.success
     assert result.metadata["written_files"] == [str((tmp_path / "report.md").resolve())]
+
+
+@pytest.mark.asyncio
+async def test_exposes_stable_workspace_paths_to_executed_code(tmp_path: Path):
+    tool = CodeExecuteTool()
+
+    result = await tool.execute(
+        {
+            "code": (
+                "from pathlib import Path\n"
+                "target = Path(OPENYAK_OUTPUT_DIR) / 'result.txt'\n"
+                "target.write_text('created by code\\n', encoding='utf-8')"
+            )
+        },
+        _make_ctx(str(tmp_path)),
+    )
+
+    target = tmp_path / "openyak_written" / "result.txt"
+    assert result.success
+    assert target.read_text(encoding="utf-8") == "created by code\n"
+    assert result.metadata["written_files"] == [str(target.resolve())]

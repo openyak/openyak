@@ -30,7 +30,10 @@ class WriteTool(ToolDefinition):
             "properties": {
                 "file_path": {
                     "type": "string",
-                    "description": "Absolute or relative path to the file to write",
+                    "description": (
+                        "Absolute or relative path to the file to write. Relative paths "
+                        "resolve under workspace/openyak_written."
+                    ),
                 },
                 "content": {
                     "type": "string",

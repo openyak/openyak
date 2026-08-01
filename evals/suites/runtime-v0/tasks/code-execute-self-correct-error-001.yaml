@@ -1,0 +1,66 @@
+schema_version: 1
+suite_version: runtime-v0
+task_id: code_execute/self-correct-error-001
+description: Recover from Python execution feedback and create the exact artifact
+execution_modes: [scripted]
+prompt: |
+  Use code_execute to create code-recovered.txt in the OpenYak output directory,
+  containing exactly "recovered by code" followed by a newline. If execution
+  fails, correct the code using the feedback. Do not change any other file.
+workspace_fixture: ../fixtures/empty
+allowed_tools:
+  - code_execute
+permissions:
+  file_changes: deny
+  run_commands: allow
+budget:
+  max_tool_calls: 2
+  timeout_seconds: 30
+scorer:
+  type: workspace
+  assertions:
+    - type: file_exists
+      path: openyak_written/code-recovered.txt
+    - type: text_equals
+      path: openyak_written/code-recovered.txt
+      value: "recovered by code\n"
+    - type: no_unexpected_changes
+      allowed:
+        - openyak_written/code-recovered.txt
+expected_events:
+  - event: tool-error
+    data_contains:
+      tool: code_execute
+scripted_provider:
+  model_id: eval-scripted-model
+  steps:
+    - chunks:
+        - type: tool-call
+          data:
+            id: code-failing-call
+            name: code_execute
+            arguments:
+              code: raise ValueError("intentional evaluation failure")
+        - type: finish
+          data:
+            reason: tool_use
+    - chunks:
+        - type: tool-call
+          data:
+            id: code-corrected-call
+            name: code_execute
+            arguments:
+              code: |
+                from pathlib import Path
+                target = Path(OPENYAK_OUTPUT_DIR) / "code-recovered.txt"
+                target.write_text("recovered by code\n", encoding="utf-8")
+        - type: finish
+          data:
+            reason: tool_use
+    - chunks:
+        - type: text-delta
+          data:
+            text: Corrected the code and created the requested artifact.
+        - type: finish
+          data:
+            reason: stop

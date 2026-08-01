@@ -12,7 +12,6 @@ import asyncio
 import io
 import logging
 import os
-import sys
 import traceback
 from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
@@ -66,7 +65,12 @@ class CodeExecuteTool(ToolDefinition):
             "IMPORTANT: Each call runs in a fresh, isolated namespace — no state "
             "(variables, imports, data) persists between calls. You MUST include "
             "all imports and data loading in every call. For multi-step analysis, "
-            "put ALL code in a single call rather than splitting across multiple calls."
+            "put ALL code in a single call rather than splitting across multiple calls. "
+            "When a workspace is active, the namespace includes the absolute string "
+            "paths OPENYAK_WORKSPACE and OPENYAK_OUTPUT_DIR. These are Python "
+            "variables, not environment variables: use "
+            "Path(OPENYAK_OUTPUT_DIR) / 'file.ext'. Write user-requested artifacts "
+            "under OPENYAK_OUTPUT_DIR."
         )
 
     def parameters_schema(self) -> dict[str, Any]:
@@ -93,10 +97,22 @@ class CodeExecuteTool(ToolDefinition):
 
         timeout = min(args.get("timeout", DEFAULT_TIMEOUT), MAX_TIMEOUT)
         before_snapshot = _snapshot_workspace(ctx.workspace)
+        workspace_path = (
+            Path(ctx.workspace).resolve() if ctx.workspace else Path.cwd().resolve()
+        )
+        output_path = (
+            workspace_path / "openyak_written" if ctx.workspace else workspace_path
+        )
+        output_path.mkdir(parents=True, exist_ok=True)
 
         try:
             output, exit_code = await asyncio.wait_for(
-                asyncio.to_thread(_run_code, code),
+                asyncio.to_thread(
+                    _run_code,
+                    code,
+                    str(workspace_path),
+                    str(output_path),
+                ),
                 timeout=timeout,
             )
         except asyncio.TimeoutError:
@@ -127,14 +143,22 @@ class CodeExecuteTool(ToolDefinition):
         )
 
 
-def _run_code(code: str) -> tuple[str, int]:
+def _run_code(
+    code: str,
+    workspace_path: str,
+    output_path: str,
+) -> tuple[str, int]:
     """Execute *code* in an isolated namespace and return (output, exit_code)."""
     stdout_buf = io.StringIO()
     stderr_buf = io.StringIO()
     exit_code = 0
 
     # Fresh namespace so each call is isolated.
-    namespace: dict[str, Any] = {"__builtins__": __builtins__}
+    namespace: dict[str, Any] = {
+        "__builtins__": __builtins__,
+        "OPENYAK_WORKSPACE": workspace_path,
+        "OPENYAK_OUTPUT_DIR": output_path,
+    }
 
     # Save/restore cwd so user code can't permanently change it.
     original_cwd = os.getcwd()

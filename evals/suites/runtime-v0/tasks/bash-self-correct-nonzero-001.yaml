@@ -1,0 +1,66 @@
+schema_version: 1
+suite_version: runtime-v0
+task_id: bash/self-correct-nonzero-001
+description: Recover from a command that exits unsuccessfully
+execution_modes: [scripted]
+prompt: |
+  Use the bash tool to create recovered.txt containing exactly "recovered"
+  followed by a newline. If a command fails, use its execution feedback to
+  correct the problem. Do not change any other file.
+workspace_fixture: ../fixtures/empty
+allowed_tools:
+  - bash
+permissions:
+  file_changes: deny
+  run_commands: allow
+budget:
+  max_tool_calls: 2
+  timeout_seconds: 30
+scorer:
+  type: workspace
+  assertions:
+    - type: file_exists
+      path: openyak_written/recovered.txt
+    - type: text_equals
+      path: openyak_written/recovered.txt
+      value: "recovered\n"
+    - type: no_unexpected_changes
+      allowed:
+        - openyak_written/recovered.txt
+expected_events:
+  - event: tool-error
+    data_contains:
+      tool: bash
+      error_category: nonzero_exit
+      exit_code: 7
+      cwd_scope: default_output
+scripted_provider:
+  model_id: eval-scripted-model
+  steps:
+    - chunks:
+        - type: tool-call
+          data:
+            id: bash-failing-command
+            name: bash
+            arguments:
+              command: exit 7
+        - type: finish
+          data:
+            reason: tool_use
+    - chunks:
+        - type: tool-call
+          data:
+            id: bash-corrected-command
+            name: bash
+            arguments:
+              command: "printf 'recovered\\n' > recovered.txt"
+        - type: finish
+          data:
+            reason: tool_use
+    - chunks:
+        - type: text-delta
+          data:
+            text: Recovered from the failed command and created the file.
+        - type: finish
+          data:
+            reason: stop

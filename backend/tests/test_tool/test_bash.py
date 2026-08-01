@@ -1,6 +1,6 @@
 """Bash tool tests."""
 
-import platform
+from pathlib import Path
 
 import pytest
 
@@ -10,12 +10,13 @@ from app.tool.context import ToolContext
 from app.tool.subprocess_compat import IS_WINDOWS
 
 
-def _make_ctx() -> ToolContext:
+def _make_ctx(workspace: str | None = None) -> ToolContext:
     return ToolContext(
         session_id="test-session",
         message_id="test-msg",
         agent=AgentInfo(name="test", description="", mode="primary"),
         call_id="test-call",
+        workspace=workspace,
     )
 
 
@@ -62,3 +63,18 @@ class TestBashTool:
             {"command": 'python3 -c "print(\'hello world\')"'}, _make_ctx()
         )
         assert "hello" in result.output
+
+    @pytest.mark.asyncio
+    async def test_reports_workspace_root_without_exposing_its_path(
+        self,
+        tool: BashTool,
+        tmp_path: Path,
+    ):
+        result = await tool.execute(
+            {"command": "echo ok", "cwd": str(tmp_path)},
+            _make_ctx(str(tmp_path)),
+        )
+
+        assert result.success
+        assert result.metadata["cwd_scope"] == "workspace_root"
+        assert str(tmp_path) not in result.metadata.values()

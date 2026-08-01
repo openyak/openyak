@@ -38,7 +38,11 @@ class EditTool(ToolDefinition):
             "properties": {
                 "file_path": {
                     "type": "string",
-                    "description": "Path to the file to edit",
+                    "description": (
+                        "Path to the file to edit. A relative filename resolves under "
+                        "workspace/openyak_written; do not construct an absolute "
+                        "workspace-root path unless the file is actually there."
+                    ),
                 },
                 "old_string": {
                     "type": "string",
@@ -78,7 +82,55 @@ class EditTool(ToolDefinition):
                 },
             },
             "required": ["file_path"],
+            "oneOf": [
+                {
+                    "title": "single_edit",
+                    "required": ["old_string", "new_string"],
+                    "not": {"required": ["edits"]},
+                },
+                {
+                    "title": "batch_edit",
+                    "required": ["edits"],
+                    "not": {
+                        "anyOf": [
+                            {"required": ["old_string"]},
+                            {"required": ["new_string"]},
+                        ],
+                    },
+                },
+            ],
         }
+
+    def validate_args(self, args: dict[str, Any]) -> str | None:
+        validation_error = super().validate_args(args)
+        if validation_error:
+            return validation_error
+        has_single_fields = "old_string" in args or "new_string" in args
+        if has_single_fields and "edits" in args:
+            return (
+                "Provide either old_string/new_string (single edit) or "
+                "edits (batch edit), not both"
+            )
+        if "edits" in args:
+            if not args["edits"]:
+                return "Batch edit mode requires at least one edit"
+            for index, edit in enumerate(args["edits"], 1):
+                if not isinstance(edit, dict):
+                    return f"Edit {index}: expected an object"
+                for field_name in ("old_string", "new_string"):
+                    if field_name not in edit:
+                        return f"Edit {index}: missing {field_name}"
+                    if not isinstance(edit[field_name], str):
+                        return f"Edit {index}: {field_name} must be a string"
+                if "replace_all" in edit and not isinstance(edit["replace_all"], bool):
+                    return f"Edit {index}: replace_all must be a boolean"
+            return None
+        if "old_string" not in args or "new_string" not in args:
+            return (
+                "Single edit mode requires both old_string and new_string, "
+                "or use edits for batch mode"
+            )
+        return None
 
     async def execute(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         file_path = args["file_path"]

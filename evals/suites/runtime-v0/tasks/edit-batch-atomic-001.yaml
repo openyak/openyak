@@ -1,0 +1,52 @@
+schema_version: 1
+suite_version: runtime-v0
+task_id: edit/batch-atomic-001
+description: Apply two exact replacements in one atomic batch edit
+execution_modes: [scripted, live]
+prompt: |
+  In one edit tool call, change status from inactive to active and owner from
+  alice to bob in config.txt. Preserve every other byte.
+workspace_fixture: ../fixtures/edit-preserve
+allowed_tools:
+  - edit
+permissions:
+  file_changes: allow
+  run_commands: deny
+budget:
+  max_tool_calls: 1
+  timeout_seconds: 30
+scorer:
+  type: workspace
+  assertions:
+    - type: file_exists
+      path: openyak_written/config.txt
+    - type: text_equals
+      path: openyak_written/config.txt
+      value: "status=active\nowner=bob\n"
+    - type: no_unexpected_changes
+      allowed:
+        - openyak_written/config.txt
+scripted_provider:
+  steps:
+    - chunks:
+        - type: tool-call
+          data:
+            id: batch-edit-config
+            name: edit
+            arguments:
+              file_path: config.txt
+              edits:
+                - old_string: status=inactive
+                  new_string: status=active
+                - old_string: owner=alice
+                  new_string: owner=bob
+        - type: finish
+          data:
+            reason: tool_use
+    - chunks:
+        - type: text-delta
+          data:
+            text: Applied both requested edits.
+        - type: finish
+          data:
+            reason: stop

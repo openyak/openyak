@@ -1,0 +1,52 @@
+schema_version: 1
+suite_version: runtime-v0
+task_id: file/rename-preserve-001
+description: Rename a file without changing its contents
+execution_modes: [scripted, live]
+prompt: Rename draft.md to final.md without changing its contents.
+workspace_fixture: ../fixtures/rename-preserve
+allowed_tools:
+  - apply_patch
+permissions:
+  file_changes: allow
+  run_commands: deny
+budget:
+  max_tool_calls: 2
+  timeout_seconds: 30
+scorer:
+  type: workspace
+  assertions:
+    - type: file_absent
+      path: openyak_written/draft.md
+    - type: file_exists
+      path: openyak_written/final.md
+    - type: text_equals
+      path: openyak_written/final.md
+      value: "# Stable report\n"
+    - type: no_unexpected_changes
+      allowed:
+        - openyak_written/draft.md
+        - openyak_written/final.md
+scripted_provider:
+  steps:
+    - chunks:
+        - type: tool-call
+          data:
+            id: rename-report
+            name: apply_patch
+            arguments:
+              patch_text: |
+                *** Begin Patch
+                *** Update File: draft.md
+                *** Move to: final.md
+                *** End Patch
+        - type: finish
+          data:
+            reason: tool_use
+    - chunks:
+        - type: text-delta
+          data:
+            text: Renamed the file without changing it.
+        - type: finish
+          data:
+            reason: stop

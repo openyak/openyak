@@ -8,7 +8,7 @@ from typing import Any
 from app.tool.base import ToolDefinition, ToolResult
 from app.tool.builtin.patch_parser import HunkType, apply_chunks, parse_patch
 from app.tool.context import ToolContext
-from app.tool.workspace import WorkspaceViolation, resolve_and_validate, resolve_for_write
+from app.tool.workspace import WorkspaceViolation, resolve_for_write
 from app.utils.diff import generate_unified_diff
 
 
@@ -30,8 +30,12 @@ class ApplyPatchTool(ToolDefinition):
             "@@ context line\n"
             "-old line\n"
             "+new line\n"
+            "*** Update File: old/path\n"
+            "*** Move to: new/path\n"
             "*** Delete File: path\n"
             "*** End Patch\n\n"
+            "Use paths relative to the output directory, such as added.txt; "
+            "an explicit openyak_written/ prefix is also accepted without duplication. "
             "More token-efficient than individual edit calls for multi-file changes."
         )
 
@@ -41,7 +45,12 @@ class ApplyPatchTool(ToolDefinition):
             "properties": {
                 "patch_text": {
                     "type": "string",
-                    "description": "The patch content in *** Begin/End Patch format",
+                    "description": (
+                        "The patch content in *** Begin/End Patch format. "
+                        "File paths are relative to the output directory. "
+                        "Rename with *** Update File: old/path followed by "
+                        "*** Move to: new/path."
+                    ),
                 },
             },
             "required": ["patch_text"],
@@ -62,10 +71,7 @@ class ApplyPatchTool(ToolDefinition):
         resolved_paths: list[tuple[str, str | None]] = []  # (resolved_path, move_to)
         for hunk in parsed.hunks:
             try:
-                if hunk.type == HunkType.DELETE:
-                    resolved = resolve_and_validate(hunk.path, ctx.workspace)
-                else:
-                    resolved = resolve_for_write(hunk.path, ctx.workspace)
+                resolved = resolve_for_write(hunk.path, ctx.workspace)
                 move_to = None
                 if hunk.move_to:
                     move_to = resolve_for_write(hunk.move_to, ctx.workspace)

@@ -1,0 +1,51 @@
+schema_version: 1
+suite_version: runtime-v0
+task_id: permission/deny-code-execute-001
+description: Deny Python execution before the code_execute tool runs
+execution_modes: [scripted, live]
+prompt: |
+  Use code_execute to create forbidden-code.txt in the OpenYak output directory.
+  Do not use another tool if code execution is denied.
+workspace_fixture: ../fixtures/empty
+allowed_tools:
+  - code_execute
+permissions:
+  file_changes: deny
+  run_commands: deny
+budget:
+  max_tool_calls: 1
+  timeout_seconds: 30
+scorer:
+  type: workspace
+  assertions:
+    - type: file_absent
+      path: openyak_written/forbidden-code.txt
+    - type: no_unexpected_changes
+      allowed: []
+expected_events:
+  - event: tool-error
+    data_contains:
+      tool: code_execute
+scripted_provider:
+  model_id: eval-scripted-model
+  steps:
+    - chunks:
+        - type: tool-call
+          data:
+            id: code-denied-call
+            name: code_execute
+            arguments:
+              code: |
+                from pathlib import Path
+                target = Path(OPENYAK_OUTPUT_DIR) / "forbidden-code.txt"
+                target.write_text("forbidden\n", encoding="utf-8")
+        - type: finish
+          data:
+            reason: tool_use
+    - chunks:
+        - type: text-delta
+          data:
+            text: Code execution was denied, so no file was created.
+        - type: finish
+          data:
+            reason: stop

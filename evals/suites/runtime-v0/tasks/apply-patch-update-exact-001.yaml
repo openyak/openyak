@@ -1,0 +1,51 @@
+schema_version: 1
+suite_version: runtime-v0
+task_id: apply-patch/update-exact-001
+description: Update one line through apply_patch without changing adjacent content
+execution_modes: [scripted, live]
+prompt: Use apply_patch to change status from inactive to active in config.txt. Preserve every other byte.
+workspace_fixture: ../fixtures/edit-preserve
+allowed_tools:
+  - apply_patch
+permissions:
+  file_changes: allow
+  run_commands: deny
+budget:
+  max_tool_calls: 1
+  timeout_seconds: 30
+scorer:
+  type: workspace
+  assertions:
+    - type: file_exists
+      path: openyak_written/config.txt
+    - type: text_equals
+      path: openyak_written/config.txt
+      value: "status=active\nowner=alice\n"
+    - type: no_unexpected_changes
+      allowed:
+        - openyak_written/config.txt
+scripted_provider:
+  steps:
+    - chunks:
+        - type: tool-call
+          data:
+            id: update-file-patch
+            name: apply_patch
+            arguments:
+              patch_text: |
+                *** Begin Patch
+                *** Update File: config.txt
+                @@
+                -status=inactive
+                +status=active
+                *** End Patch
+        - type: finish
+          data:
+            reason: tool_use
+    - chunks:
+        - type: text-delta
+          data:
+            text: Updated the requested line.
+        - type: finish
+          data:
+            reason: stop

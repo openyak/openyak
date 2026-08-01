@@ -13,6 +13,7 @@ venv*/
 backend/venv
 .python-*/
 .pytest_cache/
+evals/results/
 
 # === Environment & secrets ===
 .env

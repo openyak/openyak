@@ -31,6 +31,14 @@ jobs:
       - name: Run tests
         run: pytest -x --tb=short -q --ignore=tests/test_tool/test_code_execute.py
 
+      - name: Run offline agent smoke suite
+        working-directory: .
+        run: >-
+          PYTHONPATH=backend:.
+          python -m evals run-suite
+          evals/suites/runtime-v0/tasks
+          --output "${RUNNER_TEMP}/openyak-evals-runtime-v0"
+
   frontend:
     name: Frontend Checks
     runs-on: ubuntu-latest

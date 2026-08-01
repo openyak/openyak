@@ -36,6 +36,7 @@ from app.schemas.agent import PermissionRule
 from app.schemas.chat import PromptRequest
 from app.schemas.message import StepFinishReason
 from app.session.llm import stream_llm
+from app.session.loop_detection import LoopCheckResult, loop_detector
 from app.session.manager import (
     create_part,
     get_messages,
@@ -80,9 +81,6 @@ if TYPE_CHECKING:
     from app.session.prompt import SessionPrompt
 
 logger = logging.getLogger(__name__)
-
-# Loop detection: two-stage warn-then-stop (replaces old doom loop)
-from app.session.loop_detection import loop_detector, LoopCheckResult
 
 # Tools that operate on file paths — used for two-dimensional permission check
 _FILE_TOOLS = frozenset({"read", "write", "edit"})
@@ -197,6 +195,28 @@ _PRESENTABLE_DELIVERABLE_EXTS = {
     ".txt",
     ".xlsx",
 }
+
+def _tool_error_telemetry(result: Any) -> dict[str, Any]:
+    """Return bounded error diagnostics without retaining tool payload content."""
+    metadata = result.metadata if isinstance(result.metadata, dict) else {}
+    telemetry: dict[str, Any] = {}
+    cwd_scope = metadata.get("cwd_scope")
+    if cwd_scope in {
+        "default_output",
+        "workspace_root",
+        "workspace_subdir",
+        "external",
+    }:
+        telemetry["cwd_scope"] = cwd_scope
+    if metadata.get("timeout") is True:
+        telemetry["error_category"] = "timeout"
+        return telemetry
+    exit_code = metadata.get("exit_code")
+    if isinstance(exit_code, int) and not isinstance(exit_code, bool):
+        telemetry["error_category"] = "nonzero_exit"
+        telemetry["exit_code"] = exit_code
+    return telemetry
+
 
 _NON_PRESENTABLE_OUTPUT_HINTS = {
     "helper",
@@ -800,10 +820,13 @@ class SessionProcessor:
         session_factory = sp.session_factory
 
         tc = chunk.data
-        tn = tc.get("name", "")
-        ta = tc.get("arguments", {})
+        raw_tool_name = tc.get("name", "")
+        raw_tool_args = tc.get("arguments", {})
+        tn = raw_tool_name
+        ta = raw_tool_args
         ci = tc.get("id", generate_ulid())
         tn, ta = _repair_tool_call_payload(tn, ta)
+        repair_applied = tn != raw_tool_name or ta != raw_tool_args
 
         # Loop detection
         lr: LoopCheckResult = loop_detector.check(job.session_id, tn, ta)
@@ -833,6 +856,17 @@ class SessionProcessor:
             job.publish(SSEEvent(TOOL_ERROR, {"call_id": ci, "error": f"Tool not found: {tn}"}))
             return
 
+        schema_valid_before_repair = (
+            isinstance(raw_tool_args, dict)
+            and tool.validate_args(raw_tool_args) is None
+        )
+        schema_valid_after_repair = tool.validate_args(ta) is None
+        tool_call_telemetry = {
+            "repair_applied": repair_applied,
+            "schema_valid_before_repair": schema_valid_before_repair,
+            "schema_valid_after_repair": schema_valid_after_repair,
+        }
+
         # Provider output is untrusted. A registered Tool is executable only
         # when this exact Agent/step advertised it to the model. This preserves
         # Agent Tool allowlists and per-step exclusions even if a Provider
@@ -843,6 +877,7 @@ class SessionProcessor:
                 "call_id": ci,
                 "tool": tool.id,
                 "output": message,
+                **tool_call_telemetry,
             }))
             await _persist_tool_error(
                 session_factory,
@@ -871,6 +906,7 @@ class SessionProcessor:
                 "call_id": ci,
                 "tool": tool.id,
                 "output": message,
+                **tool_call_telemetry,
             }))
             await _persist_tool_error(
                 session_factory,
@@ -886,7 +922,12 @@ class SessionProcessor:
         action = evaluate(tool.id, rp, sp.merged_permissions)
 
         if action == "deny":
-            job.publish(SSEEvent(TOOL_ERROR, {"call_id": ci, "error": f"Permission denied for tool: {tool.id}"}))
+            job.publish(SSEEvent(TOOL_ERROR, {
+                "call_id": ci,
+                "tool": tool.id,
+                "error": f"Permission denied for tool: {tool.id}",
+                **tool_call_telemetry,
+            }))
             await _persist_tool_error(
                 session_factory, self._assistant_msg_id,
                 job.session_id, tool.id, ci, ta, "Permission denied",
@@ -911,7 +952,12 @@ class SessionProcessor:
                     allow=bool(decision.get("allowed")),
                 )
             if not decision.get("allowed"):
-                job.publish(SSEEvent(TOOL_ERROR, {"call_id": ci, "error": f"User denied permission for: {tool.id}"}))
+                job.publish(SSEEvent(TOOL_ERROR, {
+                    "call_id": ci,
+                    "tool": tool.id,
+                    "error": f"User denied permission for: {tool.id}",
+                    **tool_call_telemetry,
+                }))
                 await _persist_tool_error(
                     session_factory, self._assistant_msg_id,
                     job.session_id, tool.id, ci, ta, "Permission denied by user",
@@ -931,6 +977,7 @@ class SessionProcessor:
         job.publish(SSEEvent(TOOL_START, {
             "tool": tool.id, "call_id": ci,
             "arguments": ta, "session_id": job.session_id,
+            **tool_call_telemetry,
         }))
 
         # Build context
@@ -1481,7 +1528,12 @@ class SessionProcessor:
         if result.error:
             job.publish(SSEEvent(
                 TOOL_ERROR,
-                {"call_id": call_id, "error": result.error, "tool": tool.id},
+                {
+                    "call_id": call_id,
+                    "error": result.error,
+                    "tool": tool.id,
+                    **_tool_error_telemetry(result),
+                },
             ))
         else:
             job.publish(SSEEvent(
