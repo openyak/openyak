@@ -14,7 +14,7 @@
   <img src="docs/readme/openyak-ultra-agent-swarm.gif" width="900" alt="OpenYak Ultra Agent Swarm 并行运行多个子 Agent，并在父任务中统一综合结果" />
 </p>
 
-<h3 align="center">面向文件、工具、长线程和真实桌面工作的本地优先 AI Agent。</h3>
+<h3 align="center">面向可靠工具调用模型的本地优先 Agent Runtime，以及构建在它之上的桌面工作台。</h3>
 
 <p align="center">
   在自己的电脑上运行 agent，处理本地文件，优先使用本地模型，只在你主动选择时连接云端模型提供商。
@@ -175,6 +175,29 @@ OpenYak 可以在同一个线程里综合多份文件，并在右侧 artifact pa
 - **远程访问：** 通过二维码和 Cloudflare Tunnel 从手机连接桌面端。
 - **自动化任务：** 定时清理、报告、文件整理和重复工作流。
 - **隐私控制：** 本地存储、无需 OpenYak 账号、BYOK provider、本地模型支持。
+
+## Agent Runtime 工程实践
+
+OpenYak 同时也是一个开源 ML systems 项目。桌面应用构建在一套持久化
+Agent Runtime 之上，目标是让工具调用模型在访问本地资源时可观察、可恢复、
+并受到清晰的安全边界约束。
+
+- **Production engineering：** 持久化运行状态、可恢复 SSE、取消、有限重试和
+  子任务故障隔离。
+- **Tool execution：** 机器可读的工具 schema、参数校验、畸形调用修复、执行反馈
+  和输出预算。
+- **Permissions：** 分层 allow/ask/deny 规则、资源级授权、workspace 边界和
+  secret-aware 权限展示。
+- **Context：** 模型感知的 token budget、工具输出压缩、确定性 context collapse
+  和持久化 LLM summary。
+- **Cross-platform architecture：** macOS、Windows、Linux 上的 Tauri 与 Next.js，
+  共用一套 FastAPI runtime 和本地/云端 provider contract。
+- **Open-source adoption：** 公开 release、contributor、issue 和 star 与模型质量
+  分开证明；模型质量只使用可复现评估结果。
+
+从有代码证据的 [Agent Runtime 技术案例](AGENT_RUNTIME.md) 开始，然后查看
+[模型训练与路由](MODEL_TRAINING.md)、[评估协议](EVALUATION.md)、
+[Benchmark 规范](BENCHMARKS.md) 和 [Failure analysis](FAILURE_ANALYSIS.md)。
 
 ## 开发者
 

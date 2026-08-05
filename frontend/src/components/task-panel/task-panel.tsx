@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Activity, ChevronDown, FolderOpen, Layers } from "lucide-react";
+import { Activity, ChevronDown, FolderOpen, Globe2, Layers, MonitorUp } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
   IS_DESKTOP,
@@ -18,6 +18,8 @@ import { usePlanReviewStore } from "@/stores/plan-review-store";
 import { useArtifactStore } from "@/stores/artifact-store";
 import { useActivityStore } from "@/stores/activity-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
+import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
+import { useComputerWorkspaceStore } from "@/stores/computer-workspace-store";
 import { useChatSession, useChatStore } from "@/stores/chat-store";
 import {
   useTaskPanelStore,
@@ -35,6 +37,8 @@ import {
   SourcesSection,
 } from "@/components/workspace/evidence-sections";
 import { SubagentsSummaryCard } from "@/components/workspace/subagents-summary-card";
+import { BrowserWorkspace } from "@/components/browser/browser-workspace";
+import { ComputerWorkspace } from "@/components/computer/computer-workspace";
 import {
   collectTaskSummaryEvidence,
   collectTaskSummaryOutputs,
@@ -57,13 +61,15 @@ export function useTaskPanelWidth(): number {
   const artifactIsOpen = useArtifactStore((s) => s.isOpen);
   const activityIsOpen = useActivityStore((s) => s.isOpen);
   const workspaceIsOpen = useWorkspaceStore((s) => s.isOpen);
+  const browserIsOpen = useBrowserWorkspaceStore((s) => s.isOpen);
+  const computerIsOpen = useComputerWorkspaceStore((s) => s.isOpen);
   const [viewportHalf, setViewportHalf] = useState(halfViewport);
   useEffect(() => {
     const handler = () => setViewportHalf(halfViewport());
     window.addEventListener("resize", handler);
     return () => window.removeEventListener("resize", handler);
   }, []);
-  if (planIsOpen) return Math.max(width, viewportHalf);
+  if (planIsOpen || browserIsOpen || computerIsOpen) return Math.max(width, viewportHalf);
   if (workspaceIsOpen && !artifactIsOpen && !activityIsOpen) {
     return WORKSPACE_PANEL_WIDTH;
   }
@@ -76,10 +82,14 @@ export function useTaskPanelOpen(isActiveChat: boolean): boolean {
   const artifactIsOpen = useArtifactStore((s) => s.isOpen);
   const activityIsOpen = useActivityStore((s) => s.isOpen);
   const workspaceIsOpen = useWorkspaceStore((s) => s.isOpen);
+  const browserIsOpen = useBrowserWorkspaceStore((s) => s.isOpen);
+  const computerIsOpen = useComputerWorkspaceStore((s) => s.isOpen);
   return (
     planIsOpen ||
     artifactIsOpen ||
     activityIsOpen ||
+    browserIsOpen ||
+    computerIsOpen ||
     (isActiveChat && workspaceIsOpen)
   );
 }
@@ -256,6 +266,8 @@ export function TaskPanel({ isActiveChat }: { isActiveChat: boolean }) {
   const artifactIsOpen = useArtifactStore((s) => s.isOpen);
   const activityIsOpen = useActivityStore((s) => s.isOpen);
   const workspaceIsOpen = useWorkspaceStore((s) => s.isOpen);
+  const browserIsOpen = useBrowserWorkspaceStore((s) => s.isOpen);
+  const computerIsOpen = useComputerWorkspaceStore((s) => s.isOpen);
   const collapsed = useTaskPanelStore((s) => s.collapsed);
   const width = useTaskPanelWidth();
   const isOpen = useTaskPanelOpen(isActiveChat);
@@ -266,7 +278,7 @@ export function TaskPanel({ isActiveChat }: { isActiveChat: boolean }) {
 
   const showWorkspace = isActiveChat && workspaceIsOpen;
   const workspaceOnly =
-    showWorkspace && !planIsOpen && !artifactIsOpen && !activityIsOpen;
+    showWorkspace && !planIsOpen && !artifactIsOpen && !activityIsOpen && !browserIsOpen && !computerIsOpen;
 
   return (
     <motion.aside
@@ -333,6 +345,34 @@ export function TaskPanel({ isActiveChat }: { isActiveChat: boolean }) {
         </section>
       )}
 
+      {browserIsOpen && (
+        <section
+          aria-label={t("taskPanelBrowser")}
+          className="flex min-h-0 flex-[2] flex-col"
+        >
+          <SectionHeader
+            section="browser"
+            icon={<Globe2 className="h-3.5 w-3.5" />}
+            title={t("taskPanelBrowser")}
+          />
+          {!collapsed.browser && <BrowserWorkspace />}
+        </section>
+      )}
+
+      {computerIsOpen && (
+        <section
+          aria-label={t("taskPanelComputer")}
+          className="flex min-h-0 flex-[2] flex-col"
+        >
+          <SectionHeader
+            section="computer"
+            icon={<MonitorUp className="h-3.5 w-3.5" />}
+            title={t("taskPanelComputer")}
+          />
+          {!collapsed.computer && <ComputerWorkspace />}
+        </section>
+      )}
+
       {showWorkspace && workspaceOnly && (
         <section className="flex min-h-0 flex-1 flex-col">
           <div className="scrollbar-auto min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-4 pt-16">
@@ -349,7 +389,7 @@ export function TaskPanel({ isActiveChat }: { isActiveChat: boolean }) {
             "flex min-h-0 flex-col",
             // Workspace is the baseline section: it takes remaining space when
             // alone, and stays compact when a focused section is open above.
-            planIsOpen || artifactIsOpen || activityIsOpen
+            planIsOpen || artifactIsOpen || activityIsOpen || browserIsOpen || computerIsOpen
               ? "max-h-[40%] shrink-0"
               : "flex-1",
           )}

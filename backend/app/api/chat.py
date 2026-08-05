@@ -370,6 +370,7 @@ async def edit_and_resend(
         reasoning=body.reasoning,
         workspace=body.workspace,
         execution_mode=body.execution_mode,
+        surface=body.surface,
     )
 
     coro = run_generation(

@@ -266,6 +266,14 @@ class TestPermissionPresets:
         ):
             assert evaluate(permission, "*", ruleset) == "ask"
 
+    def test_computer_use_is_always_approval_gated_by_default(self):
+        ruleset = merge_rulesets(GLOBAL_DEFAULTS)
+        assert evaluate("computer", "Notes", ruleset) == "ask"
+
+    def test_managed_browser_is_approval_gated_per_origin_by_default(self):
+        ruleset = merge_rulesets(GLOBAL_DEFAULTS)
+        assert evaluate("browser", "https://example.com", ruleset) == "ask"
+
     def test_auto_mode_allows_every_mutation_adapter(self):
         ruleset = merge_rulesets(
             GLOBAL_DEFAULTS,

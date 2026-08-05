@@ -57,6 +57,11 @@ markdown==3.9
 xhtml2pdf==0.2.17
 reportlab==4.4.5
 pillow==10.1.0
+playwright>=1.50
+pyobjc-framework-ApplicationServices>=10.0; sys_platform == "darwin"
+pyobjc-framework-Cocoa>=10.0; sys_platform == "darwin"
+pyobjc-framework-Quartz>=10.0; sys_platform == "darwin"
+uiautomation>=2.0; sys_platform == "win32"
 html5lib==1.1
 cssselect2==0.8.0
 tinycss2==1.5.1

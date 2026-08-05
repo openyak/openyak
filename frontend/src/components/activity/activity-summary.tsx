@@ -9,6 +9,7 @@ import {
   Pencil,
   Search,
   Wrench,
+  MonitorUp,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { OpenYakLogo } from "@/components/ui/openyak-logo";
@@ -82,7 +83,9 @@ export function ActivitySummary({ data, completed }: ActivitySummaryProps) {
 
   const primaryCategory = summaryItems[0]?.category;
   const SummaryIcon =
-    primaryCategory === "usedBrowser"
+    primaryCategory === "usedComputer"
+      ? MonitorUp
+      : primaryCategory === "usedBrowser"
       ? Globe2
       : primaryCategory === "searchedFiles"
         ? Search

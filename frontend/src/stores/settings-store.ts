@@ -35,6 +35,7 @@ export type ActiveProvider =
  */
 export type WorkMode = "plan" | "ask" | "auto";
 export type ExecutionMode = "standard" | "ultra";
+export type InteractionSurface = "auto" | "browser" | "computer";
 
 interface SettingsStore {
   /** Whether the user has completed the first-run onboarding flow */
@@ -51,10 +52,16 @@ interface SettingsStore {
   workMode: WorkMode;
   /** Execution topology, independent from Plan / Ask / Auto permissions. */
   executionMode: ExecutionMode;
+  /** Explicit UI surface for the next Agent turn. */
+  interactionSurface: InteractionSurface;
   /** Whether reasoning/thinking mode is enabled */
   reasoningEnabled: boolean;
   /** Permission presets — auto-allow tool categories */
   permissionPresets: PermissionPresets;
+  /** Explicit master switch for screen observation and desktop input. */
+  computerUseEnabled: boolean;
+  /** Explicit master switch for the separate-profile managed Browser. */
+  browserUseEnabled: boolean;
   /** Saved permission rules for specific tools */
   savedPermissions: SavedPermissionRule[];
   /** Workspace directory restriction — agent can only access files inside this dir */
@@ -75,10 +82,13 @@ interface SettingsStore {
   setWorkMode: (mode: WorkMode) => void;
   /** Set single-Agent or coordinated multi-Agent execution. */
   setExecutionMode: (mode: ExecutionMode) => void;
+  setInteractionSurface: (surface: InteractionSurface) => void;
   /** Set reasoning mode */
   setReasoningEnabled: (enabled: boolean) => void;
   /** Toggle a single permission preset */
   togglePermissionPreset: (key: keyof PermissionPresets) => void;
+  setComputerUseEnabled: (enabled: boolean) => void;
+  setBrowserUseEnabled: (enabled: boolean) => void;
   /** Save a permission rule for a tool, optionally scoped to a resource pattern */
   savePermissionRule: (tool: string, allow: boolean, pattern?: string) => void;
   /** Get saved tool-wide permission for a tool (if any) */
@@ -109,8 +119,11 @@ export const useSettingsStore = create<SettingsStore>()(
       safeMode: false,
       workMode: "auto" as WorkMode,
       executionMode: "standard" as ExecutionMode,
+      interactionSurface: "auto" as InteractionSurface,
       reasoningEnabled: true,
       permissionPresets: { fileChanges: true, runCommands: true },
+      computerUseEnabled: false,
+      browserUseEnabled: true,
       savedPermissions: [],
       workspaceDirectory: null,
       hasSeenHints: false,
@@ -170,6 +183,7 @@ export const useSettingsStore = create<SettingsStore>()(
         }
       },
       setExecutionMode: (mode) => set({ executionMode: mode }),
+      setInteractionSurface: (surface) => set({ interactionSurface: surface }),
       setReasoningEnabled: (enabled) => set({ reasoningEnabled: enabled }),
       togglePermissionPreset: (key) =>
         set((s) => {
@@ -186,6 +200,8 @@ export const useSettingsStore = create<SettingsStore>()(
                 : "ask";
           return { permissionPresets: next, workMode };
         }),
+      setComputerUseEnabled: (enabled) => set({ computerUseEnabled: enabled }),
+      setBrowserUseEnabled: (enabled) => set({ browserUseEnabled: enabled }),
       savePermissionRule: (tool, allow, pattern = "*") =>
         set((s) => ({
           savedPermissions: [
@@ -223,7 +239,7 @@ export const useSettingsStore = create<SettingsStore>()(
     }),
     {
       name: "openyak-settings",
-      version: 4,
+      version: 7,
       migrate: (persistedState) => {
         if (!persistedState || typeof persistedState !== "object") {
           return persistedState as SettingsStore;
@@ -254,8 +270,14 @@ export const useSettingsStore = create<SettingsStore>()(
 
         return {
           ...state,
+          computerUseEnabled: state.computerUseEnabled === true,
+          browserUseEnabled: state.browserUseEnabled !== false,
           executionMode:
             state.executionMode === "ultra" ? "ultra" : "standard",
+          interactionSurface:
+            state.interactionSurface === "browser" || state.interactionSurface === "computer"
+              ? state.interactionSurface
+              : "auto",
         } as unknown as SettingsStore;
       },
     },

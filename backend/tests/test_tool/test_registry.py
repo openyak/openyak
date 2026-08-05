@@ -20,7 +20,8 @@ class TestToolRegistry:
         expected = {"read", "write", "edit", "apply_patch", "bash", "code_execute",
                     "glob", "grep", "question", "todo", "task", "swarm",
                     "web_fetch", "web_search", "invalid",
-                    "plan", "submit_plan", "artifact", "present_file", "skill"}
+                    "plan", "submit_plan", "artifact", "present_file", "skill",
+                    "computer", "browser"}
         assert tool_ids == expected
 
     def test_get_by_id(self, registry: ToolRegistry):
@@ -66,3 +67,15 @@ class TestToolRegistry:
             assert spec["type"] == "function"
             assert "name" in spec["function"]
             assert "parameters" in spec["function"]
+
+    def test_request_rules_can_hide_computer_use(self, registry: ToolRegistry):
+        build = AgentRegistry().get("build")
+        assert build is not None
+        specs = registry.to_openai_specs(
+            build,
+            extra_ruleset=Ruleset(rules=[
+                PermissionRule(action="deny", permission="computer"),
+            ]),
+        )
+        names = {spec["function"]["name"] for spec in specs}
+        assert "computer" not in names

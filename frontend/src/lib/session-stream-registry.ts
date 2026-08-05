@@ -14,6 +14,7 @@ import { useConnectionStore } from "@/stores/connection-store";
 import { useArtifactStore } from "@/stores/artifact-store";
 import { useWorkspaceStore, type WorkspaceTodo, type WorkspaceFile } from "@/stores/workspace-store";
 import { useSettingsStore } from "@/stores/settings-store";
+import { shouldAutoApprovePermission } from "@/lib/permission-policy";
 import type { SessionResponse } from "@/types/session";
 import type { ArtifactType } from "@/types/artifact";
 import type {
@@ -681,7 +682,7 @@ export async function startStream(
   client.on(SSE_EVENTS.PERMISSION_REQUEST, (data) => {
     if (!data.call_id) return;
     const workMode = useSettingsStore.getState().workMode;
-    if (workMode === "auto") {
+    if (shouldAutoApprovePermission(workMode, data.action_time)) {
       api.post(API.CHAT.RESPOND, {
         stream_id: streamId,
         call_id: data.call_id,
@@ -698,6 +699,7 @@ export async function startStream(
       arguments: data.arguments ?? {},
       message: data.message,
       argumentsTruncated: data.arguments_truncated ?? false,
+      actionTime: data.action_time ?? false,
     });
   });
 

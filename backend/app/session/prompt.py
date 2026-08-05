@@ -950,6 +950,24 @@ class SessionPrompt:
             tz_name=default_tz_name(),
             platform_name=default_platform_name(),
         )
+        surface_prompt = {
+            "browser": (
+                "# Selected interaction surface\n"
+                "Use the managed browser for this turn. Do not substitute native Computer Use. "
+                "Load the computer-use skill, use the browser tool, and keep work in the shared "
+                "Browser workspace unless the user changes the selected surface."
+            ),
+            "computer": (
+                "# Selected interaction surface\n"
+                "Use native Computer Use for this turn. Do not substitute the managed browser. "
+                "Load the computer-use skill and target the named desktop application."
+            ),
+        }.get(self.request.surface)
+        if surface_prompt:
+            parts = SystemPromptParts(
+                cached=parts.cached,
+                dynamic="\n\n".join(part for part in (parts.dynamic, surface_prompt) if part),
+            )
         if self.request.execution_mode == "ultra" and ULTRA_PROMPT:
             cached = "\n\n".join(
                 part for part in (parts.cached, ULTRA_PROMPT) if part

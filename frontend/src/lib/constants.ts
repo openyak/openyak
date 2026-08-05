@@ -210,6 +210,21 @@ export function resolveApiUrl(path: string): string {
 }
 
 export const API = {
+  COMPUTER_CONTROL: {
+    STATUS: "/api/computer-control/status",
+    WORKSPACE_STATUS: "/api/computer-control/workspace/status",
+    WORKSPACE_SELECT: "/api/computer-control/workspace/select",
+    WORKSPACE_CONTROL: "/api/computer-control/workspace/control",
+    WORKSPACE_SNAPSHOT: "/api/computer-control/workspace/snapshot",
+    WORKSPACE_INTERACT: "/api/computer-control/workspace/interact",
+  },
+  BROWSER_CONTROL: {
+    STATUS: "/api/browser-control/status",
+    CONTROL: "/api/browser-control/control",
+    SNAPSHOT: (tabId: string) =>
+      `/api/browser-control/snapshot?tab_id=${encodeURIComponent(tabId)}`,
+    INTERACT: "/api/browser-control/interact",
+  },
   CHAT: {
     PROMPT: "/api/chat/prompt",
     EDIT: "/api/chat/edit",

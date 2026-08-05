@@ -14,7 +14,7 @@
   <img src="docs/readme/openyak-ultra-agent-swarm.gif" width="900" alt="OpenYak Ultra Agent Swarm runs parallel child agents and synthesizes their work in the parent task" />
 </p>
 
-<h3 align="center">A local-first AI agent for files, tools, long threads, and real desktop work.</h3>
+<h3 align="center">A local-first agent runtime for reliable tool-using models, with a desktop workspace built on top.</h3>
 
 <p align="center">
   Run an agent on your own computer, work with local files, use local models when you can, and choose cloud providers only when you want them.
@@ -175,6 +175,29 @@ Any provider not listed above can still be used through a custom OpenAI-compatib
 - **Remote access:** connect from mobile through QR code and Cloudflare Tunnel.
 - **Automations:** schedule recurring cleanup, reporting, and file workflows.
 - **Privacy controls:** local storage, no OpenYak account, BYOK provider access, and local model support.
+
+## Agent Runtime Engineering
+
+OpenYak is also an open-source ML systems project. The desktop application is
+built on a durable agent runtime designed to make tool-using models observable,
+recoverable, and safe to run against local resources.
+
+- **Production engineering:** persisted run state, resumable SSE streams,
+  cancellation, bounded retries, and child-run failure isolation.
+- **Tool execution:** machine-readable tool schemas, argument validation,
+  malformed-call repair, execution feedback, and output budgeting.
+- **Permissions:** layered allow/ask/deny policies, resource-scoped approval,
+  workspace boundaries, and secret-aware permission displays.
+- **Context:** model-aware token budgets, tool-output compression, deterministic
+  context collapse, and persisted LLM summaries.
+- **Cross-platform architecture:** Tauri and Next.js on macOS, Windows, and
+  Linux, backed by one FastAPI runtime and a shared local/cloud provider contract.
+- **Open-source adoption:** public releases, contributors, issues, and stars are
+  tracked separately from model-quality claims, which require reproducible evals.
+
+Read the evidence-backed [Agent Runtime case study](AGENT_RUNTIME.md), then see
+[model training and routing](MODEL_TRAINING.md), the [evaluation protocol](EVALUATION.md),
+[benchmark contract](BENCHMARKS.md), and [failure analysis](FAILURE_ANALYSIS.md).
 
 ## For Developers
 

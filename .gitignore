@@ -27,6 +27,7 @@ session_token.json
 data/
 backend/data/
 .openyakdb/
+.openyak/
 backend/.openyak/
 
 # === IDE & OS ===

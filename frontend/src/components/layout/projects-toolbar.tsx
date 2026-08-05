@@ -32,6 +32,7 @@ export function ProjectsToolbar({ projectDirectories = [], variant = "projects" 
   const collapseAllProjects = useSidebarStore((s) => s.collapseAllProjects);
   const expandAllProjects = useSidebarStore((s) => s.expandAllProjects);
   const collapsedProjects = useSidebarStore((s) => s.collapsedProjects);
+  const setSidebarOpen = useSidebarStore((s) => s.setOpen);
   const [isPickingDirectory, setIsPickingDirectory] = useState(false);
 
   const allCollapsed =
@@ -65,6 +66,7 @@ export function ProjectsToolbar({ projectDirectories = [], variant = "projects" 
   };
 
   const handleNewChat = () => {
+    setSidebarOpen(false);
     router.push("/c/new");
   };
 

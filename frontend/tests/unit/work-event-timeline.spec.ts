@@ -125,6 +125,7 @@ test.describe("Work event timeline", () => {
       completedTool("edit", "edit-2"),
       completedTool("glob", "glob-1"),
       completedTool("web_search", "web-1"),
+      completedTool("computer", "computer-1", { application: "Notes" }),
       completedTool("tool_search", "tool-search-1"),
       completedTool("write", "write-1"),
       completedTool("write", "write-2"),
@@ -140,6 +141,7 @@ test.describe("Work event timeline", () => {
       { category: "ranCommands", count: 2 },
       { category: "searchedFiles", count: 2 },
       { category: "usedBrowser", count: 1 },
+      { category: "usedComputer", count: 1 },
       { category: "loadedTools", count: 1 },
       { category: "createdFiles", count: 2 },
       { category: "createdVisualizations", count: 1 },
@@ -147,10 +149,10 @@ test.describe("Work event timeline", () => {
     ]);
 
     expect(formatWorkActivitySummary(summary, "en-US")).toBe(
-      "Edited files, read a file, ran commands, searched files, used the browser, loaded a tool, created files, created a visualization, coordinated agents",
+      "Edited files, read a file, ran commands, searched files, used the browser, used a desktop app, loaded a tool, created files, created a visualization, coordinated agents",
     );
     expect(formatWorkActivitySummary(summary, "zh-CN")).toBe(
-      "编辑了 2 个文件、读取了 1 个文件、执行了 2 条命令、搜索了 2 个文件、使用了浏览器、加载了 1 个工具、创建了 2 个文件、创建了 1 个可视化、协调了 2 个 Agent",
+      "编辑了 2 个文件、读取了 1 个文件、执行了 2 条命令、搜索了 2 个文件、使用了浏览器、操作了桌面应用、加载了 1 个工具、创建了 2 个文件、创建了 1 个可视化、协调了 2 个 Agent",
     );
   });
 });

@@ -518,6 +518,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if channel_mgr:
         await channel_mgr.stop_all()
 
+    # Close the managed Browser profile and its Playwright driver before the
+    # backend exits so app restarts do not leave orphan browser processes.
+    tool_registry = getattr(app.state, "tool_registry", None)
+    browser_tool = tool_registry.get("browser") if tool_registry else None
+    if browser_tool is not None and hasattr(browser_tool, "close"):
+        await browser_tool.close()
+
     # Stop remote tunnel
     tunnel_mgr = getattr(app.state, "tunnel_manager", None)
     if tunnel_mgr:
@@ -551,7 +558,9 @@ def _register_builtin_tools(
     from app.tool.builtin.apply_patch import ApplyPatchTool
     from app.tool.builtin.artifact import ArtifactTool
     from app.tool.builtin.bash import BashTool
+    from app.tool.builtin.browser import BrowserTool
     from app.tool.builtin.code_execute import CodeExecuteTool
+    from app.tool.builtin.computer import ComputerTool
     from app.tool.builtin.edit import EditTool
     from app.tool.builtin.glob_tool import GlobTool
     from app.tool.builtin.grep import GrepTool
@@ -577,6 +586,13 @@ def _register_builtin_tools(
         PlanTool, SubmitPlanTool, ArtifactTool, PresentFileTool,
     ]:
         registry.register(tool_cls())
+
+    # The desktop automation runtime is loaded lazily on first use, so startup
+    # remains safe in headless test/server environments.
+    if settings is None or settings.computer_use_enabled:
+        registry.register(ComputerTool())
+    if settings is None or settings.browser_use_enabled:
+        registry.register(BrowserTool())
 
     # SkillTool needs the skill registry injected
     registry.register(SkillTool(skill_registry=skill_registry))

@@ -171,6 +171,12 @@ export function useChat(
           permission: rule.tool,
           pattern: rule.pattern ?? "*",
         }));
+        if (!settingsState.computerUseEnabled) {
+          permissionRules.push({ action: "deny" as const, permission: "computer", pattern: "*" });
+        }
+        if (!settingsState.browserUseEnabled) {
+          permissionRules.push({ action: "deny" as const, permission: "browser", pattern: "*" });
+        }
         const executionMode = await resolveExecutionMode(
           queryClient,
           currentSessionId,
@@ -189,6 +195,7 @@ export function useChat(
           reasoning: settingsState.reasoningEnabled,
           workspace: settingsState.workspaceDirectory,
           execution_mode: executionMode,
+          surface: settingsState.interactionSurface,
         });
 
         // Seed the keyed bucket (carries over the draft contents if any) and
@@ -371,6 +378,12 @@ export function useChat(
           permission: rule.tool,
           pattern: rule.pattern ?? "*",
         }));
+        if (!settingsState.computerUseEnabled) {
+          permissionRules.push({ action: "deny" as const, permission: "computer", pattern: "*" });
+        }
+        if (!settingsState.browserUseEnabled) {
+          permissionRules.push({ action: "deny" as const, permission: "browser", pattern: "*" });
+        }
         const executionMode = await resolveExecutionMode(
           queryClient,
           currentSessionId,
@@ -390,6 +403,7 @@ export function useChat(
           reasoning: settingsState.reasoningEnabled,
           workspace: settingsState.workspaceDirectory,
           execution_mode: executionMode,
+          surface: settingsState.interactionSurface,
         });
 
         chatState.startGeneration(res.session_id, res.stream_id);

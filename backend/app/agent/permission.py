@@ -148,6 +148,8 @@ GLOBAL_DEFAULTS = Ruleset(rules=[
     PermissionRule(action="ask", permission="apply_patch"),
     PermissionRule(action="ask", permission="artifact"),
     PermissionRule(action="ask", permission="code_execute"),
+    PermissionRule(action="ask", permission="computer"),
+    PermissionRule(action="ask", permission="browser"),
     PermissionRule(action="deny", permission="question"),
     PermissionRule(action="deny", permission="plan"),
     # .env file protection (two-dimensional: tool + resource pattern)

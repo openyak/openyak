@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, Check, ChevronDown, Network, Plus } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, Globe2, MonitorUp, Network, Plus, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ChatTextarea } from "./chat-textarea";
@@ -25,7 +25,9 @@ import { cn } from "@/lib/utils";
 import type { FileAttachment } from "@/types/chat";
 import { useArtifactStore } from "@/stores/artifact-store";
 import { useChatSession } from "@/stores/chat-store";
-import { useSettingsStore } from "@/stores/settings-store";
+import { useSettingsStore, type InteractionSurface } from "@/stores/settings-store";
+import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
+import { useComputerWorkspaceStore } from "@/stores/computer-workspace-store";
 import { useProviderModels } from "@/hooks/use-provider-models";
 import { useIndexStatus } from "@/hooks/use-index-status";
 import { hasImageAttachments, selectedModelSupportsVision } from "@/hooks/use-chat";
@@ -801,6 +803,7 @@ export function ChatForm({
 
               <div className={cn("flex items-center gap-1", isInputDisabled && "pointer-events-none opacity-50")}>
                 <AgentToggle />
+                <InteractionSurfacePicker />
               </div>
 
               <div
@@ -979,6 +982,126 @@ function AgentToggle() {
             </button>
           );
         })}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/** Chooses the observable interaction surface for the next Agent turn. */
+function InteractionSurfacePicker() {
+  const { t } = useTranslation("chat");
+  const [open, setOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const surface = useSettingsStore((state) => state.interactionSurface);
+  const setSurface = useSettingsStore((state) => state.setInteractionSurface);
+  const browserEnabled = useSettingsStore((state) => state.browserUseEnabled);
+  const computerEnabled = useSettingsStore((state) => state.computerUseEnabled);
+  const openBrowser = useBrowserWorkspaceStore((state) => state.open);
+  const closeBrowser = useBrowserWorkspaceStore((state) => state.close);
+  const openComputer = useComputerWorkspaceStore((state) => state.open);
+  const closeComputer = useComputerWorkspaceStore((state) => state.close);
+
+  useEffect(() => setMounted(true), []);
+
+  const options: Array<{
+    key: InteractionSurface;
+    label: string;
+    description: string;
+    icon: typeof Sparkles;
+    enabled: boolean;
+  }> = [
+    {
+      key: "auto",
+      label: t("surfaceAuto"),
+      description: t("surfaceAutoDesc"),
+      icon: Sparkles,
+      enabled: true,
+    },
+    {
+      key: "browser",
+      label: t("surfaceBrowser"),
+      description: t("surfaceBrowserDesc"),
+      icon: Globe2,
+      enabled: browserEnabled,
+    },
+    {
+      key: "computer",
+      label: t("surfaceComputer"),
+      description: t("surfaceComputerDesc"),
+      icon: MonitorUp,
+      enabled: computerEnabled,
+    },
+  ];
+  const active = options.find((option) => option.key === surface) ?? options[0];
+  const ActiveIcon = active.icon;
+
+  const choose = (next: InteractionSurface) => {
+    setSurface(next);
+    if (next === "browser") {
+      closeComputer();
+      openBrowser();
+    }
+    if (next === "computer") {
+      closeBrowser();
+      openComputer();
+    }
+    setOpen(false);
+  };
+
+  if (!mounted) return null;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={`${t("surfaceLabel")}: ${active.label}`}
+          className={cn(
+            "inline-flex h-8 items-center gap-1.5 rounded-full border px-2.5 text-[12px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)]",
+            surface === "auto"
+              ? "border-transparent text-[var(--text-secondary)] hover:bg-[var(--surface-tertiary)]"
+              : "border-[var(--brand-primary)]/35 bg-[var(--brand-primary)]/8 text-[var(--text-primary)]",
+          )}
+        >
+          <ActiveIcon className="h-3.5 w-3.5 text-[var(--text-tertiary)]" />
+          <span>{active.label}</span>
+          <ChevronDown className="h-3 w-3 opacity-50" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" sideOffset={6} className="w-80 p-1.5">
+        <div className="px-3 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">
+          {t("surfaceLabel")}
+        </div>
+        <div role="radiogroup" aria-label={t("surfaceLabel")}>
+          {options.map((option) => {
+            const Icon = option.icon;
+            const selected = surface === option.key;
+            return (
+              <button
+                key={option.key}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                disabled={!option.enabled}
+                onClick={() => choose(option.key)}
+                className={cn(
+                  "flex w-full items-start gap-3 rounded-lg px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[var(--ring)]",
+                  selected ? "bg-[var(--surface-secondary)]" : "hover:bg-[var(--surface-secondary)]",
+                  !option.enabled && "cursor-not-allowed opacity-45",
+                )}
+              >
+                <Icon className="mt-0.5 h-4 w-4 shrink-0 text-[var(--text-tertiary)]" />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[13px] font-medium text-[var(--text-primary)]">{option.label}</span>
+                  <span className="mt-0.5 block text-[12px] leading-snug text-[var(--text-tertiary)]">
+                    {option.enabled ? option.description : t("surfaceDisabled")}
+                  </span>
+                </span>
+                {selected ? <Check className="mt-0.5 h-4 w-4 shrink-0 text-[var(--brand-primary)]" /> : null}
+              </button>
+            );
+          })}
+        </div>
       </PopoverContent>
     </Popover>
   );

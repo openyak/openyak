@@ -29,12 +29,30 @@ logger = logging.getLogger(__name__)
 MICROCOMPACTABLE_TOOLS = frozenset({
     "read", "grep", "bash", "glob", "search", "web_fetch",
     "edit", "write",  # Claude Code also compacts these
+    "computer", "browser",  # UI snapshots are useful only for the next action
 })
 
 # Default thresholds
 DEFAULT_MAX_TOOL_OUTPUT_TOKENS = 2000
 DEFAULT_SKIP_RECENT_TURNS = 2
 DEFAULT_BUDGET_TOKENS = 100_000
+
+
+def _content_tokens(content: Any) -> int:
+    """Estimate text plus multimodal blocks without counting base64 bytes."""
+    if isinstance(content, str):
+        return estimate_tokens(content)
+    if not isinstance(content, list):
+        return 0
+    total = 0
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "text":
+            total += estimate_tokens(str(item.get("text", "")))
+        elif item.get("type") == "image_url":
+            total += 512
+    return total
 
 
 def _build_call_id_to_tool_name(messages: list[dict[str, Any]]) -> dict[str, str]:
@@ -124,13 +142,12 @@ def microcompact_messages(
         content = msg.get("content", "")
 
         # Only compress outputs from microcompactable tools
-        if (
-            tool_name in MICROCOMPACTABLE_TOOLS
-            and isinstance(content, str)
-            and content
-        ):
-            tokens = estimate_tokens(content)
-            if tokens > max_tool_output_tokens:
+        if tool_name in MICROCOMPACTABLE_TOOLS and content:
+            tokens = _content_tokens(content)
+            # Old screenshots must be dropped even when their visual token
+            # estimate is small: the base64 payload is large and stale screen
+            # state is actively misleading for computer-use grounding.
+            if tool_name in {"computer", "browser"} or tokens > max_tool_output_tokens:
                 msg = dict(msg)
                 msg["content"] = (
                     f"[Previous {tool_name} output cleared — "
@@ -186,15 +203,16 @@ def apply_tool_result_budget(
             continue
 
         content = msg.get("content", "")
-        if isinstance(content, str) and content:
-            tokens = estimate_tokens(content)
-            tool_call_id = msg.get("tool_call_id", "")
-            tool_entries.append({
-                "msg_index": i,
-                "tokens": tokens,
-                "tool_call_id": tool_call_id,
-            })
-            total_tokens += tokens
+        if content:
+            tokens = _content_tokens(content)
+            if tokens:
+                tool_call_id = msg.get("tool_call_id", "")
+                tool_entries.append({
+                    "msg_index": i,
+                    "tokens": tokens,
+                    "tool_call_id": tool_call_id,
+                })
+                total_tokens += tokens
 
     if total_tokens <= budget_tokens:
         return messages
@@ -216,7 +234,7 @@ def apply_tool_result_budget(
     for i, msg in enumerate(messages):
         if i in to_replace:
             msg = dict(msg)
-            tokens = estimate_tokens(msg.get("content", ""))
+            tokens = _content_tokens(msg.get("content", ""))
             tool_call_id = msg.get("tool_call_id", "")
             tool_name = call_id_map.get(tool_call_id, "tool")
             msg["content"] = (

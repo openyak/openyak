@@ -18,6 +18,20 @@ block_cipher = None
 uvicorn_datas, uvicorn_binaries, uvicorn_hiddenimports = collect_all('uvicorn')
 wcmatch_datas, wcmatch_binaries, wcmatch_hiddenimports = collect_all('wcmatch')
 croniter_datas, croniter_binaries, croniter_hiddenimports = collect_all('croniter')
+playwright_datas, playwright_binaries, playwright_hiddenimports = collect_all('playwright')
+desktop_runtime_packages = (
+    ['ApplicationServices', 'Quartz', 'AppKit'] if sys.platform == 'darwin'
+    else ['uiautomation'] if sys.platform == 'win32'
+    else []
+)
+desktop_datas, desktop_binaries, desktop_hiddenimports = [], [], []
+for desktop_runtime_package in desktop_runtime_packages:
+    package_datas, package_binaries, package_hiddenimports = collect_all(
+        desktop_runtime_package
+    )
+    desktop_datas += package_datas
+    desktop_binaries += package_binaries
+    desktop_hiddenimports += package_hiddenimports
 
 # Resolve paths
 backend_dir = os.path.abspath('.')
@@ -225,9 +239,19 @@ hiddenimports = [
 a = Analysis(
     ['run.py'],
     pathex=[backend_dir],
-    binaries=uvicorn_binaries + wcmatch_binaries + croniter_binaries,
-    datas=datas + uvicorn_datas + wcmatch_datas + croniter_datas,
-    hiddenimports=hiddenimports + uvicorn_hiddenimports + wcmatch_hiddenimports + croniter_hiddenimports,
+    binaries=(
+        uvicorn_binaries + wcmatch_binaries + croniter_binaries
+        + playwright_binaries + desktop_binaries
+    ),
+    datas=(
+        datas + uvicorn_datas + wcmatch_datas + croniter_datas
+        + playwright_datas + desktop_datas
+    ),
+    hiddenimports=(
+        hiddenimports + uvicorn_hiddenimports + wcmatch_hiddenimports
+        + croniter_hiddenimports + playwright_hiddenimports + desktop_hiddenimports
+        + ['app.tool.builtin.computer', 'app.tool.builtin.browser']
+    ),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

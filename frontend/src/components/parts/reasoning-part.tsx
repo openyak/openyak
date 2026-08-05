@@ -208,6 +208,16 @@ function getToolLabel(tool: ToolPart, t: TFunction): string {
       return t("toolAskQuestionShort");
     case "todo":
       return t("toolUpdateProgress");
+    case "computer":
+      return t("toolComputer", {
+        action: String(input.action ?? "observe").replaceAll("_", " "),
+        application: String(input.application ?? "desktop"),
+      });
+    case "browser":
+      return t("toolBrowser", {
+        action: String(input.action ?? "snapshot").replaceAll("_", " "),
+        target: String(input.url ?? input.tab_id ?? "managed browser"),
+      });
     default:
       return tool.tool;
   }

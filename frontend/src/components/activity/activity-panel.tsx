@@ -18,6 +18,7 @@ import {
   Layers,
   FileDiff,
   Plug,
+  MonitorUp,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTranslation } from "react-i18next";
@@ -52,6 +53,8 @@ const TOOL_ICONS: Record<string, React.ComponentType<{ className?: string }>> = 
   question: HelpCircle,
   todo: ListTodo,
   task: Layers,
+  computer: MonitorUp,
+  browser: Globe,
 };
 
 function getToolTitle(data: ToolPart): string {
@@ -80,6 +83,10 @@ function getToolTitle(data: ToolPart): string {
       return truncate(String(input.url ?? ""), 40);
     case "task":
       return truncate(String(input.description ?? "Subtask"), 30);
+    case "computer":
+      return `${String(input.action ?? "observe").replaceAll("_", " ")} · ${String(input.application ?? "desktop")}`;
+    case "browser":
+      return `${String(input.action ?? "snapshot").replaceAll("_", " ")} · ${truncate(String(input.url ?? input.tab_id ?? "managed browser"), 40)}`;
     default:
       return data.tool;
   }

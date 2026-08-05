@@ -10,6 +10,7 @@ import { SwarmPart } from "@/components/parts/swarm-part";
 import { ArtifactCard } from "@/components/parts/artifact-card";
 import { FileArtifactCard } from "@/components/parts/file-artifact-card";
 import { PlanFileCard } from "@/components/parts/plan-file-card";
+import { ComputerUseCard } from "@/components/parts/computer-use-card";
 import { SourcesFooter } from "@/components/parts/sources-footer";
 import { ActivitySummary } from "@/components/activity/activity-summary";
 import { TodoProgress, type TodoItem } from "@/components/parts/todo-progress";
@@ -31,7 +32,7 @@ interface MessageContentProps {
   activityKey?: string;
 }
 
-const VISIBLE_TOOL_PARTS = new Set(["artifact", "present_file", "submit_plan"]);
+const VISIBLE_TOOL_PARTS = new Set(["artifact", "present_file", "submit_plan", "computer", "browser"]);
 const FILE_CARD_TOOL_PARTS = new Set(["present_file", "write", "edit", "code_execute"]);
 const GENERATED_FILE_TOOL_PARTS = new Set(["write", "edit", "code_execute"]);
 const FILE_CARD_EXTENSIONS = new Set([
@@ -248,6 +249,8 @@ export function MessageContent({
         output.push(<PlanFileCard key={tool.call_id} data={tool} />);
       } else if (tool.tool === "artifact") {
         output.push(<ArtifactCard key={tool.call_id} data={tool} />);
+      } else if (tool.tool === "computer" || tool.tool === "browser") {
+        output.push(<ComputerUseCard key={tool.call_id} data={tool} />);
       }
     }
 

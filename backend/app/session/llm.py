@@ -13,6 +13,7 @@ from typing import Any, AsyncIterator
 
 from app.provider.base import BaseProvider
 from app.schemas.agent import AgentInfo
+from app.schemas.agent import Ruleset
 from app.schemas.provider import StreamChunk
 from app.tool.registry import ToolRegistry
 
@@ -29,6 +30,7 @@ async def stream_llm(
     max_tokens: int | None = None,
     exclude_tools: set[str] | None = None,
     discovered_tools: set[str] | None = None,
+    permission_ruleset: Ruleset | None = None,
     response_format: dict[str, Any] | None = None,
 ) -> AsyncIterator[StreamChunk]:
     """Unified LLM streaming call.
@@ -39,7 +41,10 @@ async def stream_llm(
     """
     # Resolve tool specs for this agent; disable when structured output is requested
     tool_specs = None if response_format else tool_registry.to_openai_specs(
-        agent, exclude=exclude_tools, discovered=discovered_tools,
+        agent,
+        extra_ruleset=permission_ruleset,
+        exclude=exclude_tools,
+        discovered=discovered_tools,
     )
 
     async for chunk in provider.stream_chat(

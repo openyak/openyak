@@ -22,6 +22,7 @@ class PromptRequest(BaseModel):
     workspace: str | None = None  # Workspace directory restriction
     format: dict[str, Any] | None = None  # e.g. {"type": "json_schema", "json_schema": {...}}
     execution_mode: Literal["standard", "ultra"] = "standard"
+    surface: Literal["auto", "browser", "computer"] = "auto"
 
 
 class PromptResponse(BaseModel):
@@ -54,6 +55,7 @@ class EditAndResendRequest(BaseModel):
     workspace: str | None = None  # Workspace directory restriction
     format: dict[str, Any] | None = None  # e.g. {"type": "json_schema", "json_schema": {...}}
     execution_mode: Literal["standard", "ultra"] = "standard"
+    surface: Literal["auto", "browser", "computer"] = "auto"
 
 
 class AbortRequest(BaseModel):

@@ -3,7 +3,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-export type TaskPanelSection = "plan" | "artifact" | "activity" | "workspace";
+export type TaskPanelSection = "plan" | "artifact" | "activity" | "browser" | "computer" | "workspace";
 
 const MIN_WIDTH = 320;
 const DEFAULT_WIDTH = 480;

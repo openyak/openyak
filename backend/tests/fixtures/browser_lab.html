@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>OpenYak Agent Browser Lab</title></head>
+  <body style="min-height: 2600px">
+    <h1>Browser Lab</h1>
+    <label>Codename <input placeholder="codename"></label>
+    <select aria-label="Color">
+      <option value="red">Red</option>
+      <option value="blue">Blue</option>
+    </select>
+    <button onclick="document.getElementById('result').textContent = `verified:${document.querySelector('input').value}:${document.querySelector('select').value}`">Verify</button>
+    <p id="result">pending</p>
+    <textarea placeholder="notes"></textarea>
+    <label><input type="checkbox" aria-label="Enable advanced"> Enable advanced</label>
+    <button id="log" onclick="console.log('openyak-browser-log')">Write log</button>
+    <button id="dialog" onclick="confirm('Continue browser test?')">Open dialog</button>
+    <label>New password <input type="password" autocomplete="new-password" aria-label="New password"></label>
+    <button id="save-password">Save password</button>
+    <div id="shadow-host"></div>
+    <iframe title="Embedded lab" srcdoc='<!doctype html><button aria-label="Frame action" onclick="this.remove()">Frame button</button>'></iframe>
+    <a href="?page=second">Second page</a>
+    <script>
+      const root = document.getElementById('shadow-host').attachShadow({mode: 'open'});
+      root.innerHTML = '<button aria-label="Shadow action">Shadow button</button>';
+    </script>
+  </body>
+</html>

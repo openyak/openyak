@@ -36,6 +36,7 @@ export const WORK_ACTIVITY_CATEGORY_ORDER = [
   "ranCommands",
   "searchedFiles",
   "usedBrowser",
+  "usedComputer",
   "loadedTools",
   "createdFiles",
   "createdVisualizations",
@@ -202,6 +203,11 @@ export function summarizeWorkActivity(
       continue;
     }
 
+    if (tool === "computer") {
+      add("usedComputer");
+      continue;
+    }
+
     if (tool === "tool_search" || tool === "skill") {
       add("loadedTools");
       continue;
@@ -251,6 +257,7 @@ const ENGLISH_ACTIVITY_PHRASES: Record<
   searchedFiles: (count) =>
     count === 1 ? "searched a file" : "searched files",
   usedBrowser: () => "used the browser",
+  usedComputer: () => "used a desktop app",
   loadedTools: (count) => (count === 1 ? "loaded a tool" : "loaded tools"),
   createdFiles: (count) => (count === 1 ? "created a file" : "created files"),
   createdVisualizations: (count) =>
@@ -268,6 +275,7 @@ const CHINESE_ACTIVITY_PHRASES: Record<
   ranCommands: (count) => `执行了 ${count} 条命令`,
   searchedFiles: (count) => `搜索了 ${count} 个文件`,
   usedBrowser: () => "使用了浏览器",
+  usedComputer: () => "操作了桌面应用",
   loadedTools: (count) => `加载了 ${count} 个工具`,
   createdFiles: (count) => `创建了 ${count} 个文件`,
   createdVisualizations: (count) => `创建了 ${count} 个可视化`,

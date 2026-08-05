@@ -64,6 +64,11 @@ export interface OpenYakMockState {
   remoteConfigUpdates: unknown[];
   channelAdds: unknown[];
   channelRemoves: unknown[];
+  browserControls: unknown[];
+  browserInteractions: unknown[];
+  computerControls: unknown[];
+  computerSelections: unknown[];
+  computerInteractions: unknown[];
   remoteEnabled: boolean;
 }
 
@@ -108,6 +113,7 @@ export interface OpenYakSeedOptions {
   hasCompletedOnboarding?: boolean;
   /** Work mode to seed; "ask" surfaces permission dialogs instead of auto-approving. */
   workMode?: "plan" | "ask" | "auto";
+  computerUseEnabled?: boolean;
   savedPermissions?: Array<{
     tool: string;
     allow: boolean;
@@ -1097,6 +1103,8 @@ function seededSettings(options: OpenYakSeedOptions = {}) {
       workMode: options.workMode ?? "auto",
       reasoningEnabled: true,
       permissionPresets: { fileChanges: true, runCommands: true },
+      computerUseEnabled: options.computerUseEnabled ?? false,
+      browserUseEnabled: true,
       savedPermissions: options.savedPermissions ?? [],
       workspaceDirectory: null,
       hasSeenHints: true,
@@ -1115,6 +1123,7 @@ export async function seedOpenYakStorage(
     options.force === true ||
     options.hasCompletedOnboarding !== undefined ||
     options.workMode !== undefined ||
+    options.computerUseEnabled !== undefined ||
     options.savedPermissions !== undefined;
   await page.addInitScript(
     ({ settings, overwrite: shouldOverwrite }) => {
@@ -1533,6 +1542,28 @@ function sseStreamBody(streamId: string) {
     ].join("\n");
   }
 
+  if (streamId === "stream-computer-permission") {
+    return [
+      sseEvent(1, "text-delta", {
+        text: "I need access to one desktop application.",
+      }),
+      sseEvent(2, "permission-request", {
+        call_id: "perm-computer-textedit",
+        tool_call_id: "tool-computer-textedit",
+        tool: "computer",
+        permission: "computer",
+        patterns: ["com.apple.TextEdit"],
+        arguments: {
+          application: "com.apple.TextEdit",
+          action: "get_app_state",
+        },
+        message: "Allow OpenYak to see and control TextEdit?",
+        arguments_truncated: false,
+      }),
+      "",
+    ].join("\n");
+  }
+
   if (streamId === "stream-question") {
     return [
       sseEvent(1, "text-delta", {
@@ -1713,6 +1744,11 @@ export async function mockOpenYakApi(
     remoteConfigUpdates: [],
     channelAdds: [],
     channelRemoves: [],
+    browserControls: [],
+    browserInteractions: [],
+    computerControls: [],
+    computerSelections: [],
+    computerInteractions: [],
     remoteEnabled: false,
   };
   const sessionRecords = new Map<string, SessionRecord>([
@@ -1736,6 +1772,9 @@ export async function mockOpenYakApi(
     }),
   ];
   let remoteProviderInfoCalls = 0;
+  let browserControlOwner: "agent" | "user" = "agent";
+  let computerControlOwner: "agent" | "user" = "agent";
+  let selectedComputerApplication = "com.apple.TextEdit";
 
   const findAutomation = (id: string) =>
     automationList.find((a) => a.id === id);
@@ -1763,6 +1802,88 @@ export async function mockOpenYakApi(
     const url = new URL(request.url());
     const path = url.pathname;
     const method = request.method();
+
+    if (path === "/api/computer-control/workspace/status") {
+      return fulfillJson(route, {
+        control_owner: computerControlOwner,
+        selected_application: selectedComputerApplication,
+        applications: [
+          { id: "com.apple.TextEdit", name: "TextEdit", pid: 101, is_running: true },
+          { id: "com.apple.Notes", name: "Notes", pid: 102, is_running: true },
+        ],
+      });
+    }
+    if (path === "/api/computer-control/workspace/select") {
+      const body = requestJson(request) as { application?: string };
+      state.computerSelections.push(body);
+      selectedComputerApplication = body.application ?? selectedComputerApplication;
+      const name = selectedComputerApplication === "com.apple.Notes" ? "Notes" : "TextEdit";
+      return fulfillJson(route, {
+        selected_application: selectedComputerApplication,
+        application: { id: selectedComputerApplication, name, pid: 101, is_running: true },
+      });
+    }
+    if (path === "/api/computer-control/workspace/control") {
+      const body = requestJson(request) as { owner?: "agent" | "user" };
+      state.computerControls.push(body);
+      computerControlOwner = body.owner ?? computerControlOwner;
+      return fulfillJson(route, { control_owner: computerControlOwner });
+    }
+    if (path === "/api/computer-control/workspace/interact") {
+      state.computerInteractions.push(requestJson(request));
+      return fulfillJson(route, { ok: true });
+    }
+    if (path === "/api/computer-control/workspace/snapshot") {
+      const name = selectedComputerApplication === "com.apple.Notes" ? "Notes" : "TextEdit";
+      return fulfillJson(route, {
+        application: { id: selectedComputerApplication, name, pid: 101 },
+        revision: 4,
+        image_data_url:
+          "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=",
+        frame: {
+          image_width: 1200,
+          image_height: 800,
+          left: 20,
+          top: 30,
+          width: 600,
+          height: 400,
+        },
+      });
+    }
+
+    if (path === "/api/browser-control/status") {
+      return fulfillJson(route, {
+        control_owner: browserControlOwner,
+        tabs: [
+          {
+            id: "browser-tab-1",
+            url: "http://127.0.0.1:8765/browser_lab.html",
+            title: "OpenYak Agent Browser Lab",
+          },
+        ],
+      });
+    }
+    if (path === "/api/browser-control/control") {
+      const body = requestJson(request) as { owner?: "agent" | "user" };
+      state.browserControls.push(body);
+      browserControlOwner = body.owner ?? browserControlOwner;
+      return fulfillJson(route, { control_owner: browserControlOwner });
+    }
+    if (path === "/api/browser-control/interact") {
+      const body = requestJson(request) as Record<string, unknown>;
+      state.browserInteractions.push(body);
+      return fulfillJson(route, { ok: true, tab_id: "browser-tab-2" });
+    }
+    if (path === "/api/browser-control/snapshot") {
+      return fulfillJson(route, {
+        tab_id: url.searchParams.get("tab_id") ?? "browser-tab-1",
+        url: "http://127.0.0.1:8765/browser_lab.html",
+        title: "OpenYak Agent Browser Lab",
+        viewport: { width: 1200, height: 800 },
+        image_data_url:
+          "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=",
+      });
+    }
 
     if (path.includes("/api/chat/stream/")) {
       const streamId = decodeURIComponent(
@@ -2178,6 +2299,7 @@ export async function mockOpenYakApi(
       if (naturalOfficeKind) streamId = `stream-natural-${naturalOfficeKind}`;
       if (/auto compress/i.test(text)) streamId = "stream-auto-compact";
       if (/permission/i.test(text)) streamId = "stream-permission";
+      if (/computer app approval/i.test(text)) streamId = "stream-computer-permission";
       if (/question/i.test(text)) streamId = "stream-question";
       if (/plan review/i.test(text)) streamId = "stream-plan";
       if (/text then tool cursor/i.test(text))

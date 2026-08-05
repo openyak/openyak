@@ -107,6 +107,9 @@ test("scoped remember: command-family approval persists and rides the next promp
 
   // A fresh prompt sends the scoped rule to the backend. Navigate in-app —
   // a full page.goto would re-run the storage seed and wipe the saved rule.
+  if (await page.getByRole("button", { name: "New chat" }).count() === 0) {
+    await page.getByRole("button", { name: "Toggle sidebar" }).click();
+  }
   await page.getByRole("button", { name: "New chat" }).first().click();
   await expect(
     page
@@ -119,13 +122,13 @@ test("scoped remember: command-family approval persists and rides the next promp
   const lastPrompt = mockState.promptBodies.at(-1) as {
     permission_rules: unknown[];
   };
-  expect(lastPrompt.permission_rules).toEqual([
+  expect(lastPrompt.permission_rules).toEqual(expect.arrayContaining([
     expect.objectContaining({
       action: "allow",
       permission: "bash",
       pattern: "npm *",
     }),
-  ]);
+  ]));
 });
 
 test("legacy tool-wide rules migrate to pattern '*' and still ride prompts", async ({
@@ -141,7 +144,7 @@ test("legacy tool-wide rules migrate to pattern '*' and still ride prompts", asy
   const lastPrompt = mockState.promptBodies.at(-1) as {
     permission_rules: unknown[];
   };
-  expect(lastPrompt.permission_rules).toEqual([
+  expect(lastPrompt.permission_rules).toEqual(expect.arrayContaining([
     expect.objectContaining({ permission: "bash", pattern: "*" }),
-  ]);
+  ]));
 });

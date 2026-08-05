@@ -52,7 +52,9 @@ class ToolContext:
 
     # Callbacks set by the session processor
     _publish_fn: Callable[[str, dict[str, Any]], None] | None = None
-    _ask_fn: Callable[[str, list[str]], Awaitable[bool]] | None = None
+    _ask_fn: Callable[
+        [str, list[str], dict[str, Any] | None, str | None], Awaitable[bool]
+    ] | None = None
 
     def publish_metadata(self, title: str | None = None, metadata: dict[str, Any] | None = None) -> None:
         """Stream metadata update to the UI (e.g., tool progress)."""
@@ -63,7 +65,14 @@ class ToolContext:
                 "metadata": metadata or {},
             })
 
-    async def ask(self, permission: str, patterns: list[str] | None = None) -> bool:
+    async def ask(
+        self,
+        permission: str,
+        patterns: list[str] | None = None,
+        *,
+        arguments: dict[str, Any] | None = None,
+        message: str | None = None,
+    ) -> bool:
         """Check permission. Raises RejectedError if denied.
 
         For 'allow' → returns True immediately.
@@ -71,7 +80,9 @@ class ToolContext:
         For 'deny' → raises RejectedError.
         """
         if self._ask_fn:
-            return await self._ask_fn(permission, patterns or [])
+            return await self._ask_fn(
+                permission, patterns or [], arguments, message
+            )
         return True  # Default: allow
 
     @property

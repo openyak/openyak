@@ -7,6 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { PERMISSION_TIMEOUT } from "@/lib/constants";
 import { isRemoteMode } from "@/lib/remote-connection";
 import { useSettingsStore } from "@/stores/settings-store";
+import { canRememberPermission } from "@/lib/permission-policy";
 import type { PermissionRequest } from "@/types/streaming";
 
 interface PermissionDialogProps {
@@ -45,6 +46,26 @@ function getRememberScopes(permission: PermissionRequest): RememberScope[] {
       }
     }
     scopes.push({ id: "all", label: "All shell commands", pattern: "*" });
+    return scopes;
+  }
+
+  if (tool === "computer") {
+    const application =
+      typeof args.application === "string" ? args.application.trim() : "";
+    if (application) {
+      scopes.push({
+        id: "exact",
+        label: application === "system" ? "App discovery only" : `Only ${application}`,
+        pattern: application,
+      });
+    }
+    return scopes;
+  }
+
+  if (tool === "browser") {
+    const origin = permission.patterns.find((pattern) => /^https?:\/\//.test(pattern));
+    if (origin) scopes.push({ id: "origin", label: `Only ${origin}`, pattern: origin });
+    scopes.push({ id: "all", label: "All websites in Managed Browser", pattern: "*" });
     return scopes;
   }
 
@@ -94,6 +115,16 @@ const TOOL_EXPLANATIONS: Record<string, {
     impact: "May change files or system state",
     safeguard: "Deny if command scope is unclear",
   },
+  computer: {
+    action: "See and control the named desktop application",
+    impact: "May click, type, or change data visible in that application",
+    safeguard: "Approve one trusted application at a time and keep the screen in view",
+  },
+  browser: {
+    action: "Open and interact with the named website in OpenYak's managed browser",
+    impact: "May submit forms or change data on that website",
+    safeguard: "Approve one trusted website origin at a time",
+  },
   web_fetch: {
     action: "Fetch content from a URL",
     impact: "No local files changed",
@@ -123,7 +154,8 @@ function getPermissionCommand(args: Record<string, unknown>): string | null {
 }
 
 function getPermissionTarget(args: Record<string, unknown>, patterns: string[]): string | null {
-  const filePath = args.cwd ?? args.file_path ?? args.path ?? args.url ?? args.query;
+  const filePath =
+    args.application ?? args.cwd ?? args.file_path ?? args.path ?? args.url ?? args.query;
   if (typeof filePath === "string" && filePath.trim()) return filePath;
   const firstPattern = patterns.find((pattern) => pattern && pattern !== "*");
   return firstPattern ?? null;
@@ -255,11 +287,18 @@ export function PermissionDialog({ permission, onRespond }: PermissionDialogProp
   const startTimeRef = useRef(Date.now());
   const expired = remainingMs <= 0;
   const hasDeniedRef = useRef(false);
-  const respondRef = useRef<(allow: boolean) => void>(undefined);
+  const respondRef = useRef<(allow: boolean, rememberOverride?: boolean) => void>(undefined);
   const savePermissionRule = useSettingsStore((s) => s.savePermissionRule);
   const displayTool = permission.tool || permission.permission || "this action";
   const details = getToolExplanation(permission.tool || permission.permission);
   const isMobile = isRemoteMode();
+  const canRemember = canRememberPermission(permission);
+  const computerApplication =
+    displayTool === "computer" && typeof permission.arguments?.application === "string"
+      ? permission.arguments.application.trim()
+      : "";
+  const isComputerAppPermission =
+    canRemember && Boolean(computerApplication) && computerApplication !== "system";
 
   const rememberScopes = getRememberScopes(permission);
   const selectedScope =
@@ -267,10 +306,14 @@ export function PermissionDialog({ permission, onRespond }: PermissionDialogProp
 
   useRequestNotificationPermission();
 
-  const handleRespond = useCallback(async (allow: boolean) => {
+  const handleRespond = useCallback(async (
+    allow: boolean,
+    rememberOverride?: boolean,
+  ) => {
     if (submitting) return;
     setSubmitting(true);
-    if (rememberChoice) {
+    const shouldRemember = canRemember && (rememberOverride ?? rememberChoice);
+    if (shouldRemember) {
       savePermissionRule(
         permission.tool || permission.permission,
         allow,
@@ -280,8 +323,8 @@ export function PermissionDialog({ permission, onRespond }: PermissionDialogProp
     try {
       await onRespond(
         allow,
-        rememberChoice,
-        rememberChoice ? selectedScope.pattern : undefined,
+        shouldRemember,
+        shouldRemember ? selectedScope.pattern : undefined,
       );
     } finally {
       setSubmitting(false);
@@ -291,6 +334,7 @@ export function PermissionDialog({ permission, onRespond }: PermissionDialogProp
     permission.permission,
     permission.tool,
     rememberChoice,
+    canRemember,
     savePermissionRule,
     selectedScope,
     submitting,
@@ -327,6 +371,7 @@ export function PermissionDialog({ permission, onRespond }: PermissionDialogProp
   useEffect(() => {
     setSubmitting(false);
     setScopeId("exact");
+    setRememberChoice(false);
     hasDeniedRef.current = false;
   }, [permission.callId]);
 
@@ -419,7 +464,7 @@ export function PermissionDialog({ permission, onRespond }: PermissionDialogProp
                   />
                 </div>
 
-                <div className="space-y-2 py-2 border-t border-[var(--border-default)]">
+                {canRemember && !isComputerAppPermission && <div className="space-y-2 py-2 border-t border-[var(--border-default)]">
                   <div className="flex items-center gap-2">
                     <Switch
                       checked={rememberChoice}
@@ -441,27 +486,56 @@ export function PermissionDialog({ permission, onRespond }: PermissionDialogProp
                       selectId="remember-scope-mobile"
                     />
                   )}
-                </div>
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => void handleRespond(false)}
-                    disabled={submitting}
-                    className="flex-1 h-12 flex items-center justify-center gap-2 rounded-xl border-2 border-[var(--border-default)] bg-[var(--surface-secondary)] text-[var(--text-primary)] text-base font-medium active:scale-[0.97] transition-all disabled:opacity-50"
-                  >
-                    <ShieldX className="h-5 w-5" />
-                    Deny
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleRespond(true)}
-                    disabled={submitting}
-                    className="flex-1 h-12 flex items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] text-[var(--surface-primary)] text-base font-medium active:scale-[0.97] transition-all disabled:opacity-50"
-                  >
-                    <ShieldCheck className="h-5 w-5" />
-                    Allow
-                  </button>
-                </div>
+                </div>}
+                {isComputerAppPermission ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void handleRespond(false, false)}
+                      disabled={submitting}
+                      className="h-12 rounded-xl border-2 border-[var(--border-default)] bg-[var(--surface-secondary)] text-base font-medium text-[var(--text-primary)] active:scale-[0.97] disabled:opacity-50"
+                    >
+                      Deny
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleRespond(true, false)}
+                      disabled={submitting}
+                      className="h-12 rounded-xl border-2 border-[var(--border-default)] bg-[var(--surface-primary)] text-base font-medium text-[var(--text-primary)] active:scale-[0.97] disabled:opacity-50"
+                    >
+                      Allow once
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleRespond(true, true)}
+                      disabled={submitting}
+                      className="col-span-2 h-12 truncate rounded-xl bg-[var(--text-primary)] px-3 text-base font-medium text-[var(--surface-primary)] active:scale-[0.97] disabled:opacity-50"
+                    >
+                      Always allow {computerApplication}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => void handleRespond(false)}
+                      disabled={submitting}
+                      className="flex-1 h-12 flex items-center justify-center gap-2 rounded-xl border-2 border-[var(--border-default)] bg-[var(--surface-secondary)] text-[var(--text-primary)] text-base font-medium active:scale-[0.97] transition-all disabled:opacity-50"
+                    >
+                      <ShieldX className="h-5 w-5" />
+                      Deny
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleRespond(true)}
+                      disabled={submitting}
+                      className="flex-1 h-12 flex items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] text-[var(--surface-primary)] text-base font-medium active:scale-[0.97] transition-all disabled:opacity-50"
+                    >
+                      <ShieldCheck className="h-5 w-5" />
+                      Allow
+                    </button>
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -522,7 +596,7 @@ export function PermissionDialog({ permission, onRespond }: PermissionDialogProp
                     />
                   </div>
 
-                  <div className="space-y-2 py-2 border-t border-[var(--border-default)]">
+                  {canRemember && !isComputerAppPermission && <div className="space-y-2 py-2 border-t border-[var(--border-default)]">
                     <div className="flex items-center gap-2">
                       <Switch
                         checked={rememberChoice}
@@ -544,13 +618,13 @@ export function PermissionDialog({ permission, onRespond }: PermissionDialogProp
                         selectId="remember-scope"
                       />
                     )}
-                  </div>
-                  <div className="flex items-center gap-2">
+                  </div>}
+                  <div className="flex flex-wrap items-center gap-2">
                     <Button
                       type="button"
                       variant="outline"
                       size="sm"
-                      onClick={() => void handleRespond(false)}
+                      onClick={() => void handleRespond(false, false)}
                       disabled={submitting}
                       className="gap-1.5 flex-1"
                     >
@@ -558,18 +632,46 @@ export function PermissionDialog({ permission, onRespond }: PermissionDialogProp
                       Deny
                       <kbd className="ml-1 text-[10px] opacity-50 font-normal">N</kbd>
                     </Button>
-                    <Button
-                      type="button"
-                      variant="default"
-                      size="sm"
-                      onClick={() => void handleRespond(true)}
-                      disabled={submitting}
-                      className="gap-1.5 flex-1"
-                    >
-                      <ShieldCheck className="h-3.5 w-3.5" />
-                      Allow
-                      <kbd className="ml-1 text-[10px] opacity-50 font-normal">Y</kbd>
-                    </Button>
+                    {isComputerAppPermission ? (
+                      <>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void handleRespond(true, false)}
+                          disabled={submitting}
+                          className="gap-1.5 flex-1"
+                        >
+                          <ShieldCheck className="h-3.5 w-3.5" />
+                          Allow once
+                          <kbd className="ml-1 text-[10px] opacity-50 font-normal">Y</kbd>
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="default"
+                          size="sm"
+                          onClick={() => void handleRespond(true, true)}
+                          disabled={submitting}
+                          className="basis-full gap-1.5"
+                        >
+                          <ShieldCheck className="h-3.5 w-3.5" />
+                          <span className="truncate">Always allow {computerApplication}</span>
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        type="button"
+                        variant="default"
+                        size="sm"
+                        onClick={() => void handleRespond(true)}
+                        disabled={submitting}
+                        className="gap-1.5 flex-1"
+                      >
+                        <ShieldCheck className="h-3.5 w-3.5" />
+                        Allow
+                        <kbd className="ml-1 text-[10px] opacity-50 font-normal">Y</kbd>
+                      </Button>
+                    )}
                   </div>
                 </>
               )}

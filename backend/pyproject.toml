@@ -48,6 +48,13 @@ dependencies = [
     "pandas>=2.2.0",
     "numpy>=1.26.0",
     "matplotlib>=3.8.0",
+
+    # Local semantic desktop and managed-browser runtimes (loaded lazily)
+    "playwright>=1.50",
+    "pyobjc-framework-ApplicationServices>=10.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
+    "uiautomation>=2.0; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

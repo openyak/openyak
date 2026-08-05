@@ -209,6 +209,22 @@ async def test_prompt_uses_request_permission_rules(session_factory) -> None:
 
 
 @pytest.mark.asyncio
+async def test_browser_surface_selection_is_an_explicit_agent_constraint(session_factory) -> None:
+    prompt = await _setup_prompt(
+        session_factory,
+        PromptRequest(
+            session_id="session-with-browser-surface",
+            text="check the settings page",
+            model="test-model",
+            surface="browser",
+        ),
+    )
+
+    assert "Use the managed browser for this turn" in prompt.system_prompt
+    assert "Do not substitute native Computer Use" in prompt.system_prompt
+
+
+@pytest.mark.asyncio
 async def test_ultra_prompt_is_persisted_as_a_turn_variant(session_factory) -> None:
     prompt = await _setup_prompt(
         session_factory,

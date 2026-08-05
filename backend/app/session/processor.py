@@ -86,7 +86,7 @@ logger = logging.getLogger(__name__)
 _FILE_TOOLS = frozenset({"read", "write", "edit"})
 
 # Tools that modify state — trigger todo reminders after execution
-_MODIFYING_TOOLS = frozenset({"edit", "write", "bash", "code_execute"})
+_MODIFYING_TOOLS = frozenset({"edit", "write", "bash", "code_execute", "computer", "browser"})
 
 _PERMISSION_ARGUMENT_CHAR_LIMIT = 20_000
 _SENSITIVE_ARG_KEY_RE = re.compile(
@@ -591,6 +591,7 @@ class SessionProcessor:
                 else:
                     specs = sp.tool_registry.to_openai_specs(
                         sp.agent,
+                        extra_ruleset=sp.merged_permissions,
                         exclude=exclude_tools,
                         discovered=sp.discovered_tools,
                     )
@@ -610,6 +611,7 @@ class SessionProcessor:
                     max_tokens=safe_max_tokens,
                     exclude_tools=exclude_tools,
                     discovered_tools=sp.discovered_tools,
+                    permission_ruleset=sp.merged_permissions,
                     response_format=sp.request.format,
                 ):
                     if job.abort_event.is_set():
@@ -900,6 +902,25 @@ class SessionProcessor:
             command = ta.get("command")
             if isinstance(command, str) and command.strip():
                 rp = command.strip()
+        elif tool.id == "computer":
+            # Make remembered approvals app-specific instead of granting an
+            # opaque, desktop-wide capability.
+            application = ta.get("application")
+            if isinstance(application, str) and application.strip():
+                rp = application.strip()
+            elif ta.get("action") == "list_apps":
+                rp = "system"
+        elif tool.id == "browser":
+            # Browser approvals are origin-scoped, matching the managed
+            # Browser's site boundary instead of granting all websites.
+            url = ta.get("url")
+            if isinstance(url, str) and url.strip():
+                from urllib.parse import urlsplit
+
+                parsed = urlsplit(url.strip())
+                if parsed.scheme in {"http", "https"} and parsed.hostname:
+                    port = f":{parsed.port}" if parsed.port else ""
+                    rp = f"{parsed.scheme.lower()}://{parsed.hostname.lower()}{port}"
         if evaluate(tool.id, rp, sp.agent.permissions) == "deny":
             message = f"Agent policy denied tool: {tool.id}"
             job.publish(SSEEvent(TOOL_ERROR, {
@@ -1012,6 +1033,17 @@ class SessionProcessor:
             job=job,
             app_state=app_state,
             _publish_fn=lambda et, d: job.publish(SSEEvent(et, d)),
+            _ask_fn=lambda permission, patterns, arguments, message: (
+                _ask_runtime_permission(
+                    job,
+                    tool_call_id=ci,
+                    tool_name=tool.id,
+                    permission=permission,
+                    patterns=patterns,
+                    arguments=arguments,
+                    message=message,
+                )
+            ),
         )
         # Backwards-compatible aliases for existing built-in Tools. New Tools
         # use the explicit ToolContext runtime fields above.
@@ -1843,6 +1875,50 @@ async def _ask_permission(
     except TimeoutError:
         logger.warning("Permission request timed out for %s", tool_name)
         return {"allowed": False, "remember": False, "pattern": None}
+
+
+async def _ask_runtime_permission(
+    job: GenerationJob,
+    *,
+    tool_call_id: str,
+    tool_name: str,
+    permission: str,
+    patterns: list[str],
+    arguments: dict[str, Any] | None,
+    message: str | None,
+) -> bool:
+    """Request an action-time confirmation from inside a running Tool."""
+    if not job.interactive:
+        logger.info(
+            "Denied action-time permission %s in a non-interactive session", permission
+        )
+        return False
+    permission_call_id = generate_ulid()
+    safe_arguments, truncated = _permission_arguments_for_event(arguments or {})
+    job.publish(
+        SSEEvent(
+            PERMISSION_REQUEST,
+            {
+                "call_id": permission_call_id,
+                "tool_call_id": tool_call_id,
+                "tool": tool_name,
+                "permission": permission,
+                "patterns": patterns,
+                "arguments": safe_arguments,
+                "message": message or _permission_message(
+                    tool_name, safe_arguments, truncated
+                ),
+                "arguments_truncated": truncated,
+                "action_time": True,
+            },
+        )
+    )
+    try:
+        response = await job.wait_for_response(permission_call_id, timeout=300.0)
+    except TimeoutError:
+        logger.warning("Action-time permission request timed out for %s", permission)
+        return False
+    return bool(_permission_decision_from_response(response)["allowed"])
 
 
 def _permission_decision_from_response(response: Any) -> dict[str, Any]:

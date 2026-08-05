@@ -7,6 +7,8 @@ from fastapi import APIRouter
 from app.api import agents as agents_api
 from app.api import artifacts as artifacts_api
 from app.api import automations as automations_api
+from app.api import browser_control as browser_control_api
+from app.api import computer_control as computer_control_api
 from app.api import workspace_memory as workspace_memory_api
 from app.api import channels as channels_api
 from app.api import ollama as ollama_api
@@ -34,6 +36,8 @@ api_router = APIRouter()
 api_router.include_router(models_api.router, tags=["models"])
 api_router.include_router(chat_api.router, tags=["chat"])
 api_router.include_router(agents_api.router, tags=["agents"])
+api_router.include_router(browser_control_api.router, tags=["browser-control"])
+api_router.include_router(computer_control_api.router, tags=["computer-control"])
 api_router.include_router(tools_api.router, tags=["tools"])
 api_router.include_router(skills_api.router, tags=["skills"])
 api_router.include_router(subagents_api.router, tags=["subagents"])

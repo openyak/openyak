@@ -66,6 +66,7 @@ export interface SSEEventData {
   tool_call_id?: string | null;
   message?: string | null;
   arguments_truncated?: boolean | null;
+  action_time?: boolean | null;
 
   // question (legacy single-question mode)
   question?: string | null;
@@ -135,6 +136,8 @@ export interface PermissionRequest {
   arguments: Record<string, unknown>;
   message?: string | null;
   argumentsTruncated?: boolean;
+  /** Consequential action confirmation that must never be remembered or auto-approved. */
+  actionTime?: boolean;
 }
 
 /** Single option within a multi-question item. */

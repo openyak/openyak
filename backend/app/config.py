@@ -132,6 +132,8 @@ class Settings(BaseSettings):
     # --- Tool Limits ---
     bash_timeout: int = 120  # default bash command timeout (seconds)
     bash_max_timeout: int = 600  # maximum bash timeout (seconds)
+    computer_use_enabled: bool = True  # local AX/UIA semantic app runtime
+    browser_use_enabled: bool = True  # managed, separate-profile Browser tool
     subtask_max_depth: int = 3  # max nesting for sub-agent tasks
     subtask_timeout: int = 600  # seconds — sub-agent task timeout
     swarm_max_agents: int = 4  # max child Agents per Ultra fork/join
