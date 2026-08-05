@@ -62,8 +62,10 @@ POSIX relative paths.
 `tool_calls` counts distinct attempted call IDs, including denied calls;
 `tool_executions` counts calls that passed permission checks and began execution.
 Structured-tool metrics additionally report `schema_valid_at_1` before repair,
-`repairs_applied`, `execution_success_at_1`, `tool_errors`, and
-`recovered_after_tool_error`. Successful Python execution also reports only the
+independent `strict_schema_valid_at_1`, `parse_valid_at_1`,
+`tool_selection_at_1`, semantic accuracy, repair attempt/success and overhead,
+`execution_success_at_1`, `tool_errors`, and `recovered_after_tool_error`.
+Successful Python execution also reports only the
 number of written files, never their paths or contents. Only booleans, counts,
 bounded error and working-directory categories, numeric exit codes, tool names,
 and call IDs are retained; arguments, commands, titles, paths, and tool output
@@ -85,6 +87,31 @@ It does **not** measure the quality of a real language model. Real model and
 local-inference comparisons will use the same task/result contracts after the
 offline regression layer is stable.
 
+## Run structured generation evaluations
+
+```bash
+PYTHONPATH=backend:. python -m evals run-suite \
+  evals/suites/structured-v0/tasks \
+  --output evals/results/structured-v0/scripted-smoke
+```
+
+The ten-task scripted suite validates first-attempt attribution, strict nested
+schema scoring, semantic assertions, known wrapper repair, and failure
+promotion. It writes `suite-summary.json` and a derived
+`structured-summary.md`. Five tasks are also eligible for both RealRouter and
+Ollama live runs. Add `--tool-call-mode prompt` to compare the prompt-tag path
+against native function calling with the same output schema.
+
+For a local comparison, start Ollama and run:
+
+```bash
+PYTHONPATH=backend:. python -m evals run-suite \
+  evals/suites/structured-v0/tasks \
+  --output evals/results/structured-v0/ollama-<model> \
+  --provider ollama \
+  --model <installed-model>
+```
+
 ## Run the RealRouter live subset
 
 Create a fresh RealRouter key and expose it only through the process environment:
@@ -104,3 +131,5 @@ rollback, explicit failure recovery, malformed-patch recovery, malformed provide
 payload, timeouts, and forced-503 retry remain scripted because they require
 deterministic fault injection. The API key is read only from
 `REALROUTER_API_KEY`; it is not included in manifests, events, or summaries.
+Set `REALROUTER_BASE_URL` when routing through a local OpenAI-compatible proxy;
+the default remains `https://api.realrouter.org/v1`.

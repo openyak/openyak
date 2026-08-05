@@ -1,0 +1,54 @@
+schema_version: 1
+suite_version: structured-v0
+task_id: structured/wrong-type-recovery-001
+description: Preserve a first-attempt type failure after correction
+execution_modes: [scripted, live]
+prompt: Create result.txt containing exactly "typed" followed by a newline.
+workspace_fixture: ../fixtures/empty
+allowed_tools: [write]
+permissions:
+  file_changes: allow
+  run_commands: deny
+budget:
+  max_tool_calls: 2
+  timeout_seconds: 180
+structured_generation:
+  expected_tool: write
+  coverage: [type]
+  argument_assertions:
+    - path: [file_path]
+      equals: result.txt
+      normalizer: workspace_output_path
+    - path: [content]
+      equals: "typed\n"
+scorer:
+  type: workspace
+  assertions:
+    - type: text_equals
+      path: openyak_written/result.txt
+      value: "typed\n"
+    - type: no_unexpected_changes
+      allowed: [openyak_written/result.txt]
+scripted_provider:
+  steps:
+    - chunks:
+        - type: tool-call
+          data:
+            id: wrong-content-type
+            name: write
+            arguments: {file_path: result.txt, content: 42}
+        - type: finish
+          data: {reason: tool_use}
+    - chunks:
+        - type: tool-call
+          data:
+            id: corrected-content-type
+            name: write
+            arguments: {file_path: result.txt, content: "typed\n"}
+        - type: finish
+          data: {reason: tool_use}
+    - chunks:
+        - type: text-delta
+          data: {text: Corrected the argument type.}
+        - type: finish
+          data: {reason: stop}

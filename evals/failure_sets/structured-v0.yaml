@@ -1,0 +1,57 @@
+schema_version: 1
+version: structured-v0
+failures:
+  - id: structured-missing-required-001
+    label: generation/schema-invalid
+    regression_task: structured/missing-required-recovery-001
+    observed: First call omitted a required top-level property.
+    mitigation: Return validation feedback and retain schema-valid-at-1 as failed.
+    status: monitored
+  - id: structured-wrong-type-001
+    label: generation/schema-invalid
+    regression_task: structured/wrong-type-recovery-001
+    observed: First call used the wrong primitive type.
+    mitigation: Validate types before execution and allow bounded correction.
+    status: monitored
+  - id: structured-nested-enum-001
+    label: generation/schema-invalid
+    regression_task: structured/nested-enum-invalid-001
+    observed: A nested enum value passed lightweight validation.
+    mitigation: Score with the full advertised JSON Schema independently of execution.
+    status: fixed
+  - id: structured-wrong-tool-001
+    label: generation/wrong-tool
+    regression_task: structured/wrong-tool-recovery-001
+    observed: A schema-valid call selected a different advertised tool.
+    mitigation: Score selection independently from schema and final task success.
+    status: fixed
+  - id: structured-unknown-tool-001
+    label: generation/unknown-tool
+    regression_task: structured/unknown-tool-recovery-001
+    observed: The model named a tool outside the advertised registry.
+    mitigation: Reject unknown tools and classify them separately from argument errors.
+    status: fixed
+  - id: structured-semantic-path-001
+    label: generation/semantic-arguments
+    regression_task: structured/semantic-path-recovery-001
+    observed: Schema-valid arguments targeted the wrong resource scope.
+    mitigation: Add task-specific argument assertions and execution feedback.
+    status: monitored
+  - id: structured-list-wrapper-001
+    label: generation/malformed-tool-call
+    regression_task: structured/malformed-list-wrapper-001
+    observed: Arguments used a list/function/parameters wrapper.
+    mitigation: Canonicalize the known wrapper and retain repair telemetry.
+    status: fixed
+  - id: structured-function-wrapper-001
+    label: generation/malformed-tool-call
+    regression_task: structured/malformed-function-wrapper-001
+    observed: Arguments used a function/parameters object wrapper.
+    mitigation: Canonicalize the known wrapper and retain repair telemetry.
+    status: fixed
+  - id: structured-parameters-wrapper-001
+    label: generation/malformed-tool-call
+    regression_task: structured/malformed-parameters-wrapper-001
+    observed: Arguments used a top-level parameters wrapper.
+    mitigation: Canonicalize the known wrapper and retain repair telemetry.
+    status: fixed

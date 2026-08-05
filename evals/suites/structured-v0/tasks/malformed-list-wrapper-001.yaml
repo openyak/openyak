@@ -1,0 +1,33 @@
+schema_version: 1
+suite_version: structured-v0
+task_id: structured/malformed-list-wrapper-001
+description: Repair a list/function/parameters wrapper without a model retry
+execution_modes: [scripted]
+prompt: Create result.txt containing exactly "list" followed by a newline.
+workspace_fixture: ../fixtures/empty
+allowed_tools: [write]
+permissions: {file_changes: allow, run_commands: deny}
+budget: {max_tool_calls: 1, timeout_seconds: 30}
+structured_generation:
+  expected_tool: write
+  coverage: [malformed_list_wrapper]
+scorer:
+  type: workspace
+  assertions:
+    - {type: text_equals, path: openyak_written/result.txt, value: "list\n"}
+    - {type: no_unexpected_changes, allowed: [openyak_written/result.txt]}
+scripted_provider:
+  steps:
+    - chunks:
+        - type: tool-call
+          data:
+            id: list-wrapper
+            name: ""
+            arguments:
+              - function:
+                  name: write
+                  parameters: {file_path: result.txt, content: "list\n"}
+        - {type: finish, data: {reason: tool_use}}
+    - chunks:
+        - {type: text-delta, data: {text: Created the file.}}
+        - {type: finish, data: {reason: stop}}

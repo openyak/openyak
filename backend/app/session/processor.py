@@ -20,6 +20,7 @@ import json
 import logging
 import re
 from pathlib import Path
+from time import perf_counter_ns
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from sqlalchemy.exc import IntegrityError
@@ -73,6 +74,7 @@ from app.session.utils import (
     compute_safe_max_tokens as _compute_safe_max_tokens,
     get_effective_context_window as _get_effective_context_window,
     llm_messages_have_image_content as _llm_messages_have_image_content,
+    describe_tool_call_repair as _describe_tool_call_repair,
     repair_tool_call_payload as _repair_tool_call_payload,
 )
 from app.utils.id import generate_ulid
@@ -827,8 +829,18 @@ class SessionProcessor:
         tn = raw_tool_name
         ta = raw_tool_args
         ci = tc.get("id", generate_ulid())
+        repair_started_ns = perf_counter_ns()
         tn, ta = _repair_tool_call_payload(tn, ta)
+        repair_latency_ms = round(
+            (perf_counter_ns() - repair_started_ns) / 1_000_000,
+            6,
+        )
         repair_applied = tn != raw_tool_name or ta != raw_tool_args
+        parse_valid_before_repair = (
+            isinstance(raw_tool_name, str)
+            and bool(raw_tool_name)
+            and isinstance(raw_tool_args, dict)
+        )
 
         # Loop detection
         lr: LoopCheckResult = loop_detector.check(job.session_id, tn, ta)
@@ -850,6 +862,7 @@ class SessionProcessor:
         tool = sp.tool_registry.get(tn)
         if tool is None:
             tool = sp.tool_registry.get(tn.lower())
+        tool_known_before_fallback = tool is not None
         if tool is None:
             tool = sp.tool_registry.get("invalid")
             if tool:
@@ -865,8 +878,20 @@ class SessionProcessor:
         schema_valid_after_repair = tool.validate_args(ta) is None
         tool_call_telemetry = {
             "repair_applied": repair_applied,
+            "repair_latency_ms": repair_latency_ms,
+            "parse_valid_before_repair": parse_valid_before_repair,
+            "tool_known_before_fallback": tool_known_before_fallback,
             "schema_valid_before_repair": schema_valid_before_repair,
             "schema_valid_after_repair": schema_valid_after_repair,
+            **_describe_tool_call_repair(
+                raw_tool_name,
+                raw_tool_args,
+                tn,
+                ta,
+                allowed_argument_keys=set(
+                    tool.parameters_schema().get("properties", {})
+                ),
+            ),
         }
 
         # Provider output is untrusted. A registered Tool is executable only

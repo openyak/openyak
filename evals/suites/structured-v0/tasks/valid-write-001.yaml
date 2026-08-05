@@ -1,0 +1,51 @@
+schema_version: 1
+suite_version: structured-v0
+task_id: structured/valid-write-001
+description: Produce a valid exact write call on the first attempt
+execution_modes: [scripted, live]
+prompt: |
+  Use the write tool to create result.txt containing exactly "valid" followed by a newline.
+workspace_fixture: ../fixtures/empty
+allowed_tools: [write]
+permissions:
+  file_changes: allow
+  run_commands: deny
+budget:
+  max_tool_calls: 2
+  timeout_seconds: 60
+structured_generation:
+  expected_tool: write
+  coverage: [valid]
+  argument_assertions:
+    - path: [file_path]
+      equals: result.txt
+      normalizer: workspace_output_path
+    - path: [content]
+      equals: "valid\n"
+scorer:
+  type: workspace
+  assertions:
+    - type: file_exists
+      path: openyak_written/result.txt
+    - type: text_equals
+      path: openyak_written/result.txt
+      value: "valid\n"
+    - type: no_unexpected_changes
+      allowed: [openyak_written/result.txt]
+scripted_provider:
+  steps:
+    - chunks:
+        - type: tool-call
+          data:
+            id: valid-write
+            name: write
+            arguments:
+              file_path: result.txt
+              content: "valid\n"
+        - type: finish
+          data: {reason: tool_use}
+    - chunks:
+        - type: text-delta
+          data: {text: Created the requested file.}
+        - type: finish
+          data: {reason: stop}

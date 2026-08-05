@@ -431,6 +431,77 @@ def repair_tool_call_payload(
     return name, args
 
 
+def describe_tool_call_repair(
+    raw_tool_name: Any,
+    raw_arguments: Any,
+    repaired_tool_name: str,
+    repaired_arguments: dict[str, Any],
+    *,
+    allowed_argument_keys: set[str],
+) -> dict[str, Any]:
+    """Describe a repair using bounded structure only, never argument values."""
+    operations: list[str] = []
+    if raw_tool_name != repaired_tool_name:
+        operations.append("recover_tool_name")
+    if isinstance(raw_arguments, list):
+        operations.append("unwrap_list_function_parameters")
+    elif isinstance(raw_arguments, dict) and isinstance(
+        raw_arguments.get("function"), dict
+    ):
+        operations.append("unwrap_function_parameters")
+    elif isinstance(raw_arguments, dict) and isinstance(
+        raw_arguments.get("parameters"), dict
+    ):
+        operations.append("unwrap_parameters")
+    elif not isinstance(raw_arguments, dict):
+        operations.append("coerce_non_object")
+    elif raw_arguments != repaired_arguments and not operations:
+        operations.append("normalize_payload")
+
+    return {
+        "repair_operations": operations,
+        "raw_argument_shape": _safe_argument_shape(
+            raw_arguments,
+            allowed_argument_keys=allowed_argument_keys,
+        ),
+        "repaired_argument_shape": _safe_argument_shape(
+            repaired_arguments,
+            allowed_argument_keys=allowed_argument_keys,
+        ),
+    }
+
+
+def _safe_argument_shape(
+    value: Any,
+    *,
+    allowed_argument_keys: set[str],
+) -> dict[str, Any]:
+    if isinstance(value, dict):
+        wrapper_keys = {"arguments", "function", "name", "parameters"}
+        safe_keys = sorted(
+            key
+            for key in value
+            if isinstance(key, str)
+            and (key in allowed_argument_keys or key in wrapper_keys)
+        )
+        shape: dict[str, Any] = {"type": "object", "keys": safe_keys}
+        unknown_key_count = len(value) - len(safe_keys)
+        if unknown_key_count:
+            shape["unknown_key_count"] = unknown_key_count
+        return shape
+    if isinstance(value, list):
+        return {"type": "array"}
+    if value is None:
+        return {"type": "null"}
+    if isinstance(value, bool):
+        return {"type": "boolean"}
+    if isinstance(value, str):
+        return {"type": "string"}
+    if isinstance(value, (int, float)):
+        return {"type": "number"}
+    return {"type": "unknown"}
+
+
 def calculate_step_cost(
     usage_data: dict[str, Any],
     model_info: Any,

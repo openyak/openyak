@@ -27,15 +27,35 @@ Every result table must record:
 
 ### Agent and structured generation
 
-| Configuration | Task success | Tool selection | Schema-valid@1 | Execution-success@1 | Repair rate | Cost / success | p95 latency |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| Baseline pending | — | — | — | — | — | — | — |
+| Configuration | Task success | Tool selection | Schema-valid@1 | Execution-valid@1 | Semantic accuracy | Repair attempt | Repair success | Repair extra tokens | Repair latency |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Published model baseline pending | — | — | — | — | — | — | — | — | — |
 
 `schema-valid@1` measures whether the first generated arguments satisfy the
 advertised schema before runtime repair. `execution-success@1` requires the
 first attempted tool call to finish with a successful tool result. Recovery
 after tool feedback and repair rate are reported separately so later correction
 does not inflate first-attempt validity.
+
+The `structured-v0` runner writes this exact table shape to
+`structured-summary.md` from the machine-readable aggregate. Generate a row
+without manual arithmetic:
+
+```bash
+PYTHONPATH=backend:. python -m evals run-suite \
+  evals/suites/structured-v0/tasks \
+  --output evals/results/structured-v0/<run-id> \
+  --provider realrouter \
+  --model <model-id> \
+  --tool-call-mode native
+```
+
+Replace the provider with `ollama` and select an installed local model to run
+the same five-task live subset. Prompt-based comparisons change only
+`--tool-call-mode prompt`; both modes retain the same attempt and aggregate
+schemas. The ten-task scripted suite intentionally injects failures, so its low
+first-attempt rates validate attribution and repair math rather than model
+quality.
 
 ### Context management
 
@@ -86,6 +106,11 @@ evals/results/runtime-v0/<run-id>/
 Generated summaries must be reproducible from `attempts.jsonl`; headline tables
 must not depend on manual spreadsheet edits.
 
+Each suite output also contains `suite-summary.json` and the derived
+`structured-summary.md`. Rates use explicit eligible denominators: semantic
+accuracy excludes tasks without semantic assertions, and repair success and
+overhead exclude calls where repair was not attempted.
+
 ## Exploratory diagnostics
 
 The following balanced results validate the runner and guide tool-contract work.
@@ -102,6 +127,14 @@ See
 [`evals/reports/terra-sol-tool-v2-repeated.md`](evals/reports/terra-sol-tool-v2-repeated.md)
 for task-level interpretation and limitations.
 
+The first `structured-v0` live comparison found 5/5 first-attempt schema and
+execution validity for Terra, Sol, and local Qwen 3.6 27B, while semantic task
+success separated Terra (3/5) from Sol and Qwen (5/5). Sol also passed the same
+tasks through the prompt-based path. These are single-run exploratory results,
+not a headline baseline. See
+[`evals/reports/structured-v0-exploratory.md`](evals/reports/structured-v0-exploratory.md).
+
 ## Status
 
-Benchmark contract drafted; no benchmark results have been published yet.
+Benchmark contract and structured aggregation are implemented; no controlled
+structured model baseline has been published yet.

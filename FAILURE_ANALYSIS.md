@@ -15,6 +15,7 @@ regression tasks, retry policies, and model-routing decisions.
 | `generation/malformed-tool-call` | Tool call cannot be parsed into the canonical name/arguments shape | Repair once, then return feedback |
 | `generation/schema-invalid` | Required field, type, or enum constraint is invalid | Return validation feedback |
 | `generation/schema-underconstrained` | Arguments pass the advertised schema but violate a tool's real mode contract | Tighten or split the schema |
+| `generation/unknown-tool` | Call names a tool outside the advertised registry | Reject and return the available-tool contract |
 | `generation/wrong-tool` | Call is valid but the selected tool cannot satisfy the task | Model feedback or fallback |
 | `generation/semantic-arguments` | Arguments are syntactically valid but target the wrong resource or operation | Task scorer failure |
 | `context/omission` | Required evidence was removed, ignored, or not retrieved | Context-policy regression |
@@ -60,6 +61,12 @@ status: open
 
 Raw prompts or tool values must be minimized and scrubbed before a production
 failure is promoted into the public set.
+
+The implemented `evals/failure_sets/structured-v0.yaml` format is strict and
+machine-readable. Every record references an existing regression task, uses a
+stable taxonomy label, and contains only a scrubbed structural observation.
+Promotion means adding the smallest reproducer under `structured-v0/tasks`,
+then adding its record to the failure set in the same change.
 
 ## First frozen failures
 
@@ -112,6 +119,6 @@ For every material production or benchmark failure:
 
 ## Status
 
-Initial taxonomy, known-risk inventory, and scored failure reproductions are
-implemented. A standalone machine-readable failure-record format and published
-repeated-run baseline remain open.
+Initial taxonomy, known-risk inventory, scored failure reproductions, and a
+standalone machine-readable structured failure set are implemented. A
+published repeated-run structured model baseline remains open.

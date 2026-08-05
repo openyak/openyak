@@ -1,0 +1,71 @@
+schema_version: 1
+suite_version: structured-v0
+task_id: structured/wrong-tool-recovery-001
+description: Preserve a wrong first tool choice after successful recovery
+execution_modes: [scripted, live]
+prompt: |
+  Use the write tool to create result.txt containing exactly "correct tool"
+  followed by a newline. If a call fails, correct it using the feedback.
+workspace_fixture: ../fixtures/empty
+allowed_tools:
+  - write
+  - edit
+permissions:
+  file_changes: allow
+  run_commands: deny
+budget:
+  max_tool_calls: 2
+  timeout_seconds: 180
+structured_generation:
+  expected_tool: write
+  coverage: [wrong_tool]
+  argument_assertions:
+    - path: [file_path]
+      equals: result.txt
+      normalizer: workspace_output_path
+    - path: [content]
+      equals: "correct tool\n"
+scorer:
+  type: workspace
+  assertions:
+    - type: file_exists
+      path: openyak_written/result.txt
+    - type: text_equals
+      path: openyak_written/result.txt
+      value: "correct tool\n"
+    - type: no_unexpected_changes
+      allowed:
+        - openyak_written/result.txt
+scripted_provider:
+  model_id: eval-scripted-model
+  steps:
+    - chunks:
+        - type: tool-call
+          data:
+            id: wrong-edit-call
+            name: edit
+            arguments:
+              file_path: result.txt
+              old_string: missing
+              new_string: correct tool
+        - type: finish
+          data:
+            reason: tool_use
+    - chunks:
+        - type: tool-call
+          data:
+            id: corrected-write-call
+            name: write
+            arguments:
+              file_path: result.txt
+              content: "correct tool\n"
+        - type: finish
+          data:
+            reason: tool_use
+    - chunks:
+        - type: text-delta
+          data:
+            text: Switched to the requested tool and created the file.
+        - type: finish
+          data:
+            reason: stop

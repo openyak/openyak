@@ -27,6 +27,7 @@ from app.tool.registry import ToolRegistry
 from app.utils.id import generate_ulid
 from evals.scoring import AssertionResult, EvaluationScore, score_workspace
 from evals.results import write_run_artifacts
+from evals.structured import evaluate_tool_call
 from evals.task import EvaluationTask, load_task
 from evals.workspace import prepare_workspace
 
@@ -45,6 +46,7 @@ class EvaluationConfiguration(BaseModel):
     permissions: dict[str, str]
     budget: dict[str, int | float]
     temperature: float
+    tool_call_mode: str
     model_revision: str | None = None
 
 
@@ -165,6 +167,7 @@ async def run_task(
             model_id=task.scripted_provider.model_id,
             steps=[_scripted_step(step) for step in task.scripted_provider.steps],
         )
+    execution_mode = "scripted" if provider.id == "eval-scripted" else "live"
     run_dir = Path(run_directory).resolve()
     run_dir.mkdir(parents=True, exist_ok=False)
     fixture = (task_file.parent / task.workspace_fixture).resolve()
@@ -235,10 +238,41 @@ async def run_task(
         await engine.dispose()
         _remove_evaluation_database(database_path)
 
-    events = [
-        RuntimeEvent(event=event.event, data=_safe_event_data(event.event, event.data))
-        for event in job.events
-    ]
+    events: list[RuntimeEvent] = []
+    for event in job.events:
+        event_data = dict(event.data)
+        if event.event == "tool-call":
+            event_data.update(
+                _strict_tool_call_telemetry(
+                    event_data,
+                    tool_registry=tool_registry,
+                    expected_tool=(
+                        task.structured_generation.expected_tool
+                        if task.structured_generation is not None
+                        else None
+                    ),
+                    argument_assertions=(
+                        task.structured_generation.argument_assertions
+                        if task.structured_generation is not None
+                        else None
+                    ),
+                )
+            )
+        elif event.event == "tool-error" and task.structured_generation is not None:
+            parse_valid = event_data.get("parse_valid_before_repair") is True
+            event_data.update({
+                "parse_valid": parse_valid,
+                "tool_selection_valid": (
+                    parse_valid
+                    and event_data.get("tool_known_before_fallback") is not False
+                    and event_data.get("tool")
+                    == task.structured_generation.expected_tool
+                ),
+            })
+        events.append(RuntimeEvent(
+            event=event.event,
+            data=_safe_event_data(event.event, event_data),
+        ))
     tool_call_ids = {
         event.data["call_id"]
         for event in events
@@ -263,7 +297,12 @@ async def run_task(
         max_tool_calls=task.budget.max_tool_calls,
     )
     score = _apply_tool_telemetry(score, events=events)
-    score = _apply_event_expectations(score, task=task, events=events)
+    score = _apply_event_expectations(
+        score,
+        task=task,
+        events=events,
+        execution_mode=execution_mode,
+    )
     score = _apply_infrastructure_failure(
         score,
         infrastructure_error=infrastructure_error,
@@ -281,6 +320,7 @@ async def run_task(
             permissions=task.permissions.model_dump(),
             budget=task.budget.model_dump(),
             temperature=0.0,
+            tool_call_mode=getattr(provider, "tool_call_mode", "native"),
         ),
         duration_ms=duration_ms,
         tool_calls=tool_calls,
@@ -291,6 +331,7 @@ async def run_task(
         failure_labels=_failure_labels(
             score,
             infrastructure_error=infrastructure_error,
+            events=events,
         ),
         infrastructure_error=infrastructure_error,
         workspace_changes=workspace.diff().changes,
@@ -310,15 +351,54 @@ def _failure_labels(
     score: EvaluationScore,
     *,
     infrastructure_error: str | None,
+    events: list[RuntimeEvent],
 ) -> list[str]:
-    if score.passed:
-        return []
     if infrastructure_error is not None:
         return [f"infrastructure/{infrastructure_error}"]
+    labels: list[str] = []
+    first_structured_call = next(
+        (
+            event
+            for event in events
+            if event.event in {"tool-call", "tool-error"}
+            and "schema_valid_before_repair" in event.data
+        ),
+        None,
+    )
+    tool_is_known = (
+        first_structured_call is None
+        or first_structured_call.data.get("tool_known_before_fallback") is not False
+    )
+    if first_structured_call is not None and tool_is_known and (
+        first_structured_call.data.get("schema_valid_before_repair") is False
+        or first_structured_call.data.get("strict_schema_valid") is False
+    ):
+        labels.append("generation/schema-invalid")
+    if (
+        first_structured_call is not None
+        and first_structured_call.data.get("repair_applied") is True
+    ):
+        labels.append("generation/malformed-tool-call")
+    if (
+        first_structured_call is not None
+        and first_structured_call.data.get("tool_known_before_fallback") is False
+    ):
+        labels.append("generation/unknown-tool")
+    elif (
+        first_structured_call is not None
+        and first_structured_call.data.get("tool_selection_valid") is False
+    ):
+        labels.append("generation/wrong-tool")
+    if (
+        first_structured_call is not None
+        and first_structured_call.data.get("semantic_valid") is False
+    ):
+        labels.append("generation/semantic-arguments")
+    if score.passed:
+        return labels
     failed_types = {
         assertion.type for assertion in score.assertions if not assertion.passed
     }
-    labels: list[str] = []
     if failed_types & {
         "file_exists",
         "file_absent",
@@ -411,6 +491,53 @@ def _scripted_step(step: Any) -> list[StreamChunk] | ScriptedFailure:
     return [StreamChunk(type=chunk.type, data=chunk.data) for chunk in step.chunks]
 
 
+def _strict_tool_call_telemetry(
+    data: dict[str, Any],
+    *,
+    tool_registry: ToolRegistry,
+    expected_tool: str | None,
+    argument_assertions: list[Any] | None,
+) -> dict[str, Any]:
+    tool_name = data.get("tool")
+    if not isinstance(tool_name, str):
+        return {}
+    tool = tool_registry.get(tool_name) or tool_registry.get(tool_name.lower())
+    if tool is None:
+        return {}
+    evaluation = evaluate_tool_call(
+        expected_tool=expected_tool or tool.id,
+        observed_tool=tool_name,
+        arguments=data.get("arguments"),
+        schema=tool.parameters_schema(),
+        argument_assertions=argument_assertions,
+    )
+    parse_valid_before_repair = data.get(
+        "parse_valid_before_repair",
+        evaluation.parse_valid,
+    )
+    repair_operations = data.get("repair_operations", [])
+    schema_valid_before_repair = data.get("schema_valid_before_repair")
+    telemetry = {
+        "parse_valid": parse_valid_before_repair is True,
+        "tool_selection_valid": (
+            parse_valid_before_repair is True
+            and "recover_tool_name" not in repair_operations
+            and evaluation.tool_selection_valid
+        ),
+        "strict_schema_valid": (
+            schema_valid_before_repair is True and evaluation.schema_valid
+        ),
+        "strict_schema_valid_after_repair": evaluation.schema_valid,
+        "strict_schema_errors": [
+            error.model_dump(mode="json") for error in evaluation.schema_errors
+        ],
+    }
+    if evaluation.semantic_valid is not None:
+        telemetry["semantic_valid"] = evaluation.semantic_valid
+        telemetry["semantic_error_paths"] = evaluation.semantic_error_paths
+    return telemetry
+
+
 def _safe_event_data(event: str, data: dict[str, Any]) -> dict[str, Any]:
     """Keep evaluation telemetry while excluding prompts and tool payload values."""
     keys_by_event: dict[str, tuple[str, ...]] = {
@@ -420,8 +547,20 @@ def _safe_event_data(event: str, data: dict[str, Any]) -> dict[str, Any]:
             "tool",
             "call_id",
             "repair_applied",
+            "repair_latency_ms",
+            "repair_operations",
+            "raw_argument_shape",
+            "repaired_argument_shape",
+            "parse_valid_before_repair",
             "schema_valid_before_repair",
             "schema_valid_after_repair",
+            "parse_valid",
+            "tool_selection_valid",
+            "strict_schema_valid",
+            "strict_schema_valid_after_repair",
+            "strict_schema_errors",
+            "semantic_valid",
+            "semantic_error_paths",
         ),
         "tool-result": ("tool", "call_id"),
         "tool-error": (
@@ -431,8 +570,13 @@ def _safe_event_data(event: str, data: dict[str, Any]) -> dict[str, Any]:
             "exit_code",
             "cwd_scope",
             "repair_applied",
+            "repair_latency_ms",
+            "parse_valid_before_repair",
+            "tool_known_before_fallback",
             "schema_valid_before_repair",
             "schema_valid_after_repair",
+            "parse_valid",
+            "tool_selection_valid",
         ),
         "permission-request": ("tool", "call_id"),
         "retry": ("attempt", "max_retries", "delay", "reason"),
@@ -564,8 +708,25 @@ def _apply_tool_telemetry(
             recovered_after_tool_error = True
     metrics = {
         **score.metrics,
+        "structured_attempt_at_1": int(first_call is not None),
         "repairs_applied": sum(
             event.data.get("repair_applied") is True for event in tool_calls
+        ),
+        "repair_attempted_at_1": int(
+            first_call is not None
+            and first_call.data.get("repair_applied") is True
+        ),
+        "repair_success_at_1": int(
+            first_call is not None
+            and first_call.data.get("repair_applied") is True
+            and first_call.data.get("schema_valid_after_repair") is True
+        ),
+        # Canonical payload repair is deterministic and does not call a model.
+        "repair_extra_tokens_at_1": 0,
+        "repair_latency_ms_at_1": (
+            first_call.data.get("repair_latency_ms", 0.0)
+            if first_call is not None
+            else 0.0
         ),
         "schema_valid_before_repair": sum(
             event.data.get("schema_valid_before_repair") is True
@@ -578,6 +739,24 @@ def _apply_tool_telemetry(
         "schema_valid_at_1": int(
             first_call is not None
             and first_call.data.get("schema_valid_before_repair") is True
+        ),
+        "strict_schema_valid_at_1": int(
+            first_call is not None
+            and first_call.data.get("strict_schema_valid") is True
+        ),
+        "parse_valid_at_1": int(
+            first_call is not None and first_call.data.get("parse_valid") is True
+        ),
+        "tool_selection_at_1": int(
+            first_call is not None
+            and first_call.data.get("tool_selection_valid") is True
+        ),
+        "semantic_evaluated_at_1": int(
+            first_call is not None and "semantic_valid" in first_call.data
+        ),
+        "semantic_valid_at_1": int(
+            first_call is not None
+            and first_call.data.get("semantic_valid") is True
         ),
         "tool_errors": len(tool_error_ids),
         "tool_results": len(tool_result_ids),
@@ -605,12 +784,18 @@ def _apply_event_expectations(
     *,
     task: EvaluationTask,
     events: list[RuntimeEvent],
+    execution_mode: str,
 ) -> EvaluationScore:
-    if not task.expected_events:
+    expectations = [
+        expectation
+        for expectation in task.expected_events
+        if execution_mode in expectation.applies_to
+    ]
+    if not expectations:
         return score
     assertions = list(score.assertions)
     passed_count = 0
-    for expectation in task.expected_events:
+    for expectation in expectations:
         passed = any(
             event.event == expectation.event
             and all(event.data.get(key) == value for key, value in expectation.data_contains.items())
@@ -628,12 +813,12 @@ def _apply_event_expectations(
         ))
     metrics = {
         **score.metrics,
-        "assertions_total": int(score.metrics["assertions_total"]) + len(task.expected_events),
+        "assertions_total": int(score.metrics["assertions_total"]) + len(expectations),
         "assertions_passed": int(score.metrics["assertions_passed"]) + passed_count,
         "expected_events_passed": passed_count,
     }
     return EvaluationScore(
-        passed=score.passed and passed_count == len(task.expected_events),
+        passed=score.passed and passed_count == len(expectations),
         metrics=metrics,
         assertions=assertions,
     )

@@ -8,7 +8,11 @@ import json
 from pathlib import Path
 
 from app.provider.base import BaseProvider
-from evals.live import create_realrouter_provider
+from evals.live import (
+    PromptToolCallingProvider,
+    create_ollama_provider,
+    create_realrouter_provider,
+)
 from evals.runtime import run_task
 from evals.suite import run_suite
 from evals.task import load_task
@@ -17,10 +21,15 @@ from evals.task import load_task
 def _add_provider_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--provider",
-        choices=("scripted", "realrouter"),
+        choices=("scripted", "realrouter", "ollama"),
         default="scripted",
     )
     parser.add_argument("--model", default="gpt-5.6-luna")
+    parser.add_argument(
+        "--tool-call-mode",
+        choices=("native", "prompt"),
+        default="native",
+    )
 
 
 def _provider_from_args(
@@ -30,7 +39,14 @@ def _provider_from_args(
     if args.provider == "scripted":
         return None
     try:
-        return create_realrouter_provider(args.model)
+        provider = (
+            create_ollama_provider(args.model)
+            if args.provider == "ollama"
+            else create_realrouter_provider(args.model)
+        )
+        if args.tool_call_mode == "prompt":
+            return PromptToolCallingProvider(provider)
+        return provider
     except ValueError as error:
         parser.error(str(error))
 

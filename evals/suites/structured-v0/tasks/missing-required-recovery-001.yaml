@@ -1,0 +1,75 @@
+schema_version: 1
+suite_version: structured-v0
+task_id: structured/missing-required-recovery-001
+description: Preserve a first-attempt missing-required failure after recovery
+execution_modes: [scripted, live]
+prompt: |
+  Create result.txt containing exactly "recovered" followed by a newline.
+  If the first tool call is rejected, correct it using the execution feedback.
+workspace_fixture: ../fixtures/empty
+allowed_tools:
+  - write
+permissions:
+  file_changes: allow
+  run_commands: deny
+budget:
+  max_tool_calls: 2
+  timeout_seconds: 180
+structured_generation:
+  expected_tool: write
+  coverage: [required]
+  argument_assertions:
+    - path: [file_path]
+      equals: result.txt
+      normalizer: workspace_output_path
+    - path: [content]
+      equals: "recovered\n"
+scorer:
+  type: workspace
+  assertions:
+    - type: file_exists
+      path: openyak_written/result.txt
+    - type: text_equals
+      path: openyak_written/result.txt
+      value: "recovered\n"
+    - type: no_unexpected_changes
+      allowed:
+        - openyak_written/result.txt
+expected_events:
+  - event: tool-call
+    applies_to: [scripted]
+    data_contains:
+      tool: write
+      schema_valid_before_repair: false
+      schema_valid_after_repair: false
+scripted_provider:
+  model_id: eval-scripted-model
+  steps:
+    - chunks:
+        - type: tool-call
+          data:
+            id: missing-required-content
+            name: write
+            arguments:
+              file_path: result.txt
+        - type: finish
+          data:
+            reason: tool_use
+    - chunks:
+        - type: tool-call
+          data:
+            id: corrected-write
+            name: write
+            arguments:
+              file_path: result.txt
+              content: "recovered\n"
+        - type: finish
+          data:
+            reason: tool_use
+    - chunks:
+        - type: text-delta
+          data:
+            text: Corrected the invalid call and created the requested file.
+        - type: finish
+          data:
+            reason: stop

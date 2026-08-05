@@ -43,6 +43,7 @@ top-level schema:
     "permissions": {"file_changes": "allow", "run_commands": "deny"},
     "budget": {"max_tool_calls": 3, "timeout_seconds": 30.0},
     "temperature": 0.0,
+    "tool_call_mode": "native",
     "model_revision": null
   },
   "duration_ms": 123.4,
@@ -64,6 +65,33 @@ local-inference benchmark configuration; the current runtime harness does not
 claim to capture them. Secrets, raw credentials, unrestricted user content,
 tool arguments, tool output, raw tool errors, and absolute paths must never be
 written to evaluation records.
+
+## Structured generation protocol
+
+`structured-v0` contains ten deterministic fault-injection tasks. Its frozen
+coverage taxonomy includes a valid control, missing required fields, primitive
+types, nested enums/objects, unknown and wrong tools, semantic resource
+selection, and the three wrapper shapes repaired by the runtime. The scorer
+keeps these stages separate:
+
+1. `parse-valid@1`: the original name/arguments envelope is usable before repair;
+2. `tool-selection@1`: the original call selects the expected advertised tool;
+3. `schema-valid@1`: the original envelope passes both the runtime pre-repair
+   check and an independent Draft 2020-12 JSON Schema validator;
+4. `semantic argument accuracy`: task-declared safe field paths match expected
+   values; and
+5. `execution-valid@1`: the first call produces a successful tool result.
+
+Repair attempt, repair success, added model tokens, and local repair latency are
+reported separately. Known wrapper repair consumes zero model tokens. Event
+records preserve only repair operation names, bounded argument shapes, schema
+keywords and instance paths, never argument values. A corrected final file does
+not erase the first-attempt generation label.
+
+Native function calls and prompt-tag calls normalize into the same
+`ToolCallEvaluation` schema. Live runs default to native mode; pass
+`--tool-call-mode prompt` to exercise the eval-only prompt adapter with the same
+provider and model.
 
 ## Scoring policy
 
@@ -133,6 +161,21 @@ scope labels. Failed task outcomes and harness failures receive stable labels;
 an infrastructure timeout is recorded as `infrastructure/timeout` rather than
 terminating without an attempt artifact.
 
+Run the structured suite and generate both JSON and Markdown aggregates with:
+
+```bash
+PYTHONPATH=backend:. python -m evals run-suite \
+  evals/suites/structured-v0/tasks \
+  --output evals/results/structured-v0/scripted-smoke
+```
+
+The output adds `structured-summary.md`, generated directly from
+`suite-summary.json`. Five tasks form the shared live subset for cloud and local
+comparison. Use either `--provider realrouter --model <model>` or
+`--provider ollama --model <installed-model>`; use the same task directory and
+tool-call mode for a valid comparison. Ollama defaults to
+`http://localhost:11434` and can be overridden with `OLLAMA_BASE_URL`.
+
 For a real-model run through RealRouter's OpenAI-compatible chat-completions
 endpoint, set a newly created key in `REALROUTER_API_KEY` and add
 `--provider realrouter --model gpt-5.6-luna` to the suite command. Live mode
@@ -140,6 +183,8 @@ selects only tasks whose failure condition can be produced by a real model;
 deterministic rollback, malformed-payload, self-correction, and provider-503
 cases stay in the scripted fault-injection suite. Twelve tasks are currently
 eligible for live-model execution.
+`REALROUTER_BASE_URL` can point the same adapter at a local compatible proxy;
+the public RealRouter endpoint remains the default.
 
 An exploratory Terra pre/post run of the eight-task subset improved from 5/8
 to 7/8 after tightening the edit contract and documenting move syntax. The
@@ -175,15 +220,16 @@ A benchmark comparison is valid only when it reports:
 
 ## Status
 
-Protocol drafted. Twenty versioned, fully offline smoke tasks, their fixtures,
+Protocol implemented. Twenty versioned runtime smoke tasks and ten structured
+generation tasks, their fixtures,
 workspace snapshot/diff layer, deterministic scorers, result writer, suite CLI,
 structured-tool telemetry, stable failure labeling, sanitized error telemetry,
 reproducible configuration snapshots, and an explicit offline CI smoke gate are
 implemented. A
-credential-safe RealRouter adapter and twelve-task live subset are implemented.
+credential-safe RealRouter adapter, a model-filtered Ollama adapter, native and
+prompt tool-call modes, and shared live subsets are implemented.
 Exploratory Luna results, contract-hardening comparisons, and balanced three-run
 Terra/Sol diagnostics exist, but are not yet a published baseline because the
 worktree was dirty and provider revisions and runtime conditions were unpinned.
-Repeated attempts, additional provider adapters, local-inference measurements,
-and benchmark aggregation remain open. Scripted smoke results prove runtime
-behavior, not real-model quality.
+Repeated attempts and controlled local-inference measurements remain open.
+Scripted smoke results prove runtime and scorer behavior, not real-model quality.

@@ -8,6 +8,8 @@ from typing import Annotated, Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from evals.structured import ArgumentAssertion
+
 
 class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -83,6 +85,29 @@ class ScriptedProviderConfig(_StrictModel):
 class EventExpectation(_StrictModel):
     event: str
     data_contains: dict[str, Any] = Field(default_factory=dict)
+    applies_to: list[Literal["scripted", "live"]] = Field(
+        default_factory=lambda: ["scripted", "live"]
+    )
+
+
+class StructuredGenerationConfig(_StrictModel):
+    expected_tool: str
+    coverage: list[
+        Literal[
+            "valid",
+            "required",
+            "type",
+            "enum",
+            "nested",
+            "unknown_tool",
+            "wrong_tool",
+            "malformed_list_wrapper",
+            "malformed_function_wrapper",
+            "malformed_parameters_wrapper",
+            "semantic",
+        ]
+    ]
+    argument_assertions: list[ArgumentAssertion] = Field(default_factory=list)
 
 
 class EvaluationTask(_StrictModel):
@@ -98,6 +123,7 @@ class EvaluationTask(_StrictModel):
     allowed_tools: list[str]
     permissions: PermissionConfig
     budget: BudgetConfig
+    structured_generation: StructuredGenerationConfig | None = None
     scorer: WorkspaceScorerConfig
     scripted_provider: ScriptedProviderConfig | None = None
     expected_events: list[EventExpectation] = Field(default_factory=list)

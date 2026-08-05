@@ -16,6 +16,9 @@ TASK = (
     / "file-create-exact-001.yaml"
 )
 TASKS_DIR = TASK.parent
+STRUCTURED_TASKS_DIR = (
+    Path(__file__).parents[1] / "suites" / "structured-v0" / "tasks"
+)
 
 
 def _create_file_provider() -> ScriptedProvider:
@@ -88,6 +91,7 @@ async def test_run_task_writes_reproducible_secret_free_result_files(
         "model_revision": None,
         "permissions": {"file_changes": "allow", "run_commands": "deny"},
         "temperature": 0.0,
+        "tool_call_mode": "native",
     }
     assert manifest["configuration"] == expected_configuration
     assert attempt["configuration"] == expected_configuration
@@ -121,6 +125,139 @@ async def test_failed_workspace_outcome_has_a_stable_failure_label(
 
     assert attempt.score.passed is False
     assert attempt.failure_labels == ["outcome/workspace"]
+
+
+@pytest.mark.asyncio
+async def test_recovered_task_retains_its_first_schema_failure_label(
+    tmp_path: Path,
+) -> None:
+    attempt = await run_task(
+        STRUCTURED_TASKS_DIR / "missing-required-recovery-001.yaml",
+        tmp_path / "run",
+    )
+
+    assert attempt.score.passed is True
+    assert attempt.score.metrics["schema_valid_at_1"] == 0
+    assert attempt.score.metrics["recovered_after_tool_error"] == 1
+    assert attempt.failure_labels == ["generation/schema-invalid"]
+
+
+@pytest.mark.asyncio
+async def test_scripted_only_event_expectation_does_not_fail_live_mode(
+    tmp_path: Path,
+) -> None:
+    class LiveLikeProvider(ScriptedProvider):
+        @property
+        def id(self) -> str:
+            return "live-like"
+
+    provider = LiveLikeProvider(steps=[
+        [
+            StreamChunk(
+                type="tool-call",
+                data={
+                    "id": "valid-first-call",
+                    "name": "write",
+                    "arguments": {
+                        "file_path": "result.txt",
+                        "content": "recovered\n",
+                    },
+                },
+            ),
+            StreamChunk(type="finish", data={"reason": "tool_use"}),
+        ],
+        [
+            StreamChunk(type="text-delta", data={"text": "Created the file."}),
+            StreamChunk(type="finish", data={"reason": "stop"}),
+        ],
+    ])
+
+    attempt = await run_task(
+        STRUCTURED_TASKS_DIR / "missing-required-recovery-001.yaml",
+        tmp_path / "run",
+        provider=provider,
+    )
+
+    assert attempt.score.passed is True
+    assert "expected_events_passed" not in attempt.score.metrics
+
+
+@pytest.mark.asyncio
+async def test_strict_schema_detects_nested_enum_that_runtime_accepts(
+    tmp_path: Path,
+) -> None:
+    attempt = await run_task(
+        STRUCTURED_TASKS_DIR / "nested-enum-invalid-001.yaml",
+        tmp_path / "run",
+    )
+
+    assert attempt.score.passed is True
+    assert attempt.score.metrics["schema_valid_at_1"] == 1
+    assert attempt.score.metrics["strict_schema_valid_at_1"] == 0
+    tool_call = next(event for event in attempt.events if event.event == "tool-call")
+    assert tool_call.data["strict_schema_errors"] == [
+        {
+            "keyword": "enum",
+            "instance_path": ["todos", 0, "status"],
+            "schema_path": [
+                "properties",
+                "todos",
+                "items",
+                "properties",
+                "status",
+                "enum",
+            ],
+        },
+    ]
+    assert "queued" not in tool_call.model_dump_json()
+    assert attempt.failure_labels == ["generation/schema-invalid"]
+
+
+@pytest.mark.asyncio
+async def test_recovered_task_retains_its_wrong_tool_label(tmp_path: Path) -> None:
+    attempt = await run_task(
+        STRUCTURED_TASKS_DIR / "wrong-tool-recovery-001.yaml",
+        tmp_path / "run",
+    )
+
+    assert attempt.score.passed is True
+    assert attempt.score.metrics["tool_selection_at_1"] == 0
+    assert attempt.score.metrics["strict_schema_valid_at_1"] == 1
+    assert attempt.failure_labels == ["generation/wrong-tool"]
+
+
+@pytest.mark.asyncio
+async def test_recovered_task_retains_semantically_wrong_arguments(
+    tmp_path: Path,
+) -> None:
+    attempt = await run_task(
+        STRUCTURED_TASKS_DIR / "semantic-path-recovery-001.yaml",
+        tmp_path / "run",
+    )
+
+    assert attempt.score.passed is True
+    assert attempt.score.metrics["strict_schema_valid_at_1"] == 1
+    assert attempt.score.metrics["semantic_valid_at_1"] == 0
+    tool_call = next(event for event in attempt.events if event.event == "tool-call")
+    assert tool_call.data["semantic_error_paths"] == [["file_path"]]
+    assert "outside.txt" not in tool_call.model_dump_json()
+    assert attempt.failure_labels == ["generation/semantic-arguments"]
+
+
+@pytest.mark.asyncio
+async def test_unknown_tool_is_distinct_from_malformed_arguments(
+    tmp_path: Path,
+) -> None:
+    attempt = await run_task(
+        STRUCTURED_TASKS_DIR / "unknown-tool-recovery-001.yaml",
+        tmp_path / "run",
+    )
+
+    assert attempt.score.passed is True
+    assert attempt.score.metrics["parse_valid_at_1"] == 1
+    assert attempt.score.metrics["tool_selection_at_1"] == 0
+    assert "generation/unknown-tool" in attempt.failure_labels
+    assert "generation/schema-invalid" not in attempt.failure_labels
 
 
 @pytest.mark.asyncio
@@ -386,10 +523,30 @@ async def test_repair_telemetry_is_recorded_without_tool_arguments(
     assert tool_call.data["repair_applied"] is True
     assert tool_call.data["schema_valid_before_repair"] is False
     assert tool_call.data["schema_valid_after_repair"] is True
+    assert tool_call.data["repair_operations"] == [
+        "recover_tool_name",
+        "unwrap_list_function_parameters",
+    ]
+    assert tool_call.data["raw_argument_shape"] == {"type": "array"}
+    assert tool_call.data["repaired_argument_shape"] == {
+        "type": "object",
+        "keys": ["content", "file_path"],
+    }
+    assert tool_call.data["repair_latency_ms"] >= 0
     assert "arguments" not in tool_call.data
+    assert "repaired\n" not in tool_call.model_dump_json()
     assert attempt.score.metrics["schema_valid_at_1"] == 0
+    assert attempt.score.metrics["parse_valid_at_1"] == 0
+    assert attempt.score.metrics["strict_schema_valid_at_1"] == 0
     assert attempt.score.metrics["repairs_applied"] == 1
+    assert attempt.score.metrics["repair_attempted_at_1"] == 1
+    assert attempt.score.metrics["repair_success_at_1"] == 1
+    assert attempt.score.metrics["repair_extra_tokens_at_1"] == 0
+    assert attempt.score.metrics["repair_latency_ms_at_1"] == tool_call.data[
+        "repair_latency_ms"
+    ]
     assert attempt.score.metrics["schema_valid_after_repair"] == 1
+    assert "generation/malformed-tool-call" in attempt.failure_labels
 
 
 @pytest.mark.asyncio
