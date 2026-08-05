@@ -67,6 +67,29 @@ class GatedBrowserRuntime(FakeBrowserRuntime):
         await self.agent_control.wait()
 
 
+class SharedBrowserRuntime(FakeBrowserRuntime):
+    def __init__(self) -> None:
+        super().__init__()
+        self.control_owner = "agent"
+        self.agent_control = asyncio.Event()
+        self.agent_control.set()
+        self.operation_lock = asyncio.Lock()
+
+    async def wait_for_agent_control(self) -> None:
+        await self.agent_control.wait()
+
+    async def take_over(self) -> None:
+        self.control_owner = "user"
+        self.agent_control.clear()
+        async with self.operation_lock:
+            pass
+
+    async def resume_agent(self) -> None:
+        async with self.operation_lock:
+            self.control_owner = "agent"
+            self.agent_control.set()
+
+
 def _ctx() -> ToolContext:
     return ToolContext(
         session_id="session-1",
@@ -163,6 +186,27 @@ async def test_browser_tool_waits_until_user_returns_control():
     assert not pending.done()
 
     runtime.agent_control.set()
+    result = await asyncio.wait_for(pending, timeout=0.1)
+    assert result.success
+
+
+async def test_browser_takeover_wins_when_agent_is_waiting_for_runtime_lock():
+    runtime = SharedBrowserRuntime()
+    await runtime.operation_lock.acquire()
+    pending = asyncio.create_task(
+        BrowserTool(runtime)({"action": "list_tabs"}, _ctx())
+    )
+    await asyncio.sleep(0)
+
+    takeover = asyncio.create_task(runtime.take_over())
+    await asyncio.sleep(0)
+    runtime.operation_lock.release()
+    await asyncio.wait_for(takeover, timeout=0.1)
+    await asyncio.sleep(0)
+
+    assert not pending.done()
+    assert runtime.calls == []
+    await runtime.resume_agent()
     result = await asyncio.wait_for(pending, timeout=0.1)
     assert result.success
 

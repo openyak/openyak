@@ -39,20 +39,28 @@ class PlaywrightBrowserRuntime:
         self._control_owner = "agent"
         self._agent_control = asyncio.Event()
         self._agent_control.set()
+        self._operation_lock = asyncio.Lock()
 
     @property
     def control_owner(self) -> str:
         return self._control_owner
 
+    @property
+    def operation_lock(self) -> asyncio.Lock:
+        return self._operation_lock
+
     async def take_over(self) -> None:
         """Pause future Agent interactions while the user controls the page."""
         self._control_owner = "user"
         self._agent_control.clear()
+        async with self._operation_lock:
+            pass
 
     async def resume_agent(self) -> None:
         """Return the managed Browser to the Agent and release waiting actions."""
-        self._control_owner = "agent"
-        self._agent_control.set()
+        async with self._operation_lock:
+            self._control_owner = "agent"
+            self._agent_control.set()
 
     async def wait_for_agent_control(self) -> None:
         await self._agent_control.wait()

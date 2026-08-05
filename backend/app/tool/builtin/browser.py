@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 from typing import Any, Protocol
@@ -122,9 +123,23 @@ class BrowserTool(ToolDefinition):
             await close()
 
     async def execute(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
-        wait_for_control = getattr(self._runtime, "wait_for_agent_control", None)
-        if wait_for_control is not None:
-            await wait_for_control()
+        while True:
+            wait_for_control = getattr(self._runtime, "wait_for_agent_control", None)
+            if wait_for_control is not None:
+                await wait_for_control()
+            operation_lock = getattr(self._runtime, "operation_lock", None)
+            if operation_lock is None:
+                return await self._execute_locked(args, ctx)
+            async with operation_lock:
+                # User takeover can happen after the event wakes but before
+                # the Agent enters the shared Playwright runtime.
+                if getattr(self._runtime, "control_owner", "agent") != "agent":
+                    continue
+                return await self._execute_locked(args, ctx)
+
+    async def _execute_locked(
+        self, args: dict[str, Any], ctx: ToolContext
+    ) -> ToolResult:
         action = str(args["action"])
         tab_id = args.get("tab_id")
         if action == "list_tabs":
@@ -260,8 +275,6 @@ class BrowserTool(ToolDefinition):
                     metadata={"action": action, "surface": "browser", "tab_id": tab_id},
                 )
             elif action == "wait":
-                import asyncio
-
                 duration = max(0.0, min(float(args.get("duration", 1.0)), 10.0))
                 await asyncio.sleep(duration)
             else:

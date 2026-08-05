@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from types import SimpleNamespace
 
@@ -68,6 +69,13 @@ class _StaleBrowserRuntime(_BrowserRuntime):
 
     async def navigate(self, tab_id, url):
         raise ValueError(f"Unknown or closed browser tab: {tab_id}")
+
+
+class _LockedBrowserRuntime(_BrowserRuntime):
+    def __init__(self):
+        super().__init__()
+        self.control_owner = "user"
+        self.operation_lock = asyncio.Lock()
 
 
 @pytest.mark.asyncio
@@ -143,6 +151,29 @@ async def test_manual_page_input_requires_user_control(app_client) -> None:
     assert runtime.calls == [
         ("click", "tab-1", 64.0, 48.0, {"button": "left", "click_count": 1}),
     ]
+
+
+@pytest.mark.asyncio
+async def test_manual_input_rechecks_control_after_waiting_for_browser_runtime(
+    app_client,
+) -> None:
+    runtime = _LockedBrowserRuntime()
+    app_client.app.state.tool_registry.get.return_value = SimpleNamespace(runtime=runtime)
+    await runtime.operation_lock.acquire()
+    pending = asyncio.create_task(
+        app_client.post(
+            "/api/browser-control/interact",
+            json={"action": "click", "tab_id": "tab-1", "x": 64, "y": 48},
+        )
+    )
+    await asyncio.sleep(0)
+    runtime.control_owner = "agent"
+    runtime.operation_lock.release()
+
+    response = await asyncio.wait_for(pending, timeout=1)
+
+    assert response.status_code == 409
+    assert runtime.calls == []
 
 
 @pytest.mark.asyncio

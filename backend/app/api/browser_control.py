@@ -42,7 +42,12 @@ def _runtime(request: Request) -> Any:
 @router.get("/status")
 async def browser_status(request: Request) -> dict[str, Any]:
     runtime = _runtime(request)
-    tabs = await runtime.list_tabs()
+    operation_lock = getattr(runtime, "operation_lock", None)
+    if operation_lock is None:
+        tabs = await runtime.list_tabs()
+    else:
+        async with operation_lock:
+            tabs = await runtime.list_tabs()
     return {
         "control_owner": getattr(runtime, "control_owner", "agent"),
         "tabs": [
@@ -68,7 +73,13 @@ async def set_browser_control(
 @router.get("/snapshot")
 async def browser_snapshot(tab_id: str, request: Request) -> dict[str, Any]:
     try:
-        observation = dict(await _runtime(request).observe(tab_id))
+        runtime = _runtime(request)
+        operation_lock = getattr(runtime, "operation_lock", None)
+        if operation_lock is None:
+            observation = dict(await runtime.observe(tab_id))
+        else:
+            async with operation_lock:
+                observation = dict(await runtime.observe(tab_id))
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     image = observation.pop("screenshot", None)
@@ -86,6 +97,17 @@ async def interact_with_browser(
     request: Request,
 ) -> dict[str, Any]:
     runtime = _runtime(request)
+    operation_lock = getattr(runtime, "operation_lock", None)
+    if operation_lock is None:
+        return await _interact_with_browser(runtime, body)
+    async with operation_lock:
+        return await _interact_with_browser(runtime, body)
+
+
+async def _interact_with_browser(
+    runtime: Any,
+    body: BrowserInteractionRequest,
+) -> dict[str, Any]:
     if getattr(runtime, "control_owner", "agent") != "user":
         raise HTTPException(
             status_code=409,
