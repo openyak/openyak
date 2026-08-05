@@ -6,7 +6,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/), and this project
 
 ## [Unreleased]
 
-## [1.5.0-rc.2] - 2026-08-04
+## [1.5.0-rc.3] - 2026-08-05
 
 ### Added
 
@@ -26,6 +26,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/), and this project
 
 - **shared Browser runtime:** Serialized Agent actions, user interactions, and snapshots so a queued Agent action cannot leak through after the user takes control.
 - **workspace UX:** Kept Computer and Browser workspace state scoped per Session and synchronized target changes, control ownership, activity summaries, and responsive panel behavior.
+- **wide-screen live workspace:** Pinned Computer and Browser beside the conversation instead of allowing the live surface to overlap messages or stack above the compact Workspace summary.
 - **macOS packaging:** Developer-ID sign and strictly verify every Mach-O in the frozen backend, including Playwright's extensionless Node executable, before notarizing the outer app.
 
 ### Validation
