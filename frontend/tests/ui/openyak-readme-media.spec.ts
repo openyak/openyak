@@ -27,6 +27,12 @@ let slowStreamPort: number | undefined;
 let captureLockServer: Server | undefined;
 let captureSucceeded = false;
 let ultraCapturePhase: "initial" | "partial" | "complete" = "initial";
+let computerUseCapturePhase:
+  | "initial"
+  | "computer-opened"
+  | "computer-returned"
+  | "browser-opened"
+  | "browser-returned" = "initial";
 
 type CaptureRecorder = {
   pause(): void;
@@ -76,6 +82,7 @@ const files = {
 } satisfies Record<string, UploadFixture>;
 
 const gifs = [
+  ["computer-use", "openyak-computer-use.gif"],
   ["workflow-artifacts", "openyak-workflow-artifacts.gif"],
   ["memo-to-brief", "openyak-memo-to-brief.gif"],
   ["ultra-agent-swarm", "openyak-ultra-agent-swarm.gif"],
@@ -547,6 +554,92 @@ test.describe("OpenYak README media capture", () => {
     await saveStill(page, "openyak-artifact-panel.png");
   });
 
+  test("record shared Computer and Browser workspace", async ({ page }) => {
+    await setupCleanApp(page, { computerUseEnabled: true });
+    await mockComputerUseDemo(page);
+    await mockCaptureSession(page, {
+      id: "session-new",
+      title: "Launch checklist verification",
+      outputFiles: [],
+    });
+    await deferCompletedSessionHistory(page, 120_000, {
+      total: 0,
+      offset: 0,
+      messages: [],
+    });
+    computerUseCapturePhase = "initial";
+    await page.goto("/c/new");
+    await expectHome(page);
+
+    const recorder = await startRecorder(page, "computer-use");
+    const prompt =
+      "Review the launch checklist, switch to Notes, then verify the release page in the Browser.";
+    await typePromptWithMotion(
+      page,
+      prompt,
+      3,
+    );
+    await pauseForCapture(page, 500);
+    await submitCurrentPrompt(page, "Launch checklist verification");
+    await expect(page.getByText(prompt, { exact: true }).last()).toBeVisible();
+    await expect(
+      page.getByText("I’ll start with the native checklist in TextEdit."),
+    ).toBeVisible({ timeout: 15_000 });
+    const openComputer = page.getByRole("button", {
+      name: "Open live Computer for TextEdit",
+    });
+    await expect(openComputer).toBeVisible({ timeout: 15_000 });
+    await pauseForCapture(page, 800);
+    await openComputer.click();
+    const taskPanel = page.getByRole("complementary", { name: "Task panel" });
+    const computer = taskPanel.getByRole("region", { name: "Computer" });
+    await expect(computer.getByText("Agent is controlling Computer")).toBeVisible();
+    computerUseCapturePhase = "computer-opened";
+    await pauseForCapture(page, 700);
+
+    await computer
+      .getByRole("combobox", { name: "Target application" })
+      .selectOption("com.apple.Notes");
+    await expect(computer.getByRole("img", { name: "Live view of Notes" })).toBeVisible();
+    await pauseForCapture(page, 1_000);
+
+    await computer.getByRole("button", { name: "Take over" }).click();
+    await expect(computer.getByText("You're controlling Computer")).toBeVisible();
+    await pauseForCapture(page, 1_000);
+    await computer.getByRole("button", { name: "Return to Agent" }).click();
+    await expect(computer.getByText("Agent is controlling Computer")).toBeVisible();
+    await computer.getByRole("button", { name: "Close Computer workspace" }).click();
+    await expect(computer).not.toBeVisible();
+    computerUseCapturePhase = "computer-returned";
+    await expect(
+      page.getByText("The native checklist is complete. I’ll verify the published release in the managed Browser."),
+    ).toBeVisible({ timeout: 15_000 });
+    const openBrowser = page.getByRole("button", {
+      name: "Open live Browser for Releases · openyak/openyak",
+    });
+    await expect(openBrowser).toBeVisible({ timeout: 15_000 });
+    await pauseForCapture(page, 800);
+    await openBrowser.click();
+    const browser = taskPanel.getByRole("region", { name: "Browser" });
+    await expect(browser.getByText("Agent is controlling the Browser")).toBeVisible();
+    computerUseCapturePhase = "browser-opened";
+    await pauseForCapture(page, 700);
+
+    await browser.getByRole("button", { name: "Take over" }).click();
+    await expect(browser.getByText("You're controlling the Browser")).toBeVisible();
+    await pauseForCapture(page, 700);
+    await browser.getByRole("button", { name: "Return to Agent" }).click();
+    await expect(browser.getByText("Agent is controlling the Browser")).toBeVisible();
+    await browser.getByRole("button", { name: "Close Browser workspace" }).click();
+    await expect(browser).not.toBeVisible();
+    computerUseCapturePhase = "browser-returned";
+    await expect(
+      page.getByText("Verified: OpenYak v1.5.0-rc.2 is published as a pre-release"),
+    ).toBeVisible({ timeout: 15_000 });
+    await pauseForCapture(page, 1_500);
+    await recorder.stop();
+  });
+
   test("record memo-to-brief workflow", async ({ page }) => {
     await setupCleanApp(page);
     await mockCaptureSession(page, {
@@ -875,9 +968,13 @@ test.describe("OpenYak README media capture", () => {
   });
 });
 
-async function setupCleanApp(page: Page, options?: Parameters<typeof mockOpenYakApi>[1]) {
+type CleanAppOptions = NonNullable<Parameters<typeof mockOpenYakApi>[1]> & {
+  computerUseEnabled?: boolean;
+};
+
+async function setupCleanApp(page: Page, options?: CleanAppOptions) {
   await seedOpenYakStorage(page, { force: true });
-  await page.addInitScript(() => {
+  await page.addInitScript(({ computerUseEnabled }) => {
     window.localStorage.setItem("theme", "dark");
     window.localStorage.setItem(
       "openyak-settings",
@@ -892,6 +989,8 @@ async function setupCleanApp(page: Page, options?: Parameters<typeof mockOpenYak
           reasoningEnabled: true,
           permissionPresets: { fileChanges: true, runCommands: true },
           savedPermissions: [],
+          computerUseEnabled,
+          browserUseEnabled: true,
           workspaceDirectory: null,
           hasSeenHints: true,
           language: "en",
@@ -900,7 +999,7 @@ async function setupCleanApp(page: Page, options?: Parameters<typeof mockOpenYak
         version: 0,
       }),
     );
-  });
+  }, { computerUseEnabled: options?.computerUseEnabled ?? false });
   await page.addInitScript(() => {
     const inject = () => {
       const style = document.createElement("style");
@@ -932,6 +1031,199 @@ async function setupCleanApp(page: Page, options?: Parameters<typeof mockOpenYak
       });
     });
   }
+}
+
+async function mockComputerUseDemo(page: Page) {
+  let computerOwner: "agent" | "user" = "agent";
+  let selectedApplication = "com.apple.TextEdit";
+  let browserOwner: "agent" | "user" = "agent";
+  let browserUrl = "https://github.com/openyak/openyak/releases";
+
+  await page.route("**/api/computer-control/workspace/status", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        control_owner: computerOwner,
+        selected_application: selectedApplication,
+        applications: [
+          { id: "com.apple.TextEdit", name: "TextEdit", pid: 101, is_running: true },
+          { id: "com.apple.Notes", name: "Notes", pid: 102, is_running: true },
+          { id: "com.apple.Calendar", name: "Calendar", pid: 103, is_running: true },
+        ],
+      }),
+    });
+  });
+  await page.route("**/api/computer-control/workspace/select", async (route) => {
+    const body = route.request().postDataJSON() as { application?: string };
+    selectedApplication = body.application ?? selectedApplication;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        selected_application: selectedApplication,
+        application: {
+          id: selectedApplication,
+          name: selectedApplication === "com.apple.Notes" ? "Notes" : "TextEdit",
+          pid: 102,
+          is_running: true,
+        },
+      }),
+    });
+  });
+  await page.route("**/api/computer-control/workspace/control", async (route) => {
+    const body = route.request().postDataJSON() as { owner?: "agent" | "user" };
+    computerOwner = body.owner ?? computerOwner;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ control_owner: computerOwner }),
+    });
+  });
+  await page.route("**/api/computer-control/workspace/snapshot", async (route) => {
+    const isNotes = selectedApplication === "com.apple.Notes";
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        application: {
+          id: selectedApplication,
+          name: isNotes ? "Notes" : "TextEdit",
+          pid: isNotes ? 102 : 101,
+        },
+        revision: isNotes ? 2 : 1,
+        image_data_url: svgDataUrl(isNotes ? notesDemoSvg() : textEditDemoSvg()),
+        frame: {
+          image_width: 1200,
+          image_height: 800,
+          left: 80,
+          top: 60,
+          width: 1200,
+          height: 800,
+        },
+      }),
+    });
+  });
+
+  await page.route("**/api/browser-control/status", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        control_owner: browserOwner,
+        tabs: [{
+          id: "browser-tab-1",
+          url: browserUrl,
+          title: browserUrl.includes("github.com") ? "Releases · openyak/openyak" : "OpenYak",
+        }],
+      }),
+    });
+  });
+  await page.route("**/api/browser-control/control", async (route) => {
+    const body = route.request().postDataJSON() as { owner?: "agent" | "user" };
+    browserOwner = body.owner ?? browserOwner;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ control_owner: browserOwner }),
+    });
+  });
+  await page.route("**/api/browser-control/interact", async (route) => {
+    const body = route.request().postDataJSON() as { action?: string; url?: string };
+    if (body.action === "navigate" && body.url) browserUrl = body.url;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, tab_id: "browser-tab-1" }),
+    });
+  });
+  await page.route("**/api/browser-control/snapshot**", async (route) => {
+    const isGitHub = browserUrl.includes("github.com");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        tab_id: "browser-tab-1",
+        url: browserUrl,
+        title: isGitHub ? "Releases · openyak/openyak" : "OpenYak",
+        viewport: { width: 1200, height: 800 },
+        image_data_url: svgDataUrl(isGitHub ? githubReleaseDemoSvg() : websiteDemoSvg()),
+      }),
+    });
+  });
+}
+
+function svgDataUrl(svg: string) {
+  return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+}
+
+function textEditDemoSvg() {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800">
+    <rect width="1200" height="800" fill="#f5f5f7"/>
+    <rect width="1200" height="54" fill="#e7e7ea"/>
+    <circle cx="28" cy="27" r="8" fill="#ff5f57"/><circle cx="54" cy="27" r="8" fill="#febc2e"/><circle cx="80" cy="27" r="8" fill="#28c840"/>
+    <text x="600" y="34" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="18" font-weight="600" fill="#34343a">Launch checklist.txt</text>
+    <rect x="115" y="105" width="970" height="610" rx="10" fill="#ffffff" stroke="#d7d7db"/>
+    <text x="175" y="180" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="34" font-weight="700" fill="#202124">Launch readiness</text>
+    <text x="175" y="245" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="24" fill="#45464d">Review the release checklist and capture open owners.</text>
+    <text x="175" y="325" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="22" fill="#1f7a4d">✓ macOS signed and notarized</text>
+    <text x="175" y="380" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="22" fill="#1f7a4d">✓ Browser integration matrix passed</text>
+    <text x="175" y="435" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="22" fill="#9a6400">○ Confirm Windows physical-device QA</text>
+    <rect x="171" y="490" width="690" height="4" rx="2" fill="#f0b429"/>
+    <text x="175" y="550" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="20" fill="#696a72">OpenYak is reading this app through native accessibility.</text>
+  </svg>`;
+}
+
+function notesDemoSvg() {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800">
+    <rect width="1200" height="800" fill="#f4f4f6"/>
+    <rect width="285" height="800" fill="#ececef"/><rect x="285" width="915" height="58" fill="#fafafa"/>
+    <circle cx="28" cy="29" r="8" fill="#ff5f57"/><circle cx="54" cy="29" r="8" fill="#febc2e"/><circle cx="80" cy="29" r="8" fill="#28c840"/>
+    <text x="48" y="112" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="19" font-weight="700" fill="#35363b">Notes</text>
+    <rect x="18" y="142" width="249" height="86" rx="10" fill="#ffe591"/>
+    <text x="36" y="174" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="17" font-weight="700" fill="#3f3b2e">OpenYak v1.5 launch</text>
+    <text x="36" y="202" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="14" fill="#645f4d">Computer Use checklist</text>
+    <text x="345" y="125" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="36" font-weight="700" fill="#222328">OpenYak v1.5 launch</text>
+    <text x="345" y="175" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="17" fill="#8a8b92">Today at 10:42 AM</text>
+    <text x="345" y="245" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="23" fill="#303137">✓ Native app target switching</text>
+    <text x="345" y="302" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="23" fill="#303137">✓ Shared live Computer view</text>
+    <text x="345" y="359" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="23" fill="#303137">✓ Take over and Return to Agent</text>
+    <text x="345" y="416" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="23" fill="#303137">✓ Per-app approval boundary</text>
+    <rect x="345" y="478" width="690" height="106" rx="12" fill="#fff8dc" stroke="#f0d46a"/>
+    <text x="375" y="523" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="20" font-weight="700" fill="#6f5710">Next</text>
+    <text x="375" y="558" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="19" fill="#514b38">Verify the published release page in the managed Browser.</text>
+  </svg>`;
+}
+
+function websiteDemoSvg() {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800">
+    <rect width="1200" height="800" fill="#0d0f12"/>
+    <circle cx="170" cy="160" r="95" fill="#dbff52" opacity=".16"/><circle cx="1040" cy="640" r="170" fill="#6ae4ff" opacity=".1"/>
+    <text x="600" y="205" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="27" font-weight="700" fill="#dbff52">OPENYAK</text>
+    <text x="600" y="310" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="62" font-weight="750" fill="#f8f8f4">Your agent. Your computer.</text>
+    <text x="600" y="368" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="25" fill="#b9bbc2">Local-first tools, files, apps, and a managed Browser.</text>
+    <rect x="434" y="430" width="332" height="62" rx="31" fill="#dbff52"/>
+    <text x="600" y="469" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="20" font-weight="700" fill="#171812">Explore Computer Use</text>
+    <rect x="150" y="580" width="900" height="1" fill="#303238"/>
+    <text x="600" y="642" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="18" fill="#868890">This Browser runs in a dedicated OpenYak profile.</text>
+  </svg>`;
+}
+
+function githubReleaseDemoSvg() {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800">
+    <rect width="1200" height="800" fill="#0d1117"/>
+    <rect width="1200" height="74" fill="#010409"/><text x="54" y="47" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="23" font-weight="700" fill="#f0f6fc">GitHub</text>
+    <text x="110" y="137" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="21" fill="#58a6ff">openyak / openyak</text>
+    <text x="110" y="207" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="31" font-weight="700" fill="#f0f6fc">Releases</text>
+    <rect x="110" y="245" width="980" height="438" rx="12" fill="#161b22" stroke="#30363d"/>
+    <rect x="150" y="285" width="125" height="34" rx="17" fill="#238636"/><text x="212" y="308" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="15" font-weight="700" fill="#ffffff">Pre-release</text>
+    <text x="150" y="370" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="28" font-weight="700" fill="#58a6ff">OpenYak v1.5.0-rc.2</text>
+    <text x="150" y="414" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="21" fill="#c9d1d9">Native Computer Use and Managed Browser</text>
+    <text x="150" y="478" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="18" fill="#8b949e">Shared live workspaces let the Agent act while you watch,</text>
+    <text x="150" y="510" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="18" fill="#8b949e">take over for a delicate step, then return control.</text>
+    <rect x="150" y="560" width="238" height="52" rx="8" fill="#238636"/><text x="269" y="593" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="17" font-weight="700" fill="#ffffff">Download for macOS</text>
+    <rect x="410" y="560" width="238" height="52" rx="8" fill="#21262d" stroke="#30363d"/><text x="529" y="593" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="17" font-weight="700" fill="#f0f6fc">Download for Windows</text>
+  </svg>`;
 }
 
 async function deferCompletedSessionHistory(
@@ -1707,6 +1999,106 @@ async function writeSlowStream(response: ServerResponse, streamId: string) {
     return;
   }
 
+  if (streamId === "stream-computer-use-demo") {
+    await streamText(
+      write,
+      "I’ll start with the native checklist in TextEdit.",
+    );
+    await write(
+      "tool-call",
+      {
+        call_id: "computer-read-launch-checklist",
+        tool: "computer",
+        arguments: {
+          action: "get_app_state",
+          application: "com.apple.TextEdit",
+        },
+        title: "Read launch checklist in TextEdit",
+      },
+      450,
+    );
+    await write(
+      "tool-result",
+      {
+        call_id: "computer-read-launch-checklist",
+        tool: "computer",
+        output: "Read the launch checklist and found the native Computer Use verification items.",
+        title: "Launch checklist in TextEdit",
+        metadata: {
+          surface: "computer",
+          application: "TextEdit",
+          application_id: "com.apple.TextEdit",
+          action: "get_app_state",
+          image_data_url: svgDataUrl(textEditDemoSvg()),
+          image_width: 1200,
+          image_height: 800,
+        },
+      },
+      500,
+    );
+    await waitForComputerUsePhase("computer-returned");
+    await streamText(
+      write,
+      "The native checklist is complete. I’ll verify the published release in the managed Browser.",
+    );
+    await write(
+      "tool-call",
+      {
+        call_id: "browser-verify-openyak-release",
+        tool: "browser",
+        arguments: {
+          action: "open",
+          url: "https://github.com/openyak/openyak/releases",
+        },
+        title: "Open OpenYak releases",
+      },
+      450,
+    );
+    await write(
+      "tool-result",
+      {
+        call_id: "browser-verify-openyak-release",
+        tool: "browser",
+        output: "Opened the OpenYak releases page and found v1.5.0-rc.2.",
+        title: "OpenYak releases",
+        metadata: {
+          surface: "browser",
+          tab_id: "browser-tab-1",
+          application: "Releases · openyak/openyak",
+          action: "open",
+          image_data_url: svgDataUrl(githubReleaseDemoSvg()),
+          image_width: 1200,
+          image_height: 800,
+        },
+      },
+      500,
+    );
+    await waitForComputerUsePhase("browser-returned");
+    await streamText(
+      write,
+      "Verified: OpenYak v1.5.0-rc.2 is published as a pre-release with macOS and Windows downloads. The live Computer and Browser workspaces are back under Agent control.",
+    );
+    // Keep the final Agent answer visible long enough for the README demo
+    // before the completed stream refreshes from persisted history.
+    await delayMs(2_500);
+    await write(
+      "step-finish",
+      {
+        reason: "stop",
+        tokens: { input: 3180, output: 186, reasoning: 44 },
+        cost: 0,
+      },
+      300,
+    );
+    await write(
+      "done",
+      { session_id: "session-new", finish_reason: "stop" },
+      0,
+    );
+    response.end();
+    return;
+  }
+
   if (streamId === "stream-auto-compact") {
     await write("text-delta", { text: "I am checking the long context before answering." }, 650);
     await write("compaction-start", { phases: ["prune", "summarize"] }, 450);
@@ -1742,6 +2134,19 @@ async function writeSlowStream(response: ServerResponse, streamId: string) {
   await write("step-finish", { reason: "stop", tokens: { input: 4200, output: 620, reasoning: 80 }, cost: 0 }, 350);
   await write("done", { session_id: "session-new", finish_reason: "stop" }, 0);
   response.end();
+}
+
+async function waitForComputerUsePhase(
+  expected: typeof computerUseCapturePhase,
+  timeoutMs = 20_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  while (computerUseCapturePhase !== expected && Date.now() < deadline) {
+    await delayMs(80);
+  }
+  if (computerUseCapturePhase !== expected) {
+    throw new Error(`Timed out waiting for Computer Use capture phase: ${expected}`);
+  }
 }
 
 async function streamText(

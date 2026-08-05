@@ -11,13 +11,13 @@
 </p>
 
 <p align="center">
-  <img src="docs/readme/openyak-ultra-agent-swarm.gif" width="900" alt="OpenYak Ultra Agent Swarm runs parallel child agents and synthesizes their work in the parent task" />
+  <img src="docs/readme/openyak-computer-use.gif" width="900" alt="OpenYak switches between a native Computer workspace and a managed Browser, with live view and shared control between the Agent and user" />
 </p>
 
 <h3 align="center">A local-first agent runtime for reliable tool-using models, with a desktop workspace built on top.</h3>
 
 <p align="center">
-  Run an agent on your own computer, work with local files, use local models when you can, and choose cloud providers only when you want them.
+  Run an agent on your own computer, work across local files, native apps, and a managed Browser, and choose local or cloud models on your terms.
 </p>
 
 ---
@@ -29,9 +29,32 @@ OpenYak is built for people who want an AI agent that lives on their machine ins
 - **No OpenYak account.** Install the app, choose a local model or bring your own provider key, and start working without login, billing, seats, or recharge flows.
 - **Local-first agent runtime.** Files, conversations, memory, generated artifacts, tool permissions, and workflow state stay on your device.
 - **Work from your actual files.** Attach DOCX, XLSX, PPTX, PDFs, CSVs, and local project context, then ask for briefs, tables, follow-ups, plans, and reusable artifacts.
+- **Let the Agent use apps and websites.** Watch a shared live Computer or Browser workspace, take over for a delicate step, then return control without restarting the task.
 - **Keep the workflow in one thread.** Start with analysis, continue into a RACI, ask for a follow-up email, and preserve context across long conversations.
 - **Choose your model boundary.** Run local models through [Rapid-MLX](https://github.com/raullenchai/Rapid-MLX) or [Ollama](https://ollama.com), or opt into direct BYOK calls to OpenRouter, OpenAI, Anthropic, Google, and other providers.
 - **Use your desktop agent from another device.** Remote access lets you scan a QR code and send tasks to your computer through a secure tunnel.
+
+## Computer Use, with You in Control
+
+> **New in the [v1.5 release candidate](https://github.com/openyak/openyak/releases/tag/v1.5.0-rc.2).** Native Computer currently ships for macOS and Windows. The rest of OpenYak continues to support Linux, but Linux Computer Use is not a v1.5 release gate.
+
+OpenYak gives the Agent two purpose-built, shared workspaces instead of treating every interface as a stream of blind coordinate clicks:
+
+- **Native Computer:** work in macOS and Windows applications through accessibility elements first, with a live app view, target-app selector, and coordinate input only as a fallback.
+- **Managed Browser:** navigate and interact with websites in a dedicated OpenYak browser profile using tabs, page elements, screenshots, dialogs, and browser diagnostics.
+- **Shared control:** follow the Agent's work live, choose **Take over** to click, type, or scroll yourself, then choose **Return to Agent** to continue the same task.
+- **Scoped permissions:** approve native access per application and Browser access per website origin. Credentials stay user-entered, and consequential actions still require confirmation. The managed Browser remains separate from your everyday signed-in Chrome profile.
+
+Choose **Use → Computer** to pin the task to a native app, **Browser** to pin it to the managed Browser, or **Auto** to let the Agent choose the appropriate tools for that turn. The selected mode stays visible in the composer, and every Computer or Browser tool observation identifies the active surface before you open its live workspace. For example:
+
+```text
+Review the launch checklist, switch to Notes, then verify the release page in the Browser.
+Keep me in the live workspace and hand control back whenever I take over.
+```
+
+The demo uses sample apps and websites whose approvals are already granted so the short walkthrough can show the actual task sequence: user message, streaming Agent response, Computer and Browser tool observations, opening each live workspace, takeover and return, then the Agent's final verification. In normal use, macOS asks for Accessibility and Screen Recording access; Windows keeps the target app visible on the active desktop, and UAC secure desktop is outside the runtime. If you select a cloud model, the relevant app or page state needed for the task is sent directly to that provider as model context.
+
+Read the [Computer Use architecture, supported actions, safety model, and platform status](docs/computer-use.md).
 
 ## What It Feels Like
 
@@ -41,6 +64,7 @@ OpenYak is built for people who want an AI agent that lives on their machine ins
 | Analyze a workbook | Budget vs. actual variance, drivers, anomalies, and finance talking points |
 | Review a deck | Slide-by-slide story, evidence gaps, speaker notes, and decision ask |
 | Synthesize several files | One board brief that reconciles memo, budget, deck, and PDF context |
+| Work in a native app or website | A shared live workspace where the Agent acts and you can take over at any time |
 | Split work across agents | Parallel child-agent tasks with links back to each focused session |
 | Continue the same thread | RACI, 30-day plan, agenda, and follow-up drafts without restating context |
 | Recover from an error | Clear next step when upload, auth, or file parsing fails |
@@ -111,15 +135,17 @@ Real office work rarely fits in one message. OpenYak is designed for follow-ups,
 
 > [Download the latest release](https://github.com/openyak/openyak/releases/latest) or visit [open-yak.com/download](https://open-yak.com/download/).
 >
+> To try Computer Use now, download the [v1.5 release candidate](https://github.com/openyak/openyak/releases/tag/v1.5.0-rc.2).
+>
 > Linux users can also read [LINUX.md](LINUX.md) for requirements and troubleshooting.
 
 ## Get Started
 
 1. **Install OpenYak** for your platform.
 2. **Choose where inference runs:** local Rapid-MLX/Ollama for offline work, or a BYOK cloud provider when you want hosted models.
-3. **Start a new conversation** and attach a real file.
-4. **Ask for a deliverable**, not just a summary: brief, action plan, RACI, email, table, or artifact.
-5. **Review the result** in the chat and artifact panel, then continue in the same thread.
+3. **Start a new conversation** and attach a real file, or choose **Use → Computer / Browser** for an interactive task.
+4. **Ask for a deliverable**, not just a summary: brief, action plan, RACI, email, table, artifact, or a completed app workflow.
+5. **Follow the work live.** Review the result, take over when needed, and continue in the same thread.
 
 Example prompt:
 
@@ -171,6 +197,7 @@ Any provider not listed above can still be used through a custom OpenAI-compatib
 - **File understanding:** office docs, spreadsheets, slide decks, PDFs, CSVs, local folders, and generated artifacts.
 - **Artifact workspace:** reusable Markdown briefs, tables, diagrams, checklists, and structured outputs.
 - **Tool execution:** read, write, rename, organize, and automate files with user-controlled permissions.
+- **Computer Use:** shared native-app and managed-Browser workspaces with live view, scoped approval, target switching, and user takeover.
 - **Long-context work:** continue from analysis to planning to follow-up without starting over.
 - **Remote access:** connect from mobile through QR code and Cloudflare Tunnel.
 - **Automations:** schedule recurring cleanup, reporting, and file workflows.

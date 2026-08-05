@@ -76,22 +76,41 @@ export function useTaskPanelWidth(): number {
   return width;
 }
 
-/** Whether the unified task panel has anything to show. */
-export function useTaskPanelOpen(isActiveChat: boolean): boolean {
+/**
+ * One source of truth for how the right-hand panel is presented. The shell
+ * and the panel must agree on `summaryOnly`: the shell uses it to decide
+ * whether the panel may float over spare canvas, while the panel uses it to
+ * choose its transparent summary treatment.
+ */
+export function useTaskPanelPresentation(isActiveChat: boolean) {
   const planIsOpen = usePlanReviewStore((s) => s.isOpen);
   const artifactIsOpen = useArtifactStore((s) => s.isOpen);
   const activityIsOpen = useActivityStore((s) => s.isOpen);
   const workspaceIsOpen = useWorkspaceStore((s) => s.isOpen);
   const browserIsOpen = useBrowserWorkspaceStore((s) => s.isOpen);
   const computerIsOpen = useComputerWorkspaceStore((s) => s.isOpen);
-  return (
+  const liveSurfaceIsOpen = browserIsOpen || computerIsOpen;
+  const showWorkspace =
+    isActiveChat && workspaceIsOpen && !liveSurfaceIsOpen;
+  const summaryOnly =
+    showWorkspace && !planIsOpen && !artifactIsOpen && !activityIsOpen;
+  const isOpen =
     planIsOpen ||
     artifactIsOpen ||
     activityIsOpen ||
-    browserIsOpen ||
-    computerIsOpen ||
-    (isActiveChat && workspaceIsOpen)
-  );
+    liveSurfaceIsOpen ||
+    (isActiveChat && workspaceIsOpen);
+
+  return {
+    activityIsOpen,
+    artifactIsOpen,
+    browserIsOpen,
+    computerIsOpen,
+    isOpen,
+    planIsOpen,
+    showWorkspace,
+    summaryOnly,
+  };
 }
 
 function ResizeHandle() {
@@ -262,23 +281,22 @@ export function TaskPanel({ isActiveChat }: { isActiveChat: boolean }) {
   const { t } = useTranslation("chat");
   const isDesktop = useIsDesktop();
   const isMac = useIsMacOS();
-  const planIsOpen = usePlanReviewStore((s) => s.isOpen);
-  const artifactIsOpen = useArtifactStore((s) => s.isOpen);
-  const activityIsOpen = useActivityStore((s) => s.isOpen);
-  const workspaceIsOpen = useWorkspaceStore((s) => s.isOpen);
-  const browserIsOpen = useBrowserWorkspaceStore((s) => s.isOpen);
-  const computerIsOpen = useComputerWorkspaceStore((s) => s.isOpen);
+  const {
+    activityIsOpen,
+    artifactIsOpen,
+    browserIsOpen,
+    computerIsOpen,
+    isOpen,
+    planIsOpen,
+    showWorkspace,
+    summaryOnly: workspaceOnly,
+  } = useTaskPanelPresentation(isActiveChat);
   const collapsed = useTaskPanelStore((s) => s.collapsed);
   const width = useTaskPanelWidth();
-  const isOpen = useTaskPanelOpen(isActiveChat);
 
   const topOffset = IS_DESKTOP && !isMac ? TITLE_BAR_HEIGHT : 0;
 
   if (!isDesktop || !isOpen) return null;
-
-  const showWorkspace = isActiveChat && workspaceIsOpen;
-  const workspaceOnly =
-    showWorkspace && !planIsOpen && !artifactIsOpen && !activityIsOpen && !browserIsOpen && !computerIsOpen;
 
   return (
     <motion.aside

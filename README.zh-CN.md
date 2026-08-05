@@ -11,13 +11,13 @@
 </p>
 
 <p align="center">
-  <img src="docs/readme/openyak-ultra-agent-swarm.gif" width="900" alt="OpenYak Ultra Agent Swarm 并行运行多个子 Agent，并在父任务中统一综合结果" />
+  <img src="docs/readme/openyak-computer-use.gif" width="900" alt="OpenYak 在原生 Computer 工作区与托管 Browser 之间切换，并由 Agent 和用户共享实时画面与控制权" />
 </p>
 
 <h3 align="center">面向可靠工具调用模型的本地优先 Agent Runtime，以及构建在它之上的桌面工作台。</h3>
 
 <p align="center">
-  在自己的电脑上运行 agent，处理本地文件，优先使用本地模型，只在你主动选择时连接云端模型提供商。
+  在自己的电脑上运行 agent，跨本地文件、原生应用和托管 Browser 工作，并按你的边界选择本地或云端模型。
 </p>
 
 ---
@@ -29,9 +29,32 @@ OpenYak 不是另一个必须登录的云端工作区，而是一个运行在你
 - **不需要 OpenYak 账号。** 安装应用，选择本地模型或自带 provider key，就可以开始工作；没有登录、账单、席位或充值流程。
 - **本地优先的 agent runtime。** 文件、对话、记忆、生成的 artifact、工具权限和工作流状态都留在你的设备上。
 - **直接处理真实文件。** 上传 DOCX、XLSX、PPTX、PDF、CSV 和本地项目上下文，生成 brief、表格、follow-up、计划和可复用 artifact。
+- **让 Agent 使用应用和网站。** 在共享的 Computer 或 Browser 实时画面中观察执行，敏感步骤可以随时接管，完成后再把控制权交还给 Agent。
 - **同一个线程走完整流程。** 先分析文件，再继续生成 RACI、follow-up 邮件、会议 agenda，不需要反复重讲背景。
 - **自由选择模型边界。** 通过 [Rapid-MLX](https://github.com/raullenchai/Rapid-MLX) 或 [Ollama](https://ollama.com) 本地运行模型；需要云端模型时，再使用自己的 OpenRouter、OpenAI、Anthropic、Google 等 provider key。
 - **从其他设备访问桌面 agent。** 开启远程访问后扫码连接，通过安全 tunnel 把任务发给你的电脑执行。
+
+## Computer Use：Agent 执行，你掌握控制权
+
+> **[v1.5 Release Candidate](https://github.com/openyak/openyak/releases/tag/v1.5.0-rc.2) 新功能。** 原生 Computer 当前面向 macOS 和 Windows；OpenYak 其他能力继续支持 Linux，但 Linux Computer Use 不属于 v1.5 release gate。
+
+OpenYak 提供两个为 Agent 专门设计、并与用户共享的工作区，而不是把所有界面都退化成盲目的坐标点击：
+
+- **原生 Computer：** 优先通过 accessibility element 操作 macOS 和 Windows 应用；工作区提供应用实时画面、目标应用切换，并只在必要时回退到坐标输入。
+- **托管 Browser：** 在 OpenYak 独立浏览器 profile 中使用标签页、页面元素、截图、对话框和浏览器诊断能力完成网站任务。
+- **共享控制：** 实时观察 Agent 工作；点击 **Take over** 后可以自己点击、输入和滚动，再点击 **Return to Agent** 延续同一个任务。
+- **范围明确的权限：** 原生应用按 app 授权，Browser 按网站 origin 授权；凭据始终由用户输入，重要操作仍需单独确认；托管 Browser 不会复用你日常登录的 Chrome profile。
+
+在输入框的 **Use** 菜单选择 **Computer**，会把任务固定到原生应用；选择 **Browser**，会固定到托管 Browser；选择 **Auto**，则由 Agent 为当前一轮选择合适工具。输入框会持续显示所选模式；每次 Computer 或 Browser 工具观察也会先标明当前界面，再由你打开对应的实时工作区。例如：
+
+```text
+检查发布清单，切换到备忘录，然后在 Browser 中核对 Release 页面。
+始终把实时工作区展示给我；我接管后，再从当前状态继续。
+```
+
+上方 demo 使用了已经授权的示例 app 和网站，但展示的是完整任务时序：用户发送消息、Agent 流式回复、Computer 与 Browser 工具观察、打开实时工作区、用户接管和交还，最后由 Agent 给出核验结果。正常使用仍会显示真实授权流程。macOS 需要 Accessibility 和 Screen Recording 权限；Windows 需要目标应用保持在当前桌面可见，UAC secure desktop 不在控制范围内。选择云端模型时，完成任务所需的相关应用或页面状态会作为模型上下文直接发送给该 provider。
+
+完整的[架构、支持动作、安全模型和平台状态](docs/computer-use.md)见 Computer Use 文档。
 
 ## 它解决什么问题
 
@@ -41,6 +64,7 @@ OpenYak 不是另一个必须登录的云端工作区，而是一个运行在你
 | 分析一个 workbook | Budget / actual variance、驱动因素、异常和财务会议口径 |
 | 审阅一份 deck | 每页叙事、证据缺口、speaker notes 和最后的 decision ask |
 | 综合多份文件 | 把 memo、预算表、deck、PDF 对齐成一份 board brief |
+| 操作原生应用或网站 | 打开一个共享实时工作区，由 Agent 执行，并允许你随时接管 |
 | 拆给多个 agent 并行处理 | 多个 child-agent task、独立会话链接和汇总结果 |
 | 在同一线程继续追问 | RACI、30 天计划、agenda 和 follow-up 草稿 |
 | 遇到错误 | 上传、鉴权、文件解析失败时给出清楚的恢复路径 |
@@ -111,15 +135,17 @@ OpenYak 可以在同一个线程里综合多份文件，并在右侧 artifact pa
 
 > [下载最新版本](https://github.com/openyak/openyak/releases/latest) 或访问 [open-yak.com/download](https://open-yak.com/download/)。
 >
+> 现在体验 Computer Use，请下载 [v1.5 Release Candidate](https://github.com/openyak/openyak/releases/tag/v1.5.0-rc.2)。
+>
 > Linux 用户可以查看 [LINUX.md](LINUX.md) 了解依赖、安装和排障说明。
 
 ## 快速开始
 
 1. **安装 OpenYak。** 下载适合你系统的安装包。
 2. **选择推理运行在哪里。** 用 Rapid-MLX / Ollama 在本地或离线运行；需要托管模型时，再连接 BYOK 云端 provider。
-3. **新建会话并上传真实文件。**
-4. **直接说你要的交付物。** 比如 brief、行动计划、RACI、邮件、表格或 artifact。
-5. **检查结果并继续追问。** 在同一个线程里继续从分析推进到执行。
+3. **新建会话。** 上传真实文件，或为交互任务选择 **Use → Computer / Browser**。
+4. **直接说你要的交付物。** 比如 brief、行动计划、RACI、邮件、表格、artifact，或完成一个应用工作流。
+5. **实时跟进执行。** 检查结果、按需接管，再在同一个线程里继续。
 
 示例 prompt：
 
@@ -171,6 +197,7 @@ OpenYak 可以在同一个线程里综合多份文件，并在右侧 artifact pa
 - **文件理解：** office 文档、表格、演示文稿、PDF、CSV、本地文件夹和生成的 artifact。
 - **Artifact 工作区：** 可复用 Markdown brief、表格、流程图、清单和结构化输出。
 - **工具执行：** 读取、写入、重命名、整理和自动化文件，并由用户控制权限。
+- **Computer Use：** 共享的原生应用与托管 Browser 工作区，支持实时画面、范围授权、目标切换和用户接管。
 - **长上下文任务：** 从分析到计划再到 follow-up，不需要重新开始。
 - **远程访问：** 通过二维码和 Cloudflare Tunnel 从手机连接桌面端。
 - **自动化任务：** 定时清理、报告、文件整理和重复工作流。

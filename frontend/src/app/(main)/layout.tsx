@@ -13,7 +13,7 @@ import { ArtifactPanel } from "@/components/artifacts/artifact-panel";
 import { PlanReviewPanel } from "@/components/plan-review/plan-review-panel";
 import {
   TaskPanel,
-  useTaskPanelOpen,
+  useTaskPanelPresentation,
   useTaskPanelWidth,
 } from "@/components/task-panel/task-panel";
 import { usePlanReviewStore } from "@/stores/plan-review-store";
@@ -32,7 +32,6 @@ import { useIsMacOS } from "@/hooks/use-platform";
 import { useTraySync } from "@/hooks/use-tray-sync";
 import { useActivityStore } from "@/stores/activity-store";
 import { useArtifactStore } from "@/stores/artifact-store";
-import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useChatStore } from "@/stores/chat-store";
 import {
   IS_DESKTOP,
@@ -157,10 +156,6 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   const closeArtifact = useArtifactStore((s) => s.close);
   const closePlanReview = usePlanReviewStore((s) => s.close);
   const focusedSessionId = useChatStore((s) => s.focusedSessionId);
-  const activityIsOpen = useActivityStore((s) => s.isOpen);
-  const artifactIsOpen = useArtifactStore((s) => s.isOpen);
-  const planReviewIsOpen = usePlanReviewStore((s) => s.isOpen);
-  const workspaceIsOpen = useWorkspaceStore((s) => s.isOpen);
   useEffect(() => {
     closeActivity();
     closeArtifact();
@@ -189,14 +184,11 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   // Settings replaces the sidebar with its own; always keep the gutter.
   const marginLeft =
     isDesktop && (isSettingsPage || !isCollapsed) ? sidebarWidth : 0;
-  const taskPanelOpen = useTaskPanelOpen(isActiveChat);
+  const {
+    isOpen: taskPanelOpen,
+    summaryOnly: workspaceOnly,
+  } = useTaskPanelPresentation(isActiveChat);
   const taskPanelWidth = useTaskPanelWidth();
-  const workspaceOnly =
-    isActiveChat &&
-    workspaceIsOpen &&
-    !planReviewIsOpen &&
-    !artifactIsOpen &&
-    !activityIsOpen;
   const marginRight =
     isDesktop &&
     taskPanelOpen &&

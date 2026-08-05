@@ -2300,6 +2300,8 @@ export async function mockOpenYakApi(
       if (/auto compress/i.test(text)) streamId = "stream-auto-compact";
       if (/permission/i.test(text)) streamId = "stream-permission";
       if (/computer app approval/i.test(text)) streamId = "stream-computer-permission";
+      if (/review the launch checklist, switch to notes/i.test(text))
+        streamId = "stream-computer-use-demo";
       if (/question/i.test(text)) streamId = "stream-question";
       if (/plan review/i.test(text)) streamId = "stream-plan";
       if (/text then tool cursor/i.test(text))
