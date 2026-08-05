@@ -163,15 +163,6 @@ jobs:
         run: |
           BUNDLE_BACKEND="desktop-tauri/src-tauri/target/${{ matrix.target }}/release/bundle/macos/OpenYak.app/Contents/Resources/backend"
 
-          # Sign all .dylib and .so files
-          find "$BUNDLE_BACKEND" -type f \( -name "*.dylib" -o -name "*.so" \) \
-            -exec codesign --force --options runtime --timestamp \
-            --sign "$SIGNING_IDENTITY" {} \;
-
-          # Sign backend executable
-          codesign --force --options runtime --timestamp \
-            --sign "$SIGNING_IDENTITY" "$BUNDLE_BACKEND/openyak-backend"
-
           # Fix Python.framework symlink structure (Tauri resolves symlinks to regular files)
           FW_PATH="$BUNDLE_BACKEND/_internal/Python.framework"
           if [ -d "$FW_PATH" ]; then
@@ -187,10 +178,6 @@ jobs:
               fi
               ln -s Versions/Current/Python "$FW_PATH/Python"
             fi
-
-            # Sign the actual versioned binary
-            codesign --force --options runtime --timestamp \
-              --sign "$SIGNING_IDENTITY" "$FW_PATH/Versions/3.12/Python"
           fi
 
           # Fix _internal/Python symlink
@@ -199,6 +186,13 @@ jobs:
             rm "$PYTHON_BIN"
             ln -s Python.framework/Versions/Current/Python "$PYTHON_BIN"
           fi
+
+          # Sign by binary format rather than filename. Playwright embeds an
+          # extensionless Node Mach-O, and any unsigned nested executable makes
+          # Apple reject the entire app during notarization.
+          python3 scripts/sign_macos_backend.py \
+            "$BUNDLE_BACKEND" \
+            --identity "$SIGNING_IDENTITY"
 
       # Re-sign the .app after modifying backend binaries
       - name: Re-sign app bundle
@@ -221,11 +215,29 @@ jobs:
         run: |
           APP_PATH="desktop-tauri/src-tauri/target/${{ matrix.target }}/release/bundle/macos/OpenYak.app"
           ditto -c -k --keepParent "$APP_PATH" /tmp/OpenYak-notarize.zip
+
+          set +e
           xcrun notarytool submit /tmp/OpenYak-notarize.zip \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
-            --wait
+            --wait \
+            --output-format json | tee /tmp/OpenYak-notary-result.json
+          SUBMIT_STATUS=${PIPESTATUS[0]}
+          set -e
+
+          SUBMISSION_ID=$(python3 -c \
+            'import json; print(json.load(open("/tmp/OpenYak-notary-result.json")).get("id", ""))')
+          if [ "$SUBMIT_STATUS" -ne 0 ]; then
+            if [ -n "$SUBMISSION_ID" ]; then
+              xcrun notarytool log "$SUBMISSION_ID" \
+                --apple-id "$APPLE_ID" \
+                --password "$APPLE_PASSWORD" \
+                --team-id "$APPLE_TEAM_ID" || true
+            fi
+            exit "$SUBMIT_STATUS"
+          fi
+
           xcrun stapler staple "$APP_PATH"
 
       - name: Verify backend inside signed .app
