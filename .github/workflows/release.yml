@@ -400,6 +400,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           draft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
           body_path: CHECKSUMS.md
           append_body: true
@@ -478,4 +479,6 @@ jobs:
       - name: Upload manifest as release asset
         uses: softprops/action-gh-release@v2
         with:
+          draft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: latest.json
