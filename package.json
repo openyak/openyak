@@ -1,6 +1,6 @@
 {
   "name": "openyak",
-  "version": "1.5.0-rc.1",
+  "version": "1.5.0-rc.2",
   "private": true,
   "license": "Apache-2.0",
   "description": "OpenYak — local-first AI agent for desktop work",
