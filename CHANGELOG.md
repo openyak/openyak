@@ -6,6 +6,35 @@ Format follows [Keep a Changelog](https://keepachangelog.com/), and this project
 
 ## [Unreleased]
 
+## [1.5.0-rc.1] - 2026-08-04
+
+### Added
+
+- **Computer workspace:** Added native Computer Use on macOS and Windows with live screen sharing, app/window targeting, mouse, keyboard, scrolling, drag, screenshot, and wait actions.
+- **shared control:** Added explicit user takeover and hand-back controls. Agent actions pause while the user owns the Computer or Browser workspace and resume only after control is returned.
+- **Browser workspace:** Added an in-app Playwright browser with live snapshots, navigation, element interaction, tabs, downloads, and the same shared-control contract as native Computer Use.
+- **permissions:** Added first-class Computer and Browser permission prompts, remembered policies, macOS Screen Recording and Accessibility guidance, and capability/status APIs for desktop clients.
+- **agent evaluation:** Added a versioned runtime evaluation harness, repeatable task suites, scoring, live-provider execution, benchmark reports, and CI smoke coverage for core Agent tools.
+
+### Changed
+
+- **agent runtime:** Aligned Computer and Browser execution with OpenAI-style tool loops, structured action results, live workspace events, cancellation, permission enforcement, and bounded screenshot handling.
+- **desktop packaging:** Bundled the native automation and browser runtime dependencies required by frozen macOS and Windows builds.
+- **updates:** Desktop updater artifacts and `latest.json` are now served from the same immutable GitHub Release.
+
+### Fixed
+
+- **shared Browser runtime:** Serialized Agent actions, user interactions, and snapshots so a queued Agent action cannot leak through after the user takes control.
+- **workspace UX:** Kept Computer and Browser workspace state scoped per Session and synchronized target changes, control ownership, activity summaries, and responsive panel behavior.
+
+### Validation
+
+- Backend suite: 1,341 passed, 23 skipped; focused Computer/Browser contract suite: 50 passed.
+- Frontend unit tests: 63 passed; related Chromium workspace tests: 10 passed with 2 intentional mobile skips.
+- GitHub checks passed for the merged Computer Use implementation: backend tests, offline Agent smoke suite, TypeScript, and ESLint.
+- Real macOS Agent runs completed against TextEdit and Calendar, including live native control and application switching.
+- Windows runtime contracts are covered in CI; the signed RC installer still requires final smoke testing on a physical Windows machine before the stable 1.5.0 release.
+
 ## [1.4.0] - 2026-07-23
 
 ### Added
