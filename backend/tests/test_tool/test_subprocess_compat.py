@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from app.tool.subprocess_compat import (
@@ -54,7 +56,12 @@ class TestFindShell:
     @pytest.mark.skipif(not IS_WINDOWS, reason="Windows-only")
     def test_windows_uses_powershell(self):
         result = find_shell()
-        assert result[0] == "powershell.exe"
+        # find_shell prefers PowerShell 7 when installed, which shutil.which
+        # resolves to an absolute path, and falls back to the built-in 5.1.
+        # Asserting the literal "powershell.exe" fails on any machine that has
+        # PowerShell 7, including the GitHub Windows runners.
+        assert Path(result[0]).stem.casefold() in {"pwsh", "powershell"}
+        assert result[1:] == ["-NoProfile", "-Command"]
 
     @pytest.mark.skipif(IS_WINDOWS, reason="Non-Windows only")
     def test_non_windows_uses_bash_or_sh(self):
