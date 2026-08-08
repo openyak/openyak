@@ -160,6 +160,44 @@ def test_element_indices_stay_bound_to_the_same_element(runtime, notepad):
     assert not drifted, f"{len(drifted)} indices now point at a different element"
 
 
+def test_cached_and_live_tree_reads_agree(runtime, notepad):
+    """The bulk cache fetch must be a faithful drop-in for the live walk.
+
+    get_app_state prefers one BuildUpdatedCache over per-property cross-process
+    reads and falls back to the live walk when a provider refuses. Both paths
+    have to describe the same tree, or a fallback would silently change what the
+    model sees.
+    """
+    import uiautomation as auto
+
+    root = auto.ControlFromHandle(int(notepad.identifier))
+    cached, cached_handles = runtime._read_tree_cached(root, "agree-cached", notepad)
+    live, live_handles = runtime._read_tree_live(root, "agree-live", notepad)
+
+    def shape(elements):
+        return [
+            (item.role, item.name, item.subrole, item.depth, item.bounds)
+            for item in elements
+        ]
+
+    assert len(cached) == len(live)
+    assert shape(cached) == shape(live)
+    assert set(cached_handles) and set(live_handles)
+
+
+def test_cached_read_falls_back_to_the_live_walk(runtime, notepad, monkeypatch):
+    """A provider that refuses a cached request must not break the snapshot."""
+    def refuse(*_args, **_kwargs):
+        raise OSError("provider refused the cache request")
+
+    monkeypatch.setattr(
+        type(runtime), "_read_tree_cached", refuse, raising=True
+    )
+    state = _state(runtime, notepad, session="fallback", disable_diff=True)
+    assert len(state.elements) > 5
+    assert all(item.actions for item in state.elements)
+
+
 def test_second_read_returns_a_diff(runtime, notepad):
     _state(runtime, notepad, session="diffing", disable_diff=True)
     diff = _state(runtime, notepad, session="diffing")

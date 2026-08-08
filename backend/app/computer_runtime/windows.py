@@ -12,6 +12,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from ctypes import wintypes
+from dataclasses import replace
 from typing import Any, Callable, TypeVar
 
 from app.computer_runtime.base import AppDescriptor, AppState, ElementSnapshot
@@ -74,6 +75,51 @@ _STRUCTURAL_ROLES = frozenset({
 _ENDPOINT_START = 0
 _ENDPOINT_END = 1
 _TEXT_UNIT_CHARACTER = 0
+_TREE_SCOPE_SUBTREE = 7
+
+
+def _PROPERTIES() -> Any:
+    import uiautomation as auto
+
+    return auto.PropertyId
+
+
+def _AUTOMATION_CLIENT() -> Any:
+    """The process-wide IUIAutomation, which owns cache requests."""
+    from uiautomation import uiautomation as internals
+
+    return internals._AutomationClient.instance().IUIAutomation
+
+
+@functools.lru_cache(maxsize=1)
+def _role_names() -> dict[int, str]:
+    """UIA control-type ids to the names the rest of the contract uses."""
+    import uiautomation as auto
+
+    return dict(auto.ControlTypeNames)
+
+
+@functools.lru_cache(maxsize=1)
+def _cached_property_ids() -> tuple[Any, ...]:
+    properties = _PROPERTIES()
+    return (
+        properties.RuntimeIdProperty,
+        properties.NameProperty,
+        properties.ControlTypeProperty,
+        properties.ClassNameProperty,
+        properties.AutomationIdProperty,
+        properties.HelpTextProperty,
+        properties.IsEnabledProperty,
+        properties.HasKeyboardFocusProperty,
+        properties.BoundingRectangleProperty,
+        properties.ValueValueProperty,
+        properties.IsInvokePatternAvailableProperty,
+        properties.IsExpandCollapsePatternAvailableProperty,
+        properties.IsSelectionItemPatternAvailableProperty,
+        properties.IsTogglePatternAvailableProperty,
+        properties.IsScrollItemPatternAvailableProperty,
+    )
+
 
 _T = TypeVar("_T")
 _thread_state = threading.local()
@@ -367,6 +413,133 @@ class WindowsComputerRuntime:
             raise WindowsComputerRuntimeError(
                 f"'{descriptor.name}' did not expose a UI Automation tree"
             )
+        elements, handles = self._read_tree(root, session_id, descriptor)
+        previous = self._states.previous(session_id, descriptor.identifier)
+        revision, changed, removed = self._states.save(
+            session_id, descriptor.identifier, elements, handles
+        )
+        screenshot, width, height, bounds, reason = _capture_window(hwnd)
+        is_diff = previous is not None and not disable_diff
+        return AppState(
+            app=descriptor,
+            elements=[item for item in elements if item.index in changed] if is_diff else elements,
+            screenshot_data_url=screenshot,
+            screenshot_width=width,
+            screenshot_height=height,
+            screenshot_bounds=bounds,
+            revision=revision,
+            changed_indices=changed,
+            removed_indices=removed,
+            is_diff=is_diff,
+            screenshot_unavailable_reason=reason,
+        )
+
+    def _read_tree(
+        self, root: Any, session_id: str, descriptor: AppDescriptor
+    ) -> tuple[list[ElementSnapshot], dict[int, Any]]:
+        """Snapshot the accessibility tree, preferring a single bulk fetch.
+
+        Reading properties one at a time is a cross-process COM call each, which
+        is what UI Automation's cache requests exist to avoid: one
+        BuildUpdatedCache pulls the whole subtree and every property we need,
+        after which the walk is in-process. Falls back to the live walk for apps
+        whose providers refuse a cached request.
+        """
+        try:
+            return self._read_tree_cached(root, session_id, descriptor)
+        except Exception:
+            return self._read_tree_live(root, session_id, descriptor)
+
+    def _read_tree_cached(
+        self, root: Any, session_id: str, descriptor: AppDescriptor
+    ) -> tuple[list[ElementSnapshot], dict[int, Any]]:
+        auto = self._auto
+        request = _AUTOMATION_CLIENT().CreateCacheRequest()
+        for property_id in _cached_property_ids():
+            request.AddProperty(property_id)
+        request.TreeScope = _TREE_SCOPE_SUBTREE
+        # The raw view matches what uiautomation's own GetChildren traverses, so
+        # the cached element set is identical to the live one.
+        request.TreeFilter = _AUTOMATION_CLIENT().RawViewCondition
+        cached_root = root.Element.BuildUpdatedCache(request)
+
+        elements: list[ElementSnapshot] = []
+        handles: dict[int, Any] = {}
+        seen: set[str] = set()
+        # Focus is reported by the focused element *and* its ancestors, so this
+        # collects every candidate rather than assuming a single one.
+        focused: list[tuple[int, Any]] = []
+
+        def walk(element: Any, depth: int, parent: int | None, path: str) -> None:
+            if len(elements) >= _MAX_ELEMENTS or depth > _MAX_DEPTH:
+                return
+            identity = _cached_identity(element, path)
+            if identity in seen:
+                return
+            seen.add(identity)
+            index = self._states.index_for(session_id, descriptor.identifier, identity)
+            role = _role_names().get(_cached(element, "CachedControlType"), "Control")
+            has_focus = bool(_cached(element, "CachedHasKeyboardFocus", False))
+            if has_focus:
+                focused.append((index, element))
+            elements.append(ElementSnapshot(
+                index=index,
+                role=role,
+                name=_clip(str(_cached(element, "CachedName", "") or "")),
+                value=_clip(_cached_value(element, role)),
+                description=_clip(str(_cached(element, "CachedHelpText", "") or "")),
+                identifier=_clip(str(_cached(element, "CachedAutomationId", "") or "")),
+                enabled=bool(_cached(element, "CachedIsEnabled", True)),
+                focused=has_focus,
+                bounds=_cached_bounds(element),
+                depth=depth,
+                parent=parent,
+                subrole=_clip(str(_cached(element, "CachedClassName", "") or "")),
+                actions=_cached_actions(element),
+                selected_text_range=None,
+                busy=False,
+            ))
+            handles[index] = element
+            try:
+                children = element.GetCachedChildren()
+            except Exception:
+                children = None
+            if not children:
+                return
+            counts: dict[str, int] = {}
+            for position in range(children.Length):
+                child = children.GetElement(position)
+                child_role = _role_names().get(
+                    _cached(child, "CachedControlType"), "Control"
+                )
+                order = counts.get(child_role, 0)
+                counts[child_role] = order + 1
+                walk(child, depth + 1, index, f"{path}/{child_role}[{order}]")
+
+        walk(cached_root, 0, None, "root")
+        if not elements:
+            raise WindowsComputerRuntimeError("cached tree was empty")
+
+        # Selection offsets need a live TextPattern, so they stay outside the
+        # cached fetch; only elements holding focus can carry one. Deepest
+        # first, because the innermost focused element is the text host.
+        positions = {item.index: order for order, item in enumerate(elements)}
+        for index, element in reversed(focused):
+            control = auto.Control.CreateControlFromElement(element)
+            selection = self._selected_text_range(control, True) if control else None
+            if selection is None:
+                continue
+            order = positions.get(index)
+            if order is not None:
+                elements[order] = replace(
+                    elements[order], selected_text_range=selection
+                )
+            break
+        return elements, handles
+
+    def _read_tree_live(
+        self, root: Any, session_id: str, descriptor: AppDescriptor
+    ) -> tuple[list[ElementSnapshot], dict[int, Any]]:
         elements: list[ElementSnapshot] = []
         handles: dict[int, Any] = {}
         seen: set[str] = set()
@@ -414,25 +587,7 @@ class WindowsComputerRuntime:
                 walk(child, depth + 1, index, f"{path}/{child_role}[{order}]")
 
         walk(root, 0, None, "root")
-        previous = self._states.previous(session_id, descriptor.identifier)
-        revision, changed, removed = self._states.save(
-            session_id, descriptor.identifier, elements, handles
-        )
-        screenshot, width, height, bounds, reason = _capture_window(hwnd)
-        is_diff = previous is not None and not disable_diff
-        return AppState(
-            app=descriptor,
-            elements=[item for item in elements if item.index in changed] if is_diff else elements,
-            screenshot_data_url=screenshot,
-            screenshot_width=width,
-            screenshot_height=height,
-            screenshot_bounds=bounds,
-            revision=revision,
-            changed_indices=changed,
-            removed_indices=removed,
-            is_diff=is_diff,
-            screenshot_unavailable_reason=reason,
-        )
+        return elements, handles
 
     def _element_value(self, control: Any, role: str) -> str:
         if role in _VALUELESS_ROLES or "Password" in role:
@@ -501,7 +656,19 @@ class WindowsComputerRuntime:
 
     def _target(self, app: str, session_id: str, element_index: int) -> Any:
         descriptor = self._resolve_app(app)
-        return self._states.handle(session_id, descriptor.identifier, element_index)
+        handle = self._states.handle(session_id, descriptor.identifier, element_index)
+        # The cached walk stores raw IUIAutomationElements; actions need the
+        # uiautomation Control wrapper around them. Wrapping here keeps the
+        # snapshot itself free of ~900 wrapper objects it never uses.
+        if not hasattr(handle, "ControlTypeName"):
+            control = self._auto.Control.CreateControlFromElement(handle)
+            if control is None:
+                raise ValueError(
+                    f"element_index {element_index} no longer resolves to a live "
+                    "element; call get_app_state again"
+                )
+            return control
+        return handle
 
     @_uia
     def inspect_element(
@@ -904,6 +1071,85 @@ def _escape_send_keys(text: str) -> str:
 
 
 _SEND_KEYS_ESCAPES = {"{": "{{}", "}": "{}}"}
+
+
+def _cached(element: Any, name: str, default: Any = None) -> Any:
+    try:
+        return getattr(element, name)
+    except Exception:
+        return default
+
+
+def _cached_identity(element: Any, structural_path: str) -> str:
+    try:
+        runtime_id = element.GetCachedPropertyValue(_PROPERTIES().RuntimeIdProperty)
+        if runtime_id:
+            return "rt:" + ".".join(str(part) for part in runtime_id)
+    except Exception:
+        pass
+    return "path:" + structural_path
+
+
+def _cached_bounds(element: Any) -> tuple[float, float, float, float] | None:
+    rect = _cached(element, "CachedBoundingRectangle")
+    if rect is None:
+        return None
+    try:
+        left, top, right, bottom = (
+            float(rect.left), float(rect.top), float(rect.right), float(rect.bottom)
+        )
+    except AttributeError:
+        try:
+            left, top, right, bottom = (float(value) for value in rect)
+        except Exception:
+            return None
+    except Exception:
+        return None
+    if right - left <= 0 or bottom - top <= 0:
+        return None
+    return (left, top, right - left, bottom - top)
+
+
+def _cached_value(element: Any, role: str) -> str:
+    if role in _VALUELESS_ROLES or "Password" in role:
+        return ""
+    try:
+        value = element.GetCachedPropertyValue(_PROPERTIES().ValueValueProperty)
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def _cached_actions(element: Any) -> tuple[str, ...]:
+    """Secondary actions, read from cached pattern availability.
+
+    Free once the subtree is cached, so unlike the live walk this reports the
+    real availability for every element rather than skipping structural roles.
+    """
+    properties = _PROPERTIES()
+    available: list[str] = []
+    try:
+        if element.GetCachedPropertyValue(properties.IsInvokePatternAvailableProperty):
+            available.append("invoke")
+        if element.GetCachedPropertyValue(
+            properties.IsExpandCollapsePatternAvailableProperty
+        ):
+            available.extend(("expand", "collapse"))
+        if element.GetCachedPropertyValue(
+            properties.IsSelectionItemPatternAvailableProperty
+        ):
+            available.append("select")
+        if element.GetCachedPropertyValue(properties.IsTogglePatternAvailableProperty):
+            available.append("toggle")
+        if element.GetCachedPropertyValue(
+            properties.IsScrollItemPatternAvailableProperty
+        ):
+            available.append("scrollintoview")
+    except Exception:
+        pass
+    # Any element can be right-clicked for a context menu.
+    available.append("showmenu")
+    return tuple(available)
 
 
 def _bare_title(title: str) -> str:
