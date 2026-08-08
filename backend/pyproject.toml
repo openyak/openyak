@@ -1,6 +1,6 @@
 [project]
 name = "openyak"
-version = "1.5.0-rc.3"
+version = "1.5.0-rc.4"
 description = "Your local AI assistant — private, powerful, personal"
 license = "Apache-2.0"
 requires-python = ">=3.12"

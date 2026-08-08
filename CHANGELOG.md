@@ -6,6 +6,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/), and this project
 
 ## [Unreleased]
 
+## [1.5.0-rc.4] - 2026-08-08
+
+This RC closes the item v1.5.0-rc.3 left open: "the signed RC installer still
+requires final smoke testing on a physical Windows machine before the stable
+1.5.0 release." That testing found native Computer Use non-functional on
+Windows, and this release is the fix.
+
 ### Fixed
 
 - **Computer Use (Windows):** Native Computer Use was non-functional on Windows.
@@ -59,6 +66,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/), and this project
   `OPENYAK_RUN_COMPUTER_USE_INTEGRATION=1`. The previous Windows unit tests
   bypassed `__init__`, stubbed `SetForegroundWindow` to succeed and monkeypatched
   window capture, which is why CI stayed green throughout.
+- **CI:** Backend tests run on ubuntu-latest, windows-latest and macos-latest,
+  and on pull requests against any branch so stacked PRs are no longer merged
+  with no checks having run.
+
+### Fixed (non-Computer Use)
+
+- **permissions:** The Deny button discarded the "Remember this choice" switch
+  every time, while Allow honoured it, so choosing to remember a denial
+  persisted nothing and the same request was asked again.
+- **automations:** The recent-runs inbox ordered only by creation time, leaving
+  runs that started within the same tick in an arbitrary order. Ties now break
+  on the run id.
+
+### Validation
+
+- Backend suite: 1,324 passed, 50 skipped on Windows 11; green on ubuntu-latest,
+  windows-latest and macos-latest in CI.
+- Windows visible Computer Use matrix: 22 passed against real Notepad, Explorer
+  and Settings windows on physical hardware, with no runtime fakes.
+- Frontend unit tests: 63 passed; TypeScript and ESLint clean.
+- Chromium UI regression: 126 passed, 8 skipped, 0 failed.
+- Live end-to-end pass against the running desktop app: 16 checks, 0 failures.
+- Not re-run on physical Apple hardware: the macOS visible matrix
+  (`test_computer_macos_integration.py`). The macOS runtime changes in this
+  release are additive (`resolve_app`, an `executable` field) and covered by the
+  unit suites on macos-latest, but a Mac smoke test is still worth doing before
+  stable 1.5.0.
 
 ## [1.5.0-rc.3] - 2026-08-05
 
