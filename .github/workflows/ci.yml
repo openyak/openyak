@@ -16,12 +16,13 @@ jobs:
       # first failure, which is the whole point of testing more than one.
       fail-fast: false
       matrix:
-        # OpenYak ships a desktop app on Windows, and parts of the backend are
+        # OpenYak ships a desktop app on all three, and parts of the backend are
         # platform-specific (native Computer Use, subprocess and path handling).
         # Linux-only CI let a module-scope `ctypes.windll` reach main-adjacent
         # branches, and equally would not have caught a POSIX-only assumption
-        # breaking Windows users.
-        os: [ubuntu-latest, windows-latest]
+        # breaking Windows users. release.yml already builds and signs on
+        # macos-latest, so the runner and the dependency set are proven there.
+        os: [ubuntu-latest, windows-latest, macos-latest]
     defaults:
       run:
         working-directory: backend
