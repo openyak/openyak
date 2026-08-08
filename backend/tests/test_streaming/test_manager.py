@@ -316,6 +316,12 @@ class TestStreamManagerCleanup:
         parent = GenerationJob("parent-stream", "parent-session")
         active = 0
         max_active = 0
+        # Holding the slot for a fixed sleep and hoping two children overlap is
+        # timer-resolution dependent, and serialized on Windows. A barrier makes
+        # the overlap deterministic: two children must be inside the slot at
+        # once for either to proceed, so a regression to one permit fails on the
+        # timeout instead of flaking.
+        paired = asyncio.Barrier(2)
 
         async with sm.generation_slot(owner=parent):
             async def run_child(index: int) -> None:
@@ -331,8 +337,10 @@ class TestStreamManagerCleanup:
                 ):
                     active += 1
                     max_active = max(max_active, active)
-                    await asyncio.sleep(0.01)
-                    active -= 1
+                    try:
+                        await asyncio.wait_for(paired.wait(), timeout=5)
+                    finally:
+                        active -= 1
 
             await asyncio.gather(*(run_child(index) for index in range(8)))
 

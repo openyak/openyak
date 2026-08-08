@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -60,9 +61,15 @@ async def swarm_session_factory(tmp_path):
 class _ConcurrentProvider(BaseProvider):
     """Deterministic Provider adapter that records overlapping child runs."""
 
-    def __init__(self) -> None:
+    def __init__(self, expect_overlap: int | None = None) -> None:
         self.active = 0
         self.max_active = 0
+        # Holding each child open for a fixed sleep and hoping they overlap is
+        # timer-resolution dependent, and serialized on Windows. When a test
+        # asserts real concurrency it passes the number of children it expects
+        # to run at once, and the barrier makes that deterministic: a sequential
+        # implementation fails on the timeout instead of flaking.
+        self._paired = asyncio.Barrier(expect_overlap) if expect_overlap else None
 
     @property
     def id(self) -> str:
@@ -98,8 +105,11 @@ class _ConcurrentProvider(BaseProvider):
         self.active += 1
         self.max_active = max(self.max_active, self.active)
         try:
-            # A sequential implementation can never observe max_active == 2.
-            await asyncio.sleep(0.03)
+            # A sequential implementation can never clear the barrier.
+            if self._paired is not None:
+                await asyncio.wait_for(self._paired.wait(), timeout=10)
+            else:
+                await asyncio.sleep(0.01)
             prompt = str(messages[-1].get("content", ""))
             yield StreamChunk(type="text-delta", data={"text": f"result for {prompt}"})
             yield StreamChunk(type="finish", data={"reason": "stop"})
@@ -246,7 +256,8 @@ async def test_swarm_runs_child_agents_concurrently_and_persists_one_state_part(
     tmp_path,
 ) -> None:
     session_factory = swarm_session_factory
-    provider = _ConcurrentProvider()
+    # Two SwarmTaskSpecs below; both must be in flight at once.
+    provider = _ConcurrentProvider(expect_overlap=2)
     providers = ProviderRegistry()
     providers.register(provider)
     await providers.refresh_models()
@@ -1185,16 +1196,21 @@ async def test_parent_abort_signal_promptly_cancels_blocked_swarm_children(
             ),
         )
     )
-    for _ in range(100):
-        if provider.active == 2:
-            break
+    # Wait against a wall-clock deadline rather than a fixed iteration count:
+    # 100 * 10ms assumed the children spin up within a second, which does not
+    # hold on a slower machine or where the event loop's timer granularity is
+    # coarser. This is setup, not the behaviour under test.
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline and provider.active != 2:
         await asyncio.sleep(0.01)
     assert provider.active == 2
 
     parent_job.abort()
 
+    # Generous relative to the 10s each child would otherwise block for, so
+    # this still proves the abort is prompt.
     with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(coordinator_task, timeout=1)
+        await asyncio.wait_for(coordinator_task, timeout=5)
     assert provider.active == 0
     async with swarm_session_factory() as db:
         messages = await get_messages(db, "abort-parent")

@@ -8,6 +8,7 @@ import zipfile
 
 from app.ollama import manager as manager_module
 from app.ollama.manager import OllamaManager
+from tests.platform_support import requires_posix_permissions
 
 
 def test_download_urls_match_current_release_assets():
@@ -26,6 +27,7 @@ def test_archive_type_helpers_cover_ollama_release_formats():
     assert manager_module._download_filename("https://example.com/releases/latest/download/ollama-darwin.tgz", "ollama") == "ollama-darwin.tgz"
 
 
+@requires_posix_permissions
 def test_extract_tgz_makes_root_binary_executable(tmp_path, monkeypatch):
     monkeypatch.setattr(manager_module.sys, "platform", "darwin")
     mgr = OllamaManager(tmp_path)

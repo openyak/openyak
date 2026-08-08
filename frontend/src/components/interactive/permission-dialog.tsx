@@ -624,7 +624,16 @@ export function PermissionDialog({ permission, onRespond }: PermissionDialogProp
                       type="button"
                       variant="outline"
                       size="sm"
-                      onClick={() => void handleRespond(false, false)}
+                      // Honour the Remember switch, the same way Allow does. The
+                      // Computer app variant below renders its own explicit
+                      // once/always buttons and hides the switch, so only that
+                      // case overrides the choice.
+                      onClick={() =>
+                        void handleRespond(
+                          false,
+                          isComputerAppPermission ? false : undefined,
+                        )
+                      }
                       disabled={submitting}
                       className="gap-1.5 flex-1"
                     >

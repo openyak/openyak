@@ -273,12 +273,17 @@ async def list_recent_runs(
 
     Joins each run to its task so the caller gets the task name without an
     N+1 lookup. Runs whose task was deleted are excluded by the inner join.
+
+    Ties on `time_created` are broken by id. Several runs can start within the
+    same timestamp tick, and without a tiebreaker their order in the feed is
+    whatever the database happens to return. Run ids are ULIDs, so ordering by
+    id descending keeps the newest first within a tick.
     """
     limit = max(1, min(limit, 100))
     result = await db.execute(
         select(TaskRun, ScheduledTask.name)
         .join(ScheduledTask, TaskRun.task_id == ScheduledTask.id)
-        .order_by(TaskRun.time_created.desc())
+        .order_by(TaskRun.time_created.desc(), TaskRun.id.desc())
         .limit(limit)
     )
     rows = result.all()

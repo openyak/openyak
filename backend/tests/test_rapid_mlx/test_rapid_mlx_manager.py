@@ -8,6 +8,7 @@ import pytest
 
 from app.rapid_mlx import manager as manager_module
 from app.rapid_mlx.manager import RapidMLXManager
+from tests.platform_support import requires_symlinks
 
 
 def test_rapid_mlx_binary_detection_checks_homebrew_paths(monkeypatch, tmp_path: Path):
@@ -227,6 +228,7 @@ def _make_cached_repo(hub: Path, repo: str, blob_sizes: list[int]) -> Path:
     return model_dir
 
 
+@requires_symlinks
 @pytest.mark.asyncio
 async def test_uninstall_filters_symlinks_when_counting_freed_bytes(
     monkeypatch, tmp_path: Path
@@ -294,6 +296,7 @@ async def test_uninstall_skips_uncached_models(monkeypatch, tmp_path: Path):
     assert summary["freed_bytes"] == 0
 
 
+@requires_symlinks
 @pytest.mark.asyncio
 async def test_uninstall_keeps_models_when_flag_false(monkeypatch, tmp_path: Path):
     """delete_models=False should leave HF cache untouched."""

@@ -12,6 +12,7 @@ from app.tool.workspace import (
     resolve_for_write,
     validate_cwd,
 )
+from tests.platform_support import requires_symlinks
 
 
 class TestResolveAndValidate:
@@ -38,10 +39,14 @@ class TestResolveAndValidate:
         result = resolve_and_validate("/tmp/test.txt", None)
         assert result == str(Path("/tmp/test.txt").resolve())
 
+    @requires_symlinks
     def test_symlink_escape_raises(self, tmp_path: Path):
-        target = Path("/tmp")
+        # A real directory beside the workspace rather than "/tmp", which is not
+        # a meaningful path on Windows.
+        outside = tmp_path.parent / f"{tmp_path.name}-outside"
+        outside.mkdir(exist_ok=True)
         link = tmp_path / "escape"
-        link.symlink_to(target)
+        link.symlink_to(outside, target_is_directory=True)
         with pytest.raises(WorkspaceViolation):
             resolve_and_validate(str(link / "outside.txt"), str(tmp_path))
 

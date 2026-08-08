@@ -12,6 +12,47 @@ test.beforeEach(async ({ page }) => {
   mockState = await mockOpenYakApi(page);
 });
 
+interface PermissionRule {
+  action: string;
+  permission: string;
+  pattern: string;
+}
+
+/**
+ * Permission rules a prompt carries for the bash tool.
+ *
+ * A prompt body also carries capability deny rules for Computer and Browser
+ * whenever those are switched off in Settings. Those are unrelated to whether a
+ * permission choice was remembered, so the tests below assert on bash alone
+ * rather than on the exact contents of the array.
+ */
+function savedBashRules(body: unknown): PermissionRule[] {
+  const rules = (body as { permission_rules?: PermissionRule[] | null } | undefined)
+    ?.permission_rules;
+  return (rules ?? []).filter((rule) => rule.permission === "bash");
+}
+
+/**
+ * Ask the dialog to remember this choice for the whole tool.
+ *
+ * PermissionDialog resets its Remember switch and scope whenever a new
+ * permission request arrives (`permission.callId` changes), which is correct
+ * for a genuinely new request but races a test that sets them beforehand. Retry
+ * until both stick so the click below acts on the state we asked for.
+ */
+async function rememberForAllCommands(page: Page) {
+  const remember = page.getByRole("switch", {
+    name: /Remember this choice for bash/i,
+  });
+  const scope = page.locator("#remember-scope");
+  await expect(async () => {
+    await remember.setChecked(true);
+    await scope.selectOption("all");
+    await expect(remember).toBeChecked();
+    await expect(scope).toHaveValue("all");
+  }).toPass({ timeout: 15_000 });
+}
+
 async function openNewChat(page: Page, workspace = false) {
   const path = workspace
     ? `/c/new?directory=${encodeURIComponent("/Users/alex/openyak-demo")}`
@@ -516,9 +557,7 @@ test.describe("OpenYak UI preflight", () => {
 
     await openNewChat(page);
     await sendPrompt(page, "Create a follow-up checklist");
-    expect(mockState.promptBodies.at(-1)).toMatchObject({
-      permission_rules: null,
-    });
+    expect(savedBashRules(mockState.promptBodies.at(-1))).toEqual([]);
   });
 
   test("desktop interactive path: always allow persists permission rules to future prompts", async ({
@@ -530,12 +569,9 @@ test.describe("OpenYak UI preflight", () => {
 
     await sendPrompt(page, "Trigger permission flow for always allow");
     await expect(page.getByText("Permission Required")).toBeVisible();
-    await page
-      .getByRole("switch", { name: /Remember this choice for bash/i })
-      .setChecked(true);
     // Tool-wide allow is this test's subject; the scope selector defaults to
     // the safest option (this exact command), so widen it explicitly.
-    await page.locator("#remember-scope").selectOption("all");
+    await rememberForAllCommands(page);
 
     const respond = page.waitForResponse(
       (res) => res.url().includes("/api/chat/respond") && res.status() === 200,
@@ -554,15 +590,9 @@ test.describe("OpenYak UI preflight", () => {
 
     await openNewChat(page);
     await sendPrompt(page, "Create a follow-up checklist");
-    expect(mockState.promptBodies.at(-1)).toMatchObject({
-      permission_rules: [
-        {
-          action: "allow",
-          permission: "bash",
-          pattern: "*",
-        },
-      ],
-    });
+    expect(savedBashRules(mockState.promptBodies.at(-1))).toEqual([
+      { action: "allow", permission: "bash", pattern: "*" },
+    ]);
   });
 
   test("desktop interactive path: deny once does not persist a permission rule", async ({
@@ -592,9 +622,7 @@ test.describe("OpenYak UI preflight", () => {
 
     await openNewChat(page);
     await sendPrompt(page, "Create a follow-up checklist");
-    expect(mockState.promptBodies.at(-1)).toMatchObject({
-      permission_rules: null,
-    });
+    expect(savedBashRules(mockState.promptBodies.at(-1))).toEqual([]);
   });
 
   test("desktop interactive path: always deny persists permission rules to future prompts", async ({
@@ -606,12 +634,9 @@ test.describe("OpenYak UI preflight", () => {
 
     await sendPrompt(page, "Trigger permission flow for always deny");
     await expect(page.getByText("Permission Required")).toBeVisible();
-    await page
-      .getByRole("switch", { name: /Remember this choice for bash/i })
-      .setChecked(true);
     // This test covers the tool-wide deny path; the scope selector defaults
     // to the safest option (this exact command), so widen it explicitly.
-    await page.locator("#remember-scope").selectOption("all");
+    await rememberForAllCommands(page);
 
     const respond = page.waitForResponse(
       (res) => res.url().includes("/api/chat/respond") && res.status() === 200,
@@ -630,15 +655,9 @@ test.describe("OpenYak UI preflight", () => {
 
     await openNewChat(page);
     await sendPrompt(page, "Create a follow-up checklist");
-    expect(mockState.promptBodies.at(-1)).toMatchObject({
-      permission_rules: [
-        {
-          action: "deny",
-          permission: "bash",
-          pattern: "*",
-        },
-      ],
-    });
+    expect(savedBashRules(mockState.promptBodies.at(-1))).toEqual([
+      { action: "deny", permission: "bash", pattern: "*" },
+    ]);
   });
 
   test("desktop interactive path: agent question is answered through the GUI", async ({

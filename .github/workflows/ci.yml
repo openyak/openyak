@@ -3,13 +3,25 @@ name: Tests & Type Check
 on:
   push:
     branches: [main]
+  # Not restricted to PRs against main: stacked PRs target their parent branch
+  # and would otherwise merge with no checks having run at all.
   pull_request:
-    branches: [main]
 
 jobs:
   backend:
-    name: Backend Tests
-    runs-on: ubuntu-latest
+    name: Backend Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Report every platform's result rather than cancelling siblings on the
+      # first failure, which is the whole point of testing more than one.
+      fail-fast: false
+      matrix:
+        # OpenYak ships a desktop app on Windows, and parts of the backend are
+        # platform-specific (native Computer Use, subprocess and path handling).
+        # Linux-only CI let a module-scope `ctypes.windll` reach main-adjacent
+        # branches, and equally would not have caught a POSIX-only assumption
+        # breaking Windows users.
+        os: [ubuntu-latest, windows-latest]
     defaults:
       run:
         working-directory: backend
@@ -23,6 +35,7 @@ jobs:
           cache-dependency-path: backend/pyproject.toml
 
       - name: Install system dependencies
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libcairo2-dev pkg-config
 
       - name: Install dependencies
@@ -32,6 +45,7 @@ jobs:
         run: pytest -x --tb=short -q --ignore=tests/test_tool/test_code_execute.py
 
       - name: Run offline agent smoke suite
+        if: runner.os == 'Linux'
         working-directory: .
         run: >-
           PYTHONPATH=backend:.

@@ -1,5 +1,6 @@
 """Bash tool tests."""
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -57,12 +58,30 @@ class TestBashTool:
         assert "err" in result.output
 
     @pytest.mark.asyncio
-    async def test_unicode_output(self, tool: BashTool):
-        """Non-ASCII output should not be garbled."""
-        result = await tool.execute(
-            {"command": 'python3 -c "print(\'hello world\')"'}, _make_ctx()
+    async def test_unicode_output(self, tool: BashTool, tmp_path: Path):
+        """Non-ASCII output should not be garbled.
+
+        Runs the interpreter under test rather than a bare ``python3``: Windows
+        ships a ``python3`` alias that resolves to a Microsoft Store stub, so
+        the command failed there and the assertion never exercised decoding.
+        The payload is non-ASCII so the test earns its name.
+        """
+        expected = "héllo wörld 中文"
+        script = tmp_path / "emit_unicode.py"
+        script.write_text(
+            "import sys\n"
+            "sys.stdout.reconfigure(encoding='utf-8')\n"
+            f"print({expected!r})\n",
+            encoding="utf-8",
         )
-        assert "hello" in result.output
+        # PowerShell needs the call operator for a quoted executable path.
+        prefix = "& " if IS_WINDOWS else ""
+        result = await tool.execute(
+            {"command": f'{prefix}"{sys.executable}" "{script}"'}, _make_ctx()
+        )
+
+        assert result.error is None, result.output
+        assert expected in result.output
 
     @pytest.mark.asyncio
     async def test_reports_workspace_root_without_exposing_its_path(

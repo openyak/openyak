@@ -11,11 +11,13 @@ from httpx import ASGITransport, AsyncClient
 
 from app.api.remote import router
 from app.auth.tunnel import TunnelManager
+from tests.platform_support import requires_posix_shebang
 
 pytestmark = pytest.mark.asyncio
 
 
 class TestEnableRemote:
+    @requires_posix_shebang
     async def test_recovers_when_bundled_cloudflared_is_invalid(self, monkeypatch, tmp_path: Path):
         bad_bin_dir = tmp_path / "data" / "bin"
         bad_bin_dir.mkdir(parents=True)
