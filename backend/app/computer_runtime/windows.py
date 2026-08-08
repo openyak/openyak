@@ -7,6 +7,7 @@ import ctypes
 import functools
 import io
 import os
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -90,9 +91,14 @@ class WindowsComputerRuntimeError(RuntimeError):
 # function used here declares its signature explicitly.
 # ---------------------------------------------------------------------------
 
-_user32 = ctypes.windll.user32
-_gdi32 = ctypes.windll.gdi32
-_kernel32 = ctypes.windll.kernel32
+# This module is imported by tests that run on every platform, so the Windows
+# libraries must not be resolved at import time.
+if sys.platform == "win32":  # pragma: no branch - platform gate
+    _user32 = ctypes.windll.user32
+    _gdi32 = ctypes.windll.gdi32
+    _kernel32 = ctypes.windll.kernel32
+else:  # pragma: no cover - import-time compatibility only
+    _user32 = _gdi32 = _kernel32 = None
 
 
 class _BITMAPINFOHEADER(ctypes.Structure):
@@ -111,6 +117,8 @@ class _BITMAPINFO(ctypes.Structure):
 
 
 def _bind() -> None:
+    if _user32 is None:  # pragma: no cover - non-Windows import
+        return
     _user32.GetWindowDC.restype = wintypes.HDC
     _user32.GetWindowDC.argtypes = [wintypes.HWND]
     _user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
