@@ -44,6 +44,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/), and this project
   with an unusable Retry. Runtime failures now surface actionable detail, and the
   live view polls adaptively instead of on a fixed 900 ms timer.
 
+### Changed
+
+- **Computer Use (Windows):** Read the accessibility tree through a single UI
+  Automation cache request instead of per-property cross-process calls, with the
+  live walk kept as a fallback for providers that refuse one. Snapshot cost drops
+  from ~245 ms to ~77 ms, and element `actions` now report real pattern
+  availability for every element rather than skipping structural roles.
+
 ### Added
 
 - **Computer Use (Windows):** `tests/test_tool/test_computer_windows_integration.py`,
