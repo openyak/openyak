@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
@@ -9,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from app.computer_runtime.capabilities import get_computer_capability_status
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/computer-control")
 
 
@@ -48,13 +52,35 @@ def _application_payload(application: Any) -> dict[str, object]:
         "name": application.name,
         "pid": application.pid,
         "is_running": application.is_running,
+        # Lets the picker disambiguate windows that share a title.
+        "executable": getattr(application, "executable", ""),
     }
+
+
+@contextmanager
+def _runtime_errors() -> Iterator[None]:
+    """Turn native runtime failures into an actionable response.
+
+    Without this the workspace surfaces a bare "Internal Server Error" and a
+    Retry button the user has no way to act on.
+    """
+    try:
+        yield
+    except (HTTPException, PermissionError):
+        raise
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except Exception as error:
+        detail = str(error).strip() or f"{type(error).__name__} in the native runtime"
+        logger.exception("Native Computer Use failed")
+        raise HTTPException(status_code=503, detail=detail) from error
 
 
 @router.get("/workspace/status")
 async def computer_workspace_status(request: Request) -> dict[str, object]:
     tool = _computer_tool(request)
-    applications = await tool.workspace_apps()
+    with _runtime_errors():
+        applications = await tool.workspace_apps()
     return {
         "control_owner": tool.control_owner,
         "selected_application": tool.selected_application,
@@ -68,10 +94,8 @@ async def select_computer_application(
     request: Request,
 ) -> dict[str, object]:
     tool = _computer_tool(request)
-    try:
+    with _runtime_errors():
         application = await tool.select_workspace_application(body.application)
-    except ValueError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
     return {
         "selected_application": application.identifier,
         "application": _application_payload(application),
@@ -81,10 +105,8 @@ async def select_computer_application(
 @router.get("/workspace/snapshot")
 async def computer_workspace_snapshot(request: Request) -> dict[str, object]:
     tool = _computer_tool(request)
-    try:
+    with _runtime_errors():
         state = await tool.workspace_snapshot()
-    except ValueError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
     bounds = state.screenshot_bounds
     frame = None
     if (
@@ -109,6 +131,7 @@ async def computer_workspace_snapshot(request: Request) -> dict[str, object]:
         "revision": state.revision,
         "image_data_url": state.screenshot_data_url,
         "frame": frame,
+        "unavailable_reason": state.screenshot_unavailable_reason,
     }
 
 
@@ -148,4 +171,8 @@ async def interact_with_computer_workspace(
         raise HTTPException(status_code=409, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+    except Exception as error:
+        detail = str(error).strip() or f"{type(error).__name__} in the native runtime"
+        logger.exception("Computer workspace interaction failed")
+        raise HTTPException(status_code=503, detail=detail) from error
     return {"ok": True}

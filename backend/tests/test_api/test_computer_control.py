@@ -137,6 +137,7 @@ async def test_workspace_lists_safe_apps_and_switches_the_shared_target(app_clie
                 "name": "Notes",
                 "pid": 42,
                 "is_running": True,
+                "executable": "",
             }
         ],
     }
@@ -154,6 +155,7 @@ async def test_workspace_lists_safe_apps_and_switches_the_shared_target(app_clie
             "name": "Notes",
             "pid": 42,
             "is_running": True,
+            "executable": "",
         },
     }
 
@@ -182,6 +184,7 @@ async def test_workspace_returns_a_live_native_application_frame(app_client) -> 
             "width": 600,
             "height": 400,
         },
+        "unavailable_reason": None,
     }
 
 

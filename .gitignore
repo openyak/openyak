@@ -77,3 +77,6 @@ desktop-tauri/src-tauri/gen/schemas/
 
 # === Certificates & keys ===
 *.pem
+
+# uiautomation drops this beside the process working directory
+@AutomationLog.txt

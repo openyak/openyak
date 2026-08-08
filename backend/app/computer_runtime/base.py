@@ -14,6 +14,11 @@ class AppDescriptor:
     is_running: bool = True
     last_used_date: str | None = None
     use_count: int | None = None
+    # Stable program identity used to gate sensitive applications: the bundle
+    # identifier on macOS, the executable basename on Windows. `name` is the
+    # window title there, which the open document controls, so it cannot carry
+    # a security decision on its own.
+    executable: str = ""
 
 
 @dataclass(frozen=True)
@@ -79,6 +84,10 @@ class ComputerRuntime(Protocol):
     """Element-first native application automation contract."""
 
     def list_apps(self) -> list[AppDescriptor]: ...
+
+    def resolve_app(self, query: str) -> AppDescriptor:
+        """Resolve a model-supplied name or identifier to a concrete app."""
+        ...
 
     def get_app_state(
         self,
