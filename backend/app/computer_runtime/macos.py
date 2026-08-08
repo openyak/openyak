@@ -103,11 +103,20 @@ class MacOSComputerRuntime:
             # noisy and could crowd the requested app out of model context.
             if int(running.activationPolicy()) != 0:
                 continue
-            descriptor = AppDescriptor(name=name, identifier=identifier or name, pid=pid)
+            descriptor = AppDescriptor(
+                name=name,
+                identifier=identifier or name,
+                pid=pid,
+                executable=identifier or name,
+            )
             current = apps.get(descriptor.identifier)
             if current is None or (pid in window_pids and current.pid not in window_pids):
                 apps[descriptor.identifier] = descriptor
         return sorted(apps.values(), key=lambda item: (item.name.casefold(), item.pid))
+
+    def resolve_app(self, query: str) -> AppDescriptor:
+        """Public resolution so callers can enforce policy on the real target."""
+        return self._resolve_app(query, launch=False)
 
     def _resolve_app(self, query: str, *, launch: bool = True) -> AppDescriptor:
         normalized = query.strip().casefold()

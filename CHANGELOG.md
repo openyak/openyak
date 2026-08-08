@@ -6,6 +6,52 @@ Format follows [Keep a Changelog](https://keepachangelog.com/), and this project
 
 ## [Unreleased]
 
+### Fixed
+
+- **Computer Use (Windows):** Native Computer Use was non-functional on Windows.
+  UI Automation is COM and `ComputerTool` dispatches every action through
+  `asyncio.to_thread`, so each call landed on a pool worker with no COM
+  apartment and failed with `CoInitialize has not been called`; the live
+  workspace returned HTTP 500 on every poll. All UIA work now runs on one
+  dedicated COM-initialized thread, which also satisfies uiautomation's rule
+  that a Control may not be used from another thread.
+- **Computer Use (Windows):** `press_key`, `drag` and coordinate clicks always
+  failed, because Windows refuses `SetForegroundWindow` to a background process
+  and the runtime treated the first refusal as final. Foreground acquisition now
+  escalates through the documented sequence and verifies the result.
+- **Computer Use (Windows):** The app view sent to the model was a screen-region
+  grab, so any overlapping window was captured in place of the target. Capture
+  now uses `PrintWindow(PW_RENDERFULLCONTENT)` with a screen-grab fallback.
+- **Computer Use (Windows):** Element indices were positional, so a changed tree
+  silently rebound an index to a different control and the agent acted on the
+  wrong element. Indices are now keyed on UIA RuntimeId, matching macOS.
+- **Computer Use (Windows):** `scroll` passed signed deltas where UIA expects
+  `ScrollAmount` members, which scrolled the wrong way or did nothing at all;
+  `perform_secondary_action` leaked raw `AttributeError`s to the model;
+  `type_text` had no focused-element fallback; and `wait_for_stability` was a
+  flat sleep that ignored its timeout. Element `actions`, `subrole` and
+  `selected_text_range` are now populated instead of always empty.
+- **Computer Use (Windows):** Sensitive applications were matched on the window
+  title, which blocked ordinary documents ("Q3 terminal refresh plan.docx") while
+  leaving real consoles reachable, and an opaque identifier bypassed the check
+  entirely. Blocking is now based on the executable image and enforced against
+  the resolved target.
+- **Computer Use (Windows):** The target picker listed shell windows, collapsed
+  multiple windows of one process, and showed packaged apps twice under identical
+  labels. Snapshot latency dropped from ~780 ms to ~245 ms, mostly by removing
+  uiautomation's implicit half-second sleep from every call.
+- **Computer workspace:** The live view rendered a bare "Internal Server Error"
+  with an unusable Retry. Runtime failures now surface actionable detail, and the
+  live view polls adaptively instead of on a fixed 900 ms timer.
+
+### Added
+
+- **Computer Use (Windows):** `tests/test_tool/test_computer_windows_integration.py`,
+  the Windows counterpart to the macOS visible matrix, gated on
+  `OPENYAK_RUN_COMPUTER_USE_INTEGRATION=1`. The previous Windows unit tests
+  bypassed `__init__`, stubbed `SetForegroundWindow` to succeed and monkeypatched
+  window capture, which is why CI stayed green throughout.
+
 ## [1.5.0-rc.3] - 2026-08-05
 
 ### Added

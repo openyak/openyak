@@ -6,7 +6,7 @@
   "description": "OpenYak — local-first AI agent for desktop work",
   "scripts": {
     "dev:frontend": "cd frontend && npm run dev",
-    "dev:backend": "cd backend && ./venv/bin/python -m uvicorn app.main:create_app --factory --reload --reload-dir app --host 0.0.0.0 --port 8000",
+    "dev:backend": "cd backend && node -e \"const p=process.platform==='win32'?'venv\\\\Scripts\\\\python.exe':'./venv/bin/python';require('child_process').execSync(p+' -m uvicorn app.main:create_app --factory --reload --reload-dir app --host 0.0.0.0 --port 8000',{stdio:'inherit'})\"",
     "dev:all": "node scripts/dev-all.mjs",
     "dev:desktop": "node scripts/dev-desktop.mjs",
     "build:frontend": "cd frontend && cross-env DESKTOP_BUILD=true NEXT_PUBLIC_DESKTOP_BUILD=true npm run build",

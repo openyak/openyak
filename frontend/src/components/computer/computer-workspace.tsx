@@ -32,6 +32,21 @@ interface ComputerApplication {
   name: string;
   pid: number;
   is_running: boolean;
+  executable?: string;
+}
+
+/**
+ * Two windows can share a title (a packaged app and its frame, or two
+ * documents with the same name), and the picker only renders this string.
+ */
+function applicationLabel(
+  application: ComputerApplication,
+  applications: ComputerApplication[],
+): string {
+  const duplicates = applications.filter((item) => item.name === application.name);
+  if (duplicates.length < 2) return application.name;
+  const suffix = application.executable || `pid ${application.pid}`;
+  return `${application.name} — ${suffix}`;
 }
 
 interface ComputerWorkspaceStatus {
@@ -52,6 +67,7 @@ interface ComputerSnapshot {
     width: number;
     height: number;
   } | null;
+  unavailable_reason?: string | null;
 }
 
 export function ComputerWorkspace() {
@@ -118,7 +134,9 @@ export function ComputerWorkspace() {
       );
       if (next.application.id === applicationId) {
         setSnapshot(next);
-        setError(null);
+        // A frame can be missing for a reason the runtime knows about
+        // (minimized window, capture refused) even on a successful response.
+        setError(next.image_data_url ? null : next.unavailable_reason ?? null);
       }
     } catch (reason) {
       setError(apiErrorMessage(reason, t("computerFrameUnavailable")));
@@ -136,9 +154,26 @@ export function ComputerWorkspace() {
   useEffect(() => {
     setSnapshot(null);
     if (!applicationId) return;
-    void refreshSnapshot();
-    const timer = window.setInterval(() => void refreshSnapshot(), 900);
-    return () => window.clearInterval(timer);
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      if (cancelled) return;
+      const started = performance.now();
+      await refreshSnapshot();
+      if (cancelled) return;
+      // Chain the next capture rather than firing on a fixed interval. A native
+      // snapshot costs a full UI Automation tree walk plus a window capture, so
+      // a timer shorter than that only queues work that gets thrown away. The
+      // gap scales with how slow the target app turned out to be, which also
+      // leaves the shared runtime room for the Agent's own actions.
+      const elapsed = performance.now() - started;
+      timer = setTimeout(poll, Math.min(2_000, Math.max(120, elapsed / 4)));
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [applicationId, refreshSnapshot]);
 
   useEffect(
@@ -235,7 +270,7 @@ export function ComputerWorkspace() {
           ) : null}
           {applications.map((application) => (
             <option key={application.id} value={application.id}>
-              {application.name}
+              {applicationLabel(application, applications)}
             </option>
           ))}
         </select>

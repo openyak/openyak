@@ -117,20 +117,56 @@ OPENYAK_RUN_BROWSER_INTEGRATION=1 .venv/bin/pytest -q \
   tests/test_tool/test_browser_integration.py
 ```
 
+On Windows (PowerShell), the same opt-in drives the Windows matrix:
+
+```bash
+cd backend
+$env:OPENYAK_RUN_COMPUTER_USE_INTEGRATION=1; venv/Scripts/python -m pytest -q tests/test_tool/test_computer_windows_integration.py
+```
+
 The macOS test verifies real AX state, stable indices, a real window screenshot,
 text selection with restoration, semantic page scrolling with restoration, and
-adaptive waiting. The Browser test launches real Chrome and covers managed
-tabs, DOM refs, iframe and Shadow DOM interaction, form controls, screenshots,
-clipboard, console/network inspection, coordinate fallback, and JavaScript
-dialog handling.
+adaptive waiting. The Windows test covers the same contract against a real
+Notepad window: UIA state through the asyncio thread pool that ComputerTool
+dispatches on, session-stable indices across a reflowed tree, a window capture
+taken while another window covers the target, foreground acquisition for
+synthetic input, value/text editing, selection offsets, page scrolling that
+actually moves the viewport, adaptive settling, and executable-based blocking of
+consoles. The Browser test launches real Chrome and covers managed tabs, DOM
+refs, iframe and Shadow DOM interaction, form controls, screenshots, clipboard,
+console/network inspection, coordinate fallback, and JavaScript dialog handling.
+
+These matrices deliberately use no runtime fakes. The unit suites stub the OS,
+which is why a Windows runtime that could not initialize COM on a worker thread,
+never acquired the foreground, and captured the wrong window still passed CI.
 
 ## Platform support
 
 - macOS: Accessibility AX for semantic app control; Core Graphics for window
   capture; managed Chrome for Browser.
-- Windows: Microsoft UI Automation; DPI-aware multi-monitor capture; managed
-  Chrome or Edge for Browser.
+- Windows: Microsoft UI Automation on a dedicated COM-initialized thread;
+  `PrintWindow(PW_RENDERFULLCONTENT)` for DPI-aware capture of the window's own
+  pixels rather than the screen region beneath it; managed Chrome or Edge for
+  Browser.
 - Linux is not a release gate yet.
+
+### Windows specifics
+
+- Element actions (`click` by index, `set_value`, `type_text`, `select_text`,
+  `scroll`, `perform_secondary_action`) go through UIA patterns and do not
+  require the target to be frontmost.
+- `press_key`, `drag` and coordinate clicks are synthetic input, so the runtime
+  first takes the foreground. Windows refuses `SetForegroundWindow` to a
+  background process, so the runtime escalates through the documented sequence
+  (foreground lock timeout, `AllowSetForegroundWindow`, `AttachThreadInput`,
+  synthetic ALT) and verifies the result before dispatching. A locked desktop or
+  a UAC secure-desktop prompt still blocks it, and that is reported as such.
+- Key chords: `ctrl`/`shift`/`alt` map directly, `super`/`meta`/`win` map to the
+  Windows key, and the macOS-style `cmd` maps to `Ctrl` because that is the
+  equivalent accelerator.
+- Sensitive applications are gated on the executable image name. A Windows app
+  name is its window title, which the open document controls, so the title alone
+  cannot carry that decision.
 
 ## Product-level parity boundary
 
@@ -142,8 +178,11 @@ private runtime. Three product surfaces remain separate release gates:
   browser extension and its own consent/session model;
 - Codex Locked Use requires a signed, hardened macOS authorization design rather
   than an ordinary Accessibility wrapper;
-- the Windows UIA implementation must pass the same visible matrix on physical
-  Windows hardware before Windows parity is declared.
+- the Windows UIA implementation passes the visible matrix above on physical
+  Windows hardware (Windows 11, Notepad/Explorer/Settings). Parity is declared
+  for the element and capture contract; Windows remains foreground-mode for
+  synthetic input, which is a platform constraint rather than an implementation
+  gap.
 
 These exclusions must not be silently routed through native Computer Use or the
 managed Browser profile.
