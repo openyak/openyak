@@ -254,7 +254,12 @@ a = Analysis(
     ),
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=[
+        # Keeps a collected native payload from being importable as the
+        # freetype-py module; see the hook for why startup died without it.
+        os.path.join(backend_dir, 'pyinstaller_hooks',
+                     'rthook_block_stub_freetype.py'),
+    ],
     excludes=[
         # ── Testing & dev ────────────────────────────────────────────
         'tkinter',

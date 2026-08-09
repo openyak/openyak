@@ -159,6 +159,58 @@ if (problems.length > 0) {
 
 console.log(`[verify-bundle] static: ${required.length} required assets present in ${dist}`);
 
+// ── Module-shadowing check ───────────────────────────────────────────
+//
+// _internal is on the frozen interpreter's sys.path, so any directory
+// there is importable as an implicit namespace package. A data-only
+// directory — one holding native libraries and no Python at all — that
+// happens to share a name with a module some dependency probes for will
+// make that probe succeed and hand back an empty module.
+//
+// That is how a stale `freetype/` broke startup: reportlab probes for
+// freetype-py with a bare `import freetype`, guards only against
+// ImportError, and died on AttributeError reaching for FT_LOAD_DEFAULT.
+// Catch the shape here so a build can never introduce one.
+
+const PROBED_MODULE_NAMES = new Set([
+  // Optional dependencies that libraries we bundle probe for by import.
+  "freetype",
+  "cairo",
+  "cairocffi",
+  "cairosvg",
+  "rlPyCairo",
+  "renderPM",
+  "pycairo",
+]);
+
+const shadowing = [];
+for (const entry of readdirSync(internal, { withFileTypes: true })) {
+  if (!entry.isDirectory() || !PROBED_MODULE_NAMES.has(entry.name)) continue;
+  const contents = readdirSync(join(internal, entry.name));
+  const hasPython = contents.some((f) => /\.(py|pyc|pyd|so)$/i.test(f));
+  if (!hasPython) {
+    shadowing.push(
+      `${join(internal, entry.name)}  (contains ${contents.length} file(s), no Python module)`,
+    );
+  }
+}
+
+if (shadowing.length > 0) {
+  console.error(
+    "\n[verify-bundle] Data-only directory shadowing an importable module name:",
+  );
+  for (const s of shadowing) console.error(`  ✗ ${s}`);
+  console.error(
+    "\n`import <name>` will resolve to this directory as an empty namespace\n" +
+      "package, so any dependency probing for it will get a broken module\n" +
+      "instead of a clean ImportError. Relocate the payload out of _internal/\n" +
+      "or exclude it in openyak.spec.\n",
+  );
+  exit(1);
+}
+
+console.log("[verify-bundle] static: no data-only directory shadows a probed module name");
+
 // ── Runtime smoke test ───────────────────────────────────────────────
 //
 // Static checks can't tell whether pure-python packages that live

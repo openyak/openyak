@@ -45,4 +45,36 @@
   ; Give Windows a moment to release the file handles the killed
   ; processes were holding before we start overwriting files.
   Sleep 1000
+
+  ; Remove the previous backend payload outright rather than extracting over
+  ; it. NSIS only overwrites the files it is installing, so anything a former
+  ; version shipped and this one does not stays on disk forever.
+  ;
+  ; That is not merely untidy. _internal is on the frozen interpreter's
+  ; sys.path, so an orphaned directory there can shadow a module name: a
+  ; stale "freetype" folder left by an older build made "import freetype"
+  ; resolve to an empty namespace package, and reportlab -- which probes for
+  ; freetype-py and only guards against ImportError -- then died on
+  ; AttributeError during startup. The backend never came up, so the whole
+  ; app was dead after upgrading while a clean install worked fine.
+  ;
+  ; Only application payload lives here; user data is under AppData.
+  ${If} ${FileExists} "$INSTDIR\backend\*.*"
+    DetailPrint "Removing previous backend payload..."
+    RMDir /r "$INSTDIR\backend"
+  ${EndIf}
+  ${If} ${FileExists} "$INSTDIR\nodejs\*.*"
+    DetailPrint "Removing previous Node.js runtime..."
+    RMDir /r "$INSTDIR\nodejs"
+  ${EndIf}
+!macroend
+
+; Uninstalling left 179 files behind, which is how the stale payload above
+; survives a reinstall as well as an upgrade. Remove the bundled runtimes
+; explicitly; user data under AppData is deliberately untouched.
+!macro NSIS_HOOK_POSTUNINSTALL
+  DetailPrint "Removing bundled runtimes..."
+  RMDir /r "$INSTDIR\backend"
+  RMDir /r "$INSTDIR\nodejs"
+  RMDir "$INSTDIR"
 !macroend
