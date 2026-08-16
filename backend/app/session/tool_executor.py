@@ -191,7 +191,15 @@ class StreamingToolExecutor:
     async def _run_group(self, group: list[ToolCallInfo]) -> None:
         """Run a run of adjacent concurrency-safe calls together."""
         if self._stopped:
+            # Calls already started keep running inside ``await tool(...)`` —
+            # the abort check in _execute_single only guards the moment before
+            # dispatch. Cancel and reap them rather than reporting "Aborted"
+            # while they carry on writing files in the background.
             for info in group:
+                started = self._started.get(info.index)
+                if started is not None:
+                    started.cancel()
+                    await asyncio.gather(started, return_exceptions=True)
                 self._record_cancelled(info)
             return
 
@@ -203,8 +211,17 @@ class StreamingToolExecutor:
             for info in group
         }
 
-        for info in group:
-            await self._settle(info, tasks[info.index])
+        try:
+            for info in group:
+                await self._settle(info, tasks[info.index])
+        finally:
+            # Whatever ended this group — an abort mid-way, or the caller being
+            # cancelled — no task in it may outlive it unobserved.
+            pending = [t for t in tasks.values() if not t.done()]
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
 
     async def _run_exclusive(self, info: ToolCallInfo) -> None:
         """Run one barrier call; everything before it has already settled."""
@@ -224,6 +241,16 @@ class StreamingToolExecutor:
             result = await task
         except asyncio.CancelledError:
             self._record_cancelled(info)
+            # Distinguish "this tool was cancelled" from "the caller awaiting
+            # us was cancelled". Swallowing the latter makes collect() return
+            # normally, and asyncio never re-delivers it — so the processor's
+            # cancellation cleanup (persist partial output, terminate running
+            # ToolParts) is skipped and the turn looks like it finished.
+            if not task.cancelled():
+                raise
+            current = asyncio.current_task()
+            if current is not None and current.cancelling():
+                raise
             return
         except Exception as exc:  # a crash inside the wrapper, not the tool
             self._results[info.index] = ToolExecutionResult(

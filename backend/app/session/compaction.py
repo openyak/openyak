@@ -19,11 +19,12 @@ from typing import Any
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import selectinload
 
 from app.agent.agent import AgentRegistry
 from app.models.message import Message, Part
 from app.provider.registry import ProviderRegistry
-from app.session.manager import create_message, create_part
+from app.session.manager import create_message, create_part, prompt_visible_messages
 from app.streaming.events import (
     COMPACTED,
     COMPACTION_ERROR,
@@ -50,18 +51,26 @@ SUMMARY_MAX_TOKENS = 4096  # Output cap for the summary; hitting it fails the ru
 
 
 def _estimate_message_tokens(messages: list[dict[str, Any]]) -> int:
-    """Approximate the context cost of an LLM message list."""
+    """Approximate the context cost of an LLM message list.
+
+    Counts every field that reaches the request body. ``reasoning_content`` is
+    one of them: ``get_message_history_for_llm`` attaches it to assistant turns
+    for DeepSeek-family and custom OpenAI-compatible providers, up to 40k chars
+    per turn. Omitting it under-counts the history so badly that the shrink
+    guard rejects perfectly good summaries on exactly those providers.
+    """
     total = 0
     for message in messages:
-        content = message.get("content")
-        if isinstance(content, str):
-            total += estimate_tokens(content)
-        elif isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict):
-                    text = block.get("text")
-                    if isinstance(text, str):
-                        total += estimate_tokens(text)
+        for key in ("content", "reasoning_content"):
+            value = message.get(key)
+            if isinstance(value, str):
+                total += estimate_tokens(value)
+            elif isinstance(value, list):
+                for block in value:
+                    if isinstance(block, dict):
+                        text = block.get("text")
+                        if isinstance(text, str):
+                            total += estimate_tokens(text)
         for call in message.get("tool_calls") or []:
             function = call.get("function") if isinstance(call, dict) else None
             if isinstance(function, dict):
@@ -206,10 +215,16 @@ async def _phase1_prune(
             stmt = (
                 select(Message)
                 .where(Message.session_id == session_id)
+                .options(selectinload(Message.parts))
                 .order_by(Message.time_created.asc())
             )
             result = await db.execute(stmt)
-            messages = list(result.scalars().all())
+            # Only rows the model still sees can free context. A row already
+            # collapsed, or sitting before the newest compaction anchor, is out
+            # of the prompt either way — flagging its tool parts changes nothing
+            # and would credit `tokens_freed` for a saving that does not exist,
+            # which is now what resets the compaction circuit breaker.
+            messages = prompt_visible_messages(list(result.scalars().all()))
 
             if len(messages) <= SKIP_RECENT_TURNS * 2:
                 return 0, 0  # Not enough history to prune

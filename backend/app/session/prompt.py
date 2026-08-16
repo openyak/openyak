@@ -973,10 +973,14 @@ class SessionPrompt:
             rules=[rule for rule in self.agent.permissions.rules if rule.action == "deny"]
         )
         return merge_rulesets(
-            agent_denials,
             self.preset_permissions,
             self.request_permissions,
             self.session_permissions,
+            # Last, so last-match-wins makes these a ceiling rather than a
+            # default. Placing them first would let an Auto preset's
+            # `allow file_changes` re-open exactly what a Plan session forbids,
+            # inside the very ruleset meant to constrain the child.
+            agent_denials,
         )
 
     def _build_system_prompt_parts(self) -> SystemPromptParts:
@@ -1054,7 +1058,16 @@ def _collapsed_row_stats(rows: list[Message]) -> tuple[int, int, int, int]:
                 tool_results += 1
                 state = pdata.get("state", {}) or {}
                 tokens += estimate_tokens(str(state.get("input", "")))
-                tokens += estimate_tokens(str(state.get("output", "")))
+                # A part compaction already pruned costs the prompt the
+                # "[truncated]" placeholder, not its stored output — the row
+                # keeps the original text so the user can still read it. Count
+                # what the model sees, or this number (which is shown to the
+                # user in the collapse boundary) claims a saving that is not
+                # there.
+                if state.get("time_compacted"):
+                    tokens += estimate_tokens("[truncated]")
+                else:
+                    tokens += estimate_tokens(str(state.get("output", "")))
     return tokens, users, assistants, tool_results
 
 

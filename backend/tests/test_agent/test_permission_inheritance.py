@@ -14,6 +14,7 @@ from app.agent.permission import (
     agent_verdict,
     evaluate,
     merge_rulesets,
+    presets_to_ruleset,
 )
 from app.schemas.agent import AgentInfo, PermissionRule, Ruleset
 
@@ -43,11 +44,11 @@ def _child_merged(child: AgentInfo, inherited: Ruleset) -> Ruleset:
 
 
 def _inheritable(agent: AgentInfo, *user_layers: Ruleset) -> Ruleset:
-    """Reproduce PromptAssembler._merge_inheritable_permissions."""
+    """Reproduce SessionPrompt._merge_inheritable_permissions."""
     denials = Ruleset(
         rules=[rule for rule in agent.permissions.rules if rule.action == "deny"]
     )
-    return merge_rulesets(denials, *user_layers)
+    return merge_rulesets(*user_layers, denials)
 
 
 def test_inherited_rules_carry_no_allow_all() -> None:
@@ -93,6 +94,28 @@ def test_plan_mode_cannot_delegate_around_its_read_only_ceiling() -> None:
     for mutating in ("write", "edit", "apply_patch", "bash", "computer", "browser"):
         assert evaluate(mutating, "*", merged) == "deny", mutating
     assert evaluate("read", "*", merged) == "allow"
+
+
+def test_a_permissive_preset_cannot_reopen_an_inherited_denial() -> None:
+    """The ceiling must outrank the user layers travelling with it.
+
+    An Auto preset emits broad ``allow`` rules. Ordered before them, the
+    parent's denials are the weakest layer in the set that is supposed to
+    constrain the child — so Plan mode would delegate its way to a writable
+    subagent for any user who is not on the Ask preset.
+    """
+    plan = BUILTIN_AGENTS["plan"]
+    auto_preset = presets_to_ruleset({"file_changes": True, "run_commands": True})
+    assert any(rule.action == "allow" for rule in auto_preset.rules), (
+        "this test is only meaningful while the preset grants something"
+    )
+
+    merged = _child_merged(
+        BUILTIN_AGENTS["general"], _inheritable(plan, auto_preset)
+    )
+
+    for mutating in ("write", "edit", "apply_patch", "bash"):
+        assert evaluate(mutating, "*", merged) == "deny", mutating
 
 
 def test_advertised_tools_match_what_the_agent_may_call(tool_registry) -> None:

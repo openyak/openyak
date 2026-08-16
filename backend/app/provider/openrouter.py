@@ -23,6 +23,21 @@ from app.schemas.provider import (
 
 logger = logging.getLogger(__name__)
 
+def _optional_per_million(raw: Any) -> float | None:
+    """Convert an OpenRouter per-token price string to per-million, or None.
+
+    Absent and unparseable are both None: the cost calculator distinguishes
+    "this catalog does not publish a cache rate" from a real zero, and a
+    silently-zeroed rate would under-report instead of over-report.
+    """
+    if raw is None:
+        return None
+    try:
+        return float(raw) * 1_000_000
+    except (TypeError, ValueError):
+        return None
+
+
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 def _is_free(pricing: dict) -> bool:
@@ -165,6 +180,13 @@ class OpenRouterProvider(OpenAICompatProvider):
                     pricing=ModelPricing(
                         prompt=float(pricing.get("prompt", "0")) * 1_000_000,  # Convert per-token → per-million
                         completion=float(pricing.get("completion", "0")) * 1_000_000,  # Convert per-token → per-million
+                        # The catalog carries real cache rates (Anthropic reads
+                        # at ~0.1x prompt). Without them the cost calculator has
+                        # to fall back to the prompt price, over-stating a long
+                        # session — where cache reads are most of the input — by
+                        # roughly an order of magnitude.
+                        cache_read=_optional_per_million(pricing.get("input_cache_read")),
+                        cache_write=_optional_per_million(pricing.get("input_cache_write")),
                     ),
                     metadata={
                         "description": m.get("description", ""),

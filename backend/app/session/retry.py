@@ -23,14 +23,20 @@ MAX_RETRIES = 5  # Increased from 3 (Claude Code uses 10)
 # Capacity overload (529) — retry for foreground, fail fast for background
 MAX_OVERLOAD_RETRIES = 3  # Separate limit for 529 to prevent amplification
 
-# Context overflow keywords — NEVER retry these (handled by reactive compact instead)
+# Context overflow keywords — NEVER retry these (handled by reactive compact
+# instead). Each must name the *input* being too large. A bare "max_tokens"
+# does not: providers reject an oversized completion budget with a 400 that
+# mentions the parameter by name, and treating that as overflow sends the
+# session into a compaction loop that can never fix it.
 _OVERFLOW_PATTERNS = [
     "context_length_exceeded",
     "maximum context length",
-    "max_tokens",
+    "max_tokens is too large",
+    "exceed context limit",
     "too many tokens",
     "context window",
     "input too long",
+    "prompt is too long",
 ]
 
 # Capacity overload patterns

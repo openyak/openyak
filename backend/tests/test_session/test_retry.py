@@ -53,6 +53,35 @@ class TestIsRetryable:
         e = Exception("max_tokens exceeded for this model")
         assert is_retryable(e) is None
 
+    def test_a_max_tokens_parameter_error_is_not_a_context_overflow(self):
+        """Only the *input* being too large may route to reactive compaction.
+
+        Providers reject an oversized completion budget with a 400 naming the
+        `max_tokens` parameter. Reading that as overflow sends the session into
+        a compaction loop that cannot fix it — compaction shrinks the input.
+        """
+        from app.session.retry import is_context_overflow
+
+        for message in (
+            "Invalid value for max_tokens: must be <= 4096",
+            "400 Bad Request: max_tokens is required",
+        ):
+            error = Exception(message)
+            assert is_context_overflow(error) is False, message
+            assert is_retryable(error) is None, message
+
+    def test_real_overflow_messages_still_route_to_compaction(self):
+        from app.session.retry import is_context_overflow
+
+        for message in (
+            "This model maximum context length is 8192 tokens",
+            "context_length_exceeded: too long",
+            "prompt is too long: 250000 tokens > 200000 maximum",
+            "input too long for this model",
+            "Requested tokens exceed context limit of 128000",
+        ):
+            assert is_context_overflow(Exception(message)) is True, message
+
     def test_generic_error_not_retryable(self):
         e = Exception("Something unexpected happened")
         assert is_retryable(e) is None

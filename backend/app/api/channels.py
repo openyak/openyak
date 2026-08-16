@@ -18,6 +18,7 @@ import queue as _queue
 from pathlib import Path
 from typing import Any
 
+from app.utils.atomic_write import atomic_write_text, file_lock
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -89,10 +90,15 @@ def _load_config_dict() -> dict:
 
 
 def _save_config_dict(data: dict) -> None:
-    """Save raw channels.json config."""
+    """Save raw channels.json config.
+
+    This file holds the bot token for every connected channel, so it is written
+    atomically and owner-only: a partial write disconnects all of them at once,
+    and two concurrent /configure calls must not lose one another's channel.
+    """
     path = _get_channels_config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    with file_lock(path):
+        atomic_write_text(path, json.dumps(data, indent=2, ensure_ascii=False))
 
 
 # ---------------------------------------------------------------------------

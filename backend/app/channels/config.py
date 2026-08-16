@@ -13,7 +13,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from app.utils.atomic_write import atomic_write_text, file_lock
 
 logger = logging.getLogger(__name__)
 
@@ -49,16 +48,3 @@ def load_channels_config(config_path: Path | None = None) -> ChannelsConfig:
         return ChannelsConfig()
 
 
-def save_channels_config(config: ChannelsConfig, config_path: Path | None = None) -> None:
-    """Save channels configuration to JSON file.
-
-    Holds bot tokens for every connected channel, so it is written atomically
-    and owner-only — a partial write here disconnects all of them at once.
-    """
-    path = config_path or _DEFAULT_CONFIG_PATH
-    with file_lock(path):
-        atomic_write_text(
-            path,
-            json.dumps(config.model_dump(), indent=2, ensure_ascii=False),
-        )
-    logger.info("Saved channels config to %s", path)

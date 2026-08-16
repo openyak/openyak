@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.session.middleware import ToolAction
 from app.session.processor import (
     SessionProcessor,
     _permission_arguments_for_event,
@@ -387,7 +388,7 @@ async def test_cancelled_dispatch_finalizes_running_tool_part(
     processor._exec_metadata = {
         0: {
             "tool_part_id": tool_part.id,
-            "loop_result": None,
+            "policy_decision": ToolAction(action="allow"),
             "tool": TaskTool(),
             "tool_args": {"prompt": "wait"},
             "call_id": "cancel-call",
@@ -586,7 +587,7 @@ async def test_completed_tool_part_retries_transient_terminal_write(
         0,
         {
             "tool_part_id": part.id,
-            "loop_result": SimpleNamespace(action="none", message=None),
+            "policy_decision": ToolAction(action="allow"),
             "tool": TaskTool(),
             "tool_args": {},
             "call_id": "completed-retry-call",

@@ -705,6 +705,22 @@ class SessionProcessor:
                 retry_reason = is_retryable(e)
                 effective_max = max_retries_for_error(e)
 
+                if retry_reason and self._streaming_executor.has_submissions:
+                    # Tool calls from this attempt are already dispatched, and
+                    # some have side effects that cannot be taken back — a sent
+                    # email, a written file. Replaying the stream would submit
+                    # them a second time, because the executor and
+                    # ``_exec_metadata`` outlive ``_reset_stream_accumulators``.
+                    # Stop instead and let the outer loop surface the failure
+                    # with whatever the tools produced.
+                    logger.warning(
+                        "Stream failed after %d tool call(s) were dispatched; not "
+                        "retrying to avoid re-running them: %s",
+                        len(self._tool_calls_in_step),
+                        e,
+                    )
+                    retry_reason = None
+
                 if retry_reason and attempt < effective_max:
                     delay = retry_delay(attempt, e)
                     logger.warning(
@@ -863,10 +879,10 @@ class SessionProcessor:
         if self._mw_ctx is not None:
             decision = await sp.middleware_chain.run_before_tool_exec(tn, ta, self._mw_ctx)
         else:
+            # No chain (direct construction in tests) — run the detector itself
+            # so loop protection is never silently absent.
             lr: LoopCheckResult = loop_detector.check(job.session_id, tn, ta)
-            decision = ToolAction(
-                action="block" if lr.action == "block" else "allow", message=lr.message
-            )
+            decision = ToolAction(action=lr.action, message=lr.message)
         if decision.action == "block":
             job.publish(SSEEvent(AGENT_ERROR, {
                 "error_type": "loop_detected",
@@ -1113,7 +1129,7 @@ class SessionProcessor:
         ))
         self._exec_metadata[self._exec_index] = {
             "tool_part_id": tool_part_id,
-            "loop_result": lr,
+            "policy_decision": decision,
             "tool": tool,
             "tool_args": ta,
             "call_id": ci,
@@ -1241,6 +1257,12 @@ class SessionProcessor:
         sp = self._sp
         job = sp.job
 
+        # The stream can fail after tool calls were dispatched. Nothing else
+        # will collect them from here, so terminate their persisted "running"
+        # parts rather than leaving the session with rows that never resolve.
+        if self._streaming_executor.has_submissions:
+            await self._cancel_running_tools()
+
         # --- Reactive compact: recover from context overflow via compaction ---
         # Inspired by Claude Code's reactive compact pattern.
         if is_context_overflow(self._stream_error):
@@ -1251,7 +1273,14 @@ class SessionProcessor:
             await _delete_empty_assistant_messages(sp.session_factory, job.session_id)
             return "compact"
 
-        logger.exception("LLM stream error (not retryable or retries exhausted)")
+        # Not inside an `except` block — `logger.exception` here would append a
+        # bare "NoneType: None". Carry the exception explicitly; this line is
+        # the primary diagnostic for every provider stream failure.
+        logger.error(
+            "LLM stream error (not retryable or retries exhausted): %s",
+            self._stream_error,
+            exc_info=self._stream_error,
+        )
         self.has_text = bool(self._accumulated_text.strip())
         self.finish_reason = "error"
         if self._accumulated_text or self._accumulated_reasoning:
@@ -1530,7 +1559,7 @@ class SessionProcessor:
         session_factory = sp.session_factory
 
         tool_part_id = meta["tool_part_id"]
-        loop_result = meta["loop_result"]
+        policy_decision = meta["policy_decision"]
         tool = meta["tool"]
         tool_args = meta["tool_args"]
         call_id = meta["call_id"]
@@ -1612,7 +1641,7 @@ class SessionProcessor:
 
         await self._apply_tool_side_effects(tool, result)
         persist_output = await self._build_tool_persist_output(
-            tool, tool_args, result, loop_result,
+            tool, tool_args, result, policy_decision,
         )
 
         # Persist file attachments returned by the tool as FileParts
@@ -1730,7 +1759,7 @@ class SessionProcessor:
         tool: Any,
         tool_args: dict[str, Any],
         result: Any,
-        loop_result: Any,
+        policy_decision: ToolAction,
     ) -> str:
         """Assemble the output text persisted to the tool part (+ reminders, middleware)."""
         sp = self._sp
@@ -1739,9 +1768,16 @@ class SessionProcessor:
         if result.success:
             persist_output += _presentation_reminder(tool.id, result.metadata)
 
-        # Inject loop warning into output so LLM sees it
-        if loop_result.action == "warn" and loop_result.message:
-            persist_output += f"\n\n{loop_result.message}"
+        # A "warn" verdict is appended by LoopDetectionMiddleware.after_tool_exec
+        # (via the message it stashed in before_tool_exec), so only the
+        # chain-less path has to do it here — mirroring the run_after_tool_exec
+        # call at the end of this method.
+        if (
+            self._mw_ctx is None
+            and policy_decision.action == "warn"
+            and policy_decision.message
+        ):
+            persist_output += f"\n\n{policy_decision.message}"
 
         if (
             tool.id in _MODIFYING_TOOLS
