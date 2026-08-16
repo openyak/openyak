@@ -8,6 +8,29 @@ from typing import Any, AsyncIterator
 from app.schemas.provider import ModelInfo, ProviderStatus, StreamChunk
 
 
+class ProviderStreamError(RuntimeError):
+    """An error a provider reported while streaming.
+
+    Providers signal stream failures by raising, never by yielding a chunk, so
+    that a single consumer path handles every failure. This matters because
+    ``app.session.retry`` classifies retryability from the raised exception: an
+    error delivered as a chunk instead bypasses backoff, the 429/5xx retry
+    budget, and context-overflow recovery.
+
+    Raise this when the failure originates in the provider's own protocol (an
+    error event in the response body, a non-200 status). Re-raise the original
+    exception unchanged when one exists — ``retry_delay`` reads ``Retry-After``
+    off its ``.response.headers``, which a wrapper would discard.
+
+    ``code`` carries a provider-specific signal (e.g. ``needs_reauth``) for
+    callers that can act on it.
+    """
+
+    def __init__(self, message: str, *, code: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+
+
 class BaseProvider(ABC):
     """Abstract LLM provider."""
 

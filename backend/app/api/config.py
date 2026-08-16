@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from app.config import get_custom_endpoints
 from app.dependencies import ProviderRegistryDep, SettingsDep
+from app.utils.atomic_write import atomic_write_text, file_lock
 from app.provider.catalog import PROVIDER_CATALOG
 from app.provider.factory import create_provider as create_desktop_provider
 from app.provider.local import (
@@ -113,34 +114,43 @@ def _update_env_file(key: str, value: str) -> None:
 
     Values are single-quoted to prevent python-dotenv from interpreting
     special characters (``#`` as inline comments, whitespace stripping, etc.).
+
+    This file holds every configured API key, so the whole read-modify-write
+    runs under a lock and lands atomically: two callers must not clobber each
+    other's keys, and an interrupted write must not truncate the file.
     """
-    lines: list[str] = []
-    found = False
-    # Single-quote the value; escape any embedded single quotes.
-    escaped = value.replace("'", "'\\''")
-    entry = f"{key}='{escaped}'"
+    with file_lock(_ENV_PATH):
+        lines: list[str] = []
+        found = False
+        # Single-quote the value; escape any embedded single quotes.
+        escaped = value.replace("'", "'\\''")
+        entry = f"{key}='{escaped}'"
 
-    if _ENV_PATH.exists():
-        lines = _ENV_PATH.read_text(encoding="utf-8").splitlines()
-        for i, line in enumerate(lines):
-            if line.startswith(f"{key}=") or line.startswith(f"{key} ="):
-                lines[i] = entry
-                found = True
-                break
+        if _ENV_PATH.exists():
+            lines = _ENV_PATH.read_text(encoding="utf-8").splitlines()
+            for i, line in enumerate(lines):
+                if line.startswith(f"{key}=") or line.startswith(f"{key} ="):
+                    lines[i] = entry
+                    found = True
+                    break
 
-    if not found:
-        lines.append(entry)
+        if not found:
+            lines.append(entry)
 
-    _ENV_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        atomic_write_text(_ENV_PATH, "\n".join(lines) + "\n")
 
 
 def _remove_env_key(key: str) -> None:
     """Remove a key from the backend .env file entirely."""
-    if not _ENV_PATH.exists():
-        return
-    lines = _ENV_PATH.read_text(encoding="utf-8").splitlines()
-    lines = [l for l in lines if not l.startswith(f"{key}=") and not l.startswith(f"{key} =")]
-    _ENV_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    with file_lock(_ENV_PATH):
+        if not _ENV_PATH.exists():
+            return
+        lines = _ENV_PATH.read_text(encoding="utf-8").splitlines()
+        lines = [
+            l for l in lines
+            if not l.startswith(f"{key}=") and not l.startswith(f"{key} =")
+        ]
+        atomic_write_text(_ENV_PATH, "\n".join(lines) + "\n")
 
 
 class LocalProviderStatus(BaseModel):

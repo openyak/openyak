@@ -112,6 +112,7 @@ class SessionPrompt:
         self.workspace_memory_section: str | None = None
         self.system_prompt_parts: SystemPromptParts | None = None
         self.merged_permissions: list = []
+        self.inheritable_permissions: list = []
         self.request_permissions: list = []
         self.preset_permissions: list = []
         self.session_permissions: list = []
@@ -381,6 +382,7 @@ class SessionPrompt:
         self.preset_permissions = presets_to_ruleset(self.request.permission_presets)
         self.request_permissions = parse_session_permissions(self.request.permission_rules)
         self.merged_permissions = self._merge_effective_permissions()
+        self.inheritable_permissions = self._merge_inheritable_permissions()
 
         # --- Reconstruct artifact cache from message history ---
         # Allows update/rewrite operations to work across generations.
@@ -577,6 +579,25 @@ class SessionPrompt:
                 "total": processor.usage_data.get("total", 0),
             }
 
+    def _record_compaction_failure(self) -> bool:
+        """Count one unproductive compaction. Returns True when the loop must stop."""
+        self._consecutive_compact_failures += 1
+        logger.warning(
+            "Compaction freed nothing (%d/%d) for session %s",
+            self._consecutive_compact_failures,
+            self._MAX_CONSECUTIVE_COMPACT_FAILURES,
+            self.job.session_id,
+        )
+        if self._consecutive_compact_failures >= self._MAX_CONSECUTIVE_COMPACT_FAILURES:
+            self.job.publish(SSEEvent(AGENT_ERROR, {
+                "error_message": (
+                    "Context compression failed repeatedly. "
+                    "Please start a new conversation."
+                ),
+            }))
+            return True
+        return False
+
     async def _handle_compact_result(self) -> bool:
         """Handle ``result == 'compact'``.
 
@@ -646,7 +667,7 @@ class SessionPrompt:
                     )
 
             try:
-                await run_compaction(
+                compaction = await run_compaction(
                     self.job.session_id,
                     job=self.job,
                     session_factory=self.session_factory,
@@ -654,23 +675,21 @@ class SessionPrompt:
                     agent_registry=self.agent_registry,
                     model_id=self.model_id,
                 )
-                self._consecutive_compact_failures = 0
             except Exception:
-                self._consecutive_compact_failures += 1
                 logger.warning(
-                    "Compaction failed (%d/%d) for session %s",
-                    self._consecutive_compact_failures,
-                    self._MAX_CONSECUTIVE_COMPACT_FAILURES,
-                    self.job.session_id,
-                    exc_info=True,
+                    "Compaction raised for session %s", self.job.session_id, exc_info=True
                 )
-                if self._consecutive_compact_failures >= self._MAX_CONSECUTIVE_COMPACT_FAILURES:
-                    self.job.publish(SSEEvent(AGENT_ERROR, {
-                        "error_message": (
-                            "Context compression failed repeatedly. "
-                            "Please start a new conversation."
-                        ),
-                    }))
+                if self._record_compaction_failure():
+                    return True
+            else:
+                # run_compaction swallows provider failures and returns a result
+                # that freed nothing. Counting that as success would let a
+                # compaction loop that never reclaims anything reset its own
+                # circuit breaker on every pass, leaving only the step cap to
+                # stop it.
+                if compaction.tokens_freed > 0:
+                    self._consecutive_compact_failures = 0
+                elif self._record_compaction_failure():
                     return True
 
         # Todo context recovery: after compaction the LLM may have lost
@@ -905,6 +924,7 @@ class SessionPrompt:
         Called by SessionProcessor when the plan tool switches agents.
         """
         self.merged_permissions = self._merge_effective_permissions()
+        self.inheritable_permissions = self._merge_inheritable_permissions()
         self.system_prompt_parts = self._build_system_prompt_parts()
 
     # ------------------------------------------------------------------
@@ -926,6 +946,34 @@ class SessionPrompt:
         return merge_rulesets(
             GLOBAL_DEFAULTS,
             self.agent.permissions,
+            self.preset_permissions,
+            self.request_permissions,
+            self.session_permissions,
+        )
+
+    def _merge_inheritable_permissions(self) -> Ruleset:
+        """The rules a subagent inherits — restrictions only, never defaults.
+
+        A child slots inherited rules in *after* its own agent layer, and
+        last-match-wins means anything permissive here outranks the child's own
+        ``deny``. So two things stay out:
+
+        - ``GLOBAL_DEFAULTS``, which the child re-applies as its own first
+          layer. Passing this session's copy down would put a second
+          ``allow *`` above the child's restrictions.
+        - This agent's *permissive* rules. A persona's ``allow``/``ask``
+          defaults describe this agent, not the one being spawned; the child
+          has its own. Only the parent's denials are a ceiling, so a read-only
+          Plan session cannot delegate its way around itself.
+
+        The user's own choices — presets, request rules, session rules, and
+        remembered approvals — pass through whole and keep narrowing the child.
+        """
+        agent_denials = Ruleset(
+            rules=[rule for rule in self.agent.permissions.rules if rule.action == "deny"]
+        )
+        return merge_rulesets(
+            agent_denials,
             self.preset_permissions,
             self.request_permissions,
             self.session_permissions,

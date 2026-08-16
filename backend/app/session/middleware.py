@@ -7,10 +7,9 @@ in SessionProcessor with a pluggable chain.
 Middleware hooks:
   - before_llm_call(messages, ctx) → messages
     Modify messages before sending to LLM. Return modified messages.
-  - after_llm_response(text, tool_calls, ctx) → (text, tool_calls)
-    Inspect/modify LLM response before tool execution.
   - before_tool_exec(tool_name, tool_args, ctx) → ToolAction
-    Decide whether to allow, warn, or block a tool call.
+    Decide whether to allow, warn, or block a tool call. The strictest
+    verdict across the chain wins, and every middleware runs regardless.
   - after_tool_exec(tool_name, tool_args, result, ctx) → result_output
     Modify tool result output before it's persisted.
   - on_step_complete(ctx) → None
@@ -56,6 +55,10 @@ class ToolAction:
     message: str | None = None  # Warning/block message
 
 
+# How the chain combines verdicts from several middlewares: strictest wins.
+_STRICTNESS = {"allow": 0, "warn": 1, "block": 2}
+
+
 class Middleware:
     """Base middleware class with no-op defaults for all hooks.
 
@@ -69,15 +72,6 @@ class Middleware:
     ) -> list[dict[str, Any]]:
         """Called before LLM invocation. Return (possibly modified) messages."""
         return messages
-
-    async def after_llm_response(
-        self,
-        text: str,
-        tool_calls: list[dict[str, Any]],
-        ctx: MiddlewareContext,
-    ) -> tuple[str, list[dict[str, Any]]]:
-        """Called after LLM responds. Return (possibly modified) text and tool_calls."""
-        return text, tool_calls
 
     async def before_tool_exec(
         self,
@@ -125,28 +119,27 @@ class MiddlewareChain:
             messages = await mw.before_llm_call(messages, ctx)
         return messages
 
-    async def run_after_llm_response(
-        self,
-        text: str,
-        tool_calls: list[dict[str, Any]],
-        ctx: MiddlewareContext,
-    ) -> tuple[str, list[dict[str, Any]]]:
-        for mw in self._middlewares:
-            text, tool_calls = await mw.after_llm_response(text, tool_calls, ctx)
-        return text, tool_calls
-
     async def run_before_tool_exec(
         self,
         tool_name: str,
         tool_args: dict[str, Any],
         ctx: MiddlewareContext,
     ) -> ToolAction:
-        """Run before_tool_exec on all middlewares. First non-allow result wins."""
+        """Run before_tool_exec on every middleware; the strictest verdict wins.
+
+        Every middleware runs even once one has decided to block, because a
+        middleware's job here is partly to observe (loop detection counts the
+        call, and stashes a warning for ``after_tool_exec``). Returning on the
+        first non-allow would make the outcome depend on registration order —
+        add a blocking policy above loop detection and the loop counter
+        silently stops advancing.
+        """
+        verdict = ToolAction(action="allow")
         for mw in self._middlewares:
             result = await mw.before_tool_exec(tool_name, tool_args, ctx)
-            if result.action != "allow":
-                return result
-        return ToolAction(action="allow")
+            if _STRICTNESS[result.action] > _STRICTNESS[verdict.action]:
+                verdict = result
+        return verdict
 
     async def run_after_tool_exec(
         self,

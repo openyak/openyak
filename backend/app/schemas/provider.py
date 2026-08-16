@@ -77,6 +77,13 @@ class ModelPricing(BaseModel):
 
     prompt: float = 0.0  # Cost per million prompt tokens
     completion: float = 0.0  # Cost per million completion tokens
+    cache_read: float | None = None  # Per million cached-input tokens read
+    cache_write: float | None = None  # Per million tokens written to cache
+    """Cache rates vary by provider — Anthropic reads at 0.1x prompt and writes
+    at 1.25x, OpenAI reads at 0.5x — so there is no safe single multiplier.
+    When a catalog does not supply them, ``calculate_step_cost`` falls back to
+    the prompt price, which over-states rather than silently billing cached
+    tokens at zero."""
 
 
 class ModelInfo(BaseModel):

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from app.tool.truncation import truncate_output
 
@@ -77,6 +77,18 @@ class ToolDefinition(ABC):
         """Optional Tool-specific timeout; ``None`` uses the global limit."""
         return None
 
+    @property
+    def truncation_direction(self) -> Literal["head", "tail"]:
+        """Which end of an oversized result to keep.
+
+        ``head`` suits tools whose output is ordered by relevance — a search
+        result list, a file read from the top. ``tail`` suits anything whose
+        conclusion is at the end: a failed build reports its error on the last
+        lines, and keeping the first 2000 lines of setup noise drops the one
+        thing the model needed.
+        """
+        return "head"
+
     @abstractmethod
     def parameters_schema(self) -> dict[str, Any]:
         """Return JSON Schema for the tool's parameters."""
@@ -132,22 +144,41 @@ class ToolDefinition(ABC):
             result = await self.execute(args, ctx)
             # Truncate output — save full text to file if oversized
             # Mirrors OpenCode's Truncate.output() integration in tool/tool.ts
+            # Check if agent has "task" tool for smarter hints
+            has_task = not ctx.agent.tools or "task" in ctx.agent.tools
             if result.output:
-                # Check if agent has "task" tool for smarter hints
-                has_task = not ctx.agent.tools or "task" in ctx.agent.tools
                 tr = truncate_output(
                     result.output,
                     workspace=ctx.workspace,
                     has_task_tool=has_task,
+                    direction=self.truncation_direction,
                 )
                 result.output = tr.content
                 if tr.truncated:
                     result.metadata["truncated"] = True
                     result.metadata["output_path"] = tr.output_path
+            if result.error:
+                # An error is model-visible context like any other, and an
+                # unbounded one (a stack trace, a dumped response body) eats the
+                # window the same way an unbounded output would.
+                error_tr = truncate_output(
+                    result.error,
+                    workspace=ctx.workspace,
+                    has_task_tool=has_task,
+                    direction=self.truncation_direction,
+                )
+                result.error = error_tr.content
             return result
         except Exception as e:
             logger.exception("Tool %s failed", self.id)
-            return ToolResult(error=str(e))
+            # Bound this the same way as a returned error: an exception's repr
+            # can carry a whole response body.
+            failure = truncate_output(
+                str(e),
+                workspace=getattr(ctx, "workspace", None),
+                direction=self.truncation_direction,
+            )
+            return ToolResult(error=failure.content)
 
     def to_openai_spec(self) -> dict[str, Any]:
         """Convert to OpenAI function calling format."""

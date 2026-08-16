@@ -10,7 +10,7 @@ import asyncio
 import os
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from app.tool.base import ToolDefinition, ToolResult
 from app.tool.context import ToolContext
@@ -32,6 +32,11 @@ class BashTool(ToolDefinition):
     @property
     def id(self) -> str:
         return "bash"
+
+    @property
+    def truncation_direction(self) -> Literal["head", "tail"]:
+        """Keep the end: a failed run reports why on its last lines."""
+        return "tail"
 
     @property
     def description(self) -> str:

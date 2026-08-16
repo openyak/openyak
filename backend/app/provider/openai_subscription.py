@@ -15,7 +15,7 @@ from typing import Any, AsyncIterator
 import httpx
 
 from app.config import get_settings
-from app.provider.base import BaseProvider
+from app.provider.base import BaseProvider, ProviderStreamError
 from app.schemas.provider import (
     ModelCapabilities,
     ModelInfo,
@@ -221,9 +221,12 @@ class OpenAISubscriptionProvider(BaseProvider):
                             async with self._refresh_lock:
                                 await self._do_refresh()
                             headers["Authorization"] = f"Bearer {self._access_token}"
-                        except Exception:
-                            yield StreamChunk(type="error", data={"message": "Authentication failed. Please re-authorize your ChatGPT subscription.", "code": "needs_reauth"})
-                            return
+                        except Exception as refresh_error:
+                            raise ProviderStreamError(
+                                "Authentication failed. Please re-authorize your "
+                                "ChatGPT subscription.",
+                                code="needs_reauth",
+                            ) from refresh_error
 
                         # Retry with new token
                         async with client.stream(
@@ -234,23 +237,28 @@ class OpenAISubscriptionProvider(BaseProvider):
                         ) as retry_response:
                             if retry_response.status_code != 200:
                                 text = (await retry_response.aread()).decode()
-                                yield StreamChunk(type="error", data={"message": f"WHAM API error after refresh: {retry_response.status_code} — {text[:200]}"})
-                                return
+                                raise ProviderStreamError(
+                                    f"WHAM API error after refresh: "
+                                    f"{retry_response.status_code} — {text[:200]}"
+                                )
                             async for chunk in self._parse_wham_stream(retry_response):
                                 yield chunk
                         return
 
                     if response.status_code != 200:
                         text = (await response.aread()).decode()
-                        yield StreamChunk(type="error", data={"message": f"WHAM API error: {response.status_code} — {text[:200]}"})
-                        return
+                        raise ProviderStreamError(
+                            f"WHAM API error: {response.status_code} — {text[:200]}"
+                        )
 
                     async for chunk in self._parse_wham_stream(response):
                         yield chunk
 
         except Exception as e:
+            # Raise rather than yield an error chunk so the session retry
+            # classifier sees the failure; see ProviderStreamError.
             logger.error("OpenAI subscription stream error: %s", e)
-            yield StreamChunk(type="error", data={"message": str(e)})
+            raise
 
     def _build_wham_request(
         self,
@@ -563,7 +571,7 @@ class OpenAISubscriptionProvider(BaseProvider):
                 error_msg = event.get("error", {})
                 if isinstance(error_msg, dict):
                     error_msg = error_msg.get("message", str(error_msg))
-                yield StreamChunk(type="error", data={"message": str(error_msg)})
+                raise ProviderStreamError(str(error_msg))
 
     async def health_check(self) -> ProviderStatus:
         """Check if the subscription is active by verifying the token."""

@@ -29,15 +29,18 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.agent.agent import AgentRegistry
 from app.agent.permission import (
     RejectedError,
+    agent_verdict,
     evaluate,
     pattern_matches,
 )
+from app.provider.base import ProviderStreamError
 from app.provider.registry import ProviderRegistry
 from app.schemas.agent import PermissionRule
 from app.schemas.chat import PromptRequest
 from app.schemas.message import StepFinishReason
 from app.session.llm import stream_llm
 from app.session.loop_detection import LoopCheckResult, loop_detector
+from app.session.middleware import ToolAction
 from app.session.manager import (
     create_part,
     get_messages,
@@ -560,8 +563,12 @@ class SessionProcessor:
     async def _stream_llm_with_retry(self) -> Literal["stop"] | None:
         """Stream from the LLM with retry. Mutates self._accumulated_*, self._stream_error.
 
-        Returns "stop" early only for fatal in-stream conditions (non-vision model
-        received images, or the stream chunk reported an explicit error).
+        Every stream failure arrives as a raised exception — providers never
+        signal one with a chunk — so all of them reach the classifier below and
+        share one backoff, retry budget, and context-overflow recovery path.
+
+        Returns "stop" early only for a non-vision model that was sent images;
+        stream failures leave ``self._stream_error`` set for the caller.
         """
         sp = self._sp
         job = sp.job
@@ -656,7 +663,14 @@ class SessionProcessor:
                             )
 
                         case "error":
-                            return await self._handle_stream_error_chunk(chunk)
+                            # Defensive net for a provider that still yields an
+                            # error chunk instead of raising (custom or
+                            # third-party). Raising routes it through the same
+                            # classifier as every other stream failure.
+                            raise ProviderStreamError(
+                                str(chunk.data.get("message", "LLM error")),
+                                code=chunk.data.get("code"),
+                            )
 
                 self._stream_error = None
                 logger.info(
@@ -842,18 +856,27 @@ class SessionProcessor:
             and isinstance(raw_tool_args, dict)
         )
 
-        # Loop detection
-        lr: LoopCheckResult = loop_detector.check(job.session_id, tn, ta)
-        if lr.action == "block":
+        # Pre-execution policy. Loop detection lives in the middleware chain
+        # rather than inline here, so its warn stage (which stashes a message
+        # for after_tool_exec to append) actually runs, and so any other policy
+        # middleware gets the same hook instead of a seam nothing calls.
+        if self._mw_ctx is not None:
+            decision = await sp.middleware_chain.run_before_tool_exec(tn, ta, self._mw_ctx)
+        else:
+            lr: LoopCheckResult = loop_detector.check(job.session_id, tn, ta)
+            decision = ToolAction(
+                action="block" if lr.action == "block" else "allow", message=lr.message
+            )
+        if decision.action == "block":
             job.publish(SSEEvent(AGENT_ERROR, {
                 "error_type": "loop_detected",
-                "error_message": lr.message,
+                "error_message": decision.message,
                 "tool": tn,
             }))
             await _persist_tool_error(
                 session_factory, self._assistant_msg_id,
                 job.session_id, tn, ci, ta,
-                lr.message or "Loop detected — hard stop",
+                decision.message or "Loop detected — hard stop",
             )
             self._exec_blocked = True
             return
@@ -946,7 +969,7 @@ class SessionProcessor:
                 if parsed.scheme in {"http", "https"} and parsed.hostname:
                     port = f":{parsed.port}" if parsed.port else ""
                     rp = f"{parsed.scheme.lower()}://{parsed.hostname.lower()}{port}"
-        if evaluate(tool.id, rp, sp.agent.permissions) == "deny":
+        if agent_verdict(tool.id, rp, sp.agent.permissions) == "deny":
             message = f"Agent policy denied tool: {tool.id}"
             job.publish(SSEEvent(TOOL_ERROR, {
                 "call_id": ci,
@@ -1036,9 +1059,13 @@ class SessionProcessor:
             "tool_registry": sp.tool_registry,
             "stream_manager": get_stream_manager(),
         }
+        # What a subagent inherits (via task/swarm) — this session's decisions
+        # without the global defaults the child re-applies itself. Handing down
+        # the fully merged set instead would carry ``allow *`` into the child's
+        # request layer, outranking its own agent-level denials.
         effective_permission_rules = tuple(
             rule.model_dump()
-            for rule in sp.merged_permissions.rules
+            for rule in sp.inheritable_permissions.rules
         )
         ctx = ToolContext(
             session_id=job.session_id,
@@ -1204,27 +1231,6 @@ class SessionProcessor:
                 "metadata": ws_metadata,
             },
         ))
-
-    async def _handle_stream_error_chunk(self, chunk: Any) -> Literal["stop"]:
-        """Mid-stream 'error' chunk: persist any accumulated text + publish error + clean up."""
-        sp = self._sp
-        job = sp.job
-
-        if self._accumulated_text:
-            async with sp.session_factory() as db:
-                async with db.begin():
-                    await create_part(
-                        db,
-                        message_id=self._assistant_msg_id,
-                        session_id=job.session_id,
-                        data={"type": "text", "text": self._accumulated_text},
-                    )
-        job.publish(SSEEvent(
-            AGENT_ERROR,
-            {"error_message": chunk.data.get("message", "LLM error")},
-        ))
-        await _delete_empty_assistant_messages(sp.session_factory, job.session_id)
-        return "stop"
 
     # ------------------------------------------------------------------
     # process() phases — post-stream
@@ -1991,6 +1997,10 @@ async def _remember_permission_rule(
     ]
     sp.session_permissions.rules.append(rule)
     sp.merged_permissions.rules.append(rule)
+    # Subagents must see a remembered *denial* too: a non-interactive child
+    # cannot prompt, so an inherited "ask" would execute where the user has
+    # already said no.
+    sp.inheritable_permissions.rules.append(rule)
 
 
 def _permission_arguments_for_event(

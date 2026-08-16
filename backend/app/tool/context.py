@@ -83,7 +83,10 @@ class ToolContext:
             return await self._ask_fn(
                 permission, patterns or [], arguments, message
             )
-        return True  # Default: allow
+        # No way to ask means no approval was given. A permission primitive
+        # defaults closed: the caller reached here precisely because something
+        # needed the user's consent, and nobody can supply it.
+        return False
 
     @property
     def is_aborted(self) -> bool:

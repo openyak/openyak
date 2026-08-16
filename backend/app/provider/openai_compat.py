@@ -249,8 +249,11 @@ class OpenAICompatProvider(BaseProvider):
                 )
 
         except Exception as e:
+            # Re-raise unchanged rather than converting to an error chunk: the
+            # retry classifier reads the exception (including Retry-After off
+            # ``e.response.headers``), and a chunk would skip it entirely.
             logger.error("Stream error for model %s: %s", model, e, exc_info=True)
-            yield StreamChunk(type="error", data={"message": str(e)})
+            raise
 
     def _build_messages(
         self,

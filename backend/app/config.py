@@ -128,6 +128,7 @@ class Settings(BaseSettings):
     min_output_tokens: int = 256  # minimum output tokens floor
     tool_timeout: int = 300  # seconds — per-tool execution timeout
     max_concurrent_generations: int = 20  # max parallel generation jobs
+    max_parallel_tool_calls: int = 10  # concurrency-safe tools running at once
 
     # --- Tool Limits ---
     bash_timeout: int = 120  # default bash command timeout (seconds)

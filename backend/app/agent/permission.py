@@ -44,6 +44,22 @@ def evaluate(permission: str, pattern: str, ruleset: Ruleset) -> str:
     return result
 
 
+def agent_verdict(permission: str, pattern: str, agent_permissions: Ruleset) -> str:
+    """Evaluate an agent's own ruleset the way it is actually layered.
+
+    An agent's rules never apply alone — they sit on top of
+    :data:`GLOBAL_DEFAULTS` in every real merge. Evaluating them in isolation
+    instead reads "this agent says nothing about tool X" as ``deny``, because
+    :func:`evaluate` returns ``deny`` when no rule matches. That turns an agent
+    declared without a ``permissions`` block (the default for a user-defined
+    agent in ``.openyak/agents/*.md``) into one that is refused every tool.
+
+    Use this wherever the agent layer is consulted on its own — as a ceiling on
+    what later layers may re-open, or as the pre-execution policy gate.
+    """
+    return evaluate(permission, pattern, merge_rulesets(GLOBAL_DEFAULTS, agent_permissions))
+
+
 def merge_rulesets(*rulesets: Ruleset) -> Ruleset:
     """Merge multiple rulesets in priority order (last wins).
 

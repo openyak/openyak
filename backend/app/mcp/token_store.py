@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from app.mcp.oauth import AuthServerMeta, TokenSet
+from app.utils.atomic_write import atomic_write_text, file_lock
 
 logger = logging.getLogger(__name__)
 
@@ -148,10 +149,7 @@ class McpTokenStore:
 
     def _persist(self) -> None:
         try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            self._path.write_text(
-                json.dumps(self._data, indent=2),
-                encoding="utf-8",
-            )
+            with file_lock(self._path):
+                atomic_write_text(self._path, json.dumps(self._data, indent=2))
         except OSError as e:
             logger.warning("Cannot persist MCP tokens: %s", e)

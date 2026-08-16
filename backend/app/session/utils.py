@@ -518,9 +518,23 @@ def calculate_step_cost(
     input_tokens = usage_data.get("input", 0)
     output_tokens = usage_data.get("output", 0)
     reasoning_tokens = usage_data.get("reasoning", 0)
+    # Providers report cached input separately from `input`, so leaving these
+    # out does not merely mis-price them — it bills them at zero. In a long
+    # session cache reads are most of the input, which is exactly when the
+    # reported cost drifts furthest from the user's provider bill.
+    cache_read_tokens = usage_data.get("cache_read", 0)
+    cache_write_tokens = usage_data.get("cache_write", 0)
+    cache_read_price = getattr(model_info.pricing, "cache_read", None)
+    cache_write_price = getattr(model_info.pricing, "cache_write", None)
 
     raw_cost = (
         input_tokens * prompt_price / 1_000_000
         + (output_tokens + reasoning_tokens) * completion_price / 1_000_000
+        + cache_read_tokens
+        * (prompt_price if cache_read_price is None else cache_read_price)
+        / 1_000_000
+        + cache_write_tokens
+        * (prompt_price if cache_write_price is None else cache_write_price)
+        / 1_000_000
     )
     return raw_cost

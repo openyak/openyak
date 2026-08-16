@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from app.agent.permission import evaluate, merge_rulesets
+from app.agent.permission import agent_verdict, evaluate, merge_rulesets
 from app.schemas.agent import AgentInfo, Ruleset
 from app.tool.base import ToolDefinition
 
@@ -58,14 +58,22 @@ class ToolRegistry:
         else:
             candidates = list(self._tools.values())
 
-        # Filter by permissions
-        ruleset = agent.permissions
-        if extra_ruleset:
-            ruleset = merge_rulesets(ruleset, extra_ruleset)
-
+        # Filter by permissions. The agent's own ruleset and the session's
+        # merged ruleset each get a veto — inherited rules narrow what an agent
+        # may do, never widen it. Merging them into one list instead would let
+        # a later layer outrank the agent: a subagent inherits its parent's
+        # rules, and those start with the global ``allow *``, which would
+        # otherwise reopen everything a restrictive agent denies. This mirrors
+        # the agent-policy gate in ``SessionProcessor`` so the tools advertised
+        # to the model are exactly the ones it is allowed to call.
         result = [
             tool for tool in candidates
-            if evaluate(tool.id, "*", ruleset) != "deny"
+            if agent_verdict(tool.id, "*", agent.permissions) != "deny"
+            and (
+                extra_ruleset is None
+                or evaluate(tool.id, "*", merge_rulesets(agent.permissions, extra_ruleset))
+                != "deny"
+            )
         ]
 
         if exclude:

@@ -15,7 +15,7 @@ import os
 import traceback
 from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from app.tool.base import ToolDefinition, ToolResult
 from app.tool.context import ToolContext
@@ -55,6 +55,11 @@ class CodeExecuteTool(ToolDefinition):
     @property
     def id(self) -> str:
         return "code_execute"
+
+    @property
+    def truncation_direction(self) -> Literal["head", "tail"]:
+        """Keep the end: a failed run reports why on its last lines."""
+        return "tail"
 
     @property
     def description(self) -> str:
