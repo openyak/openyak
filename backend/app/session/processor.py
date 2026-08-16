@@ -2054,10 +2054,9 @@ async def _remember_permission_rule(
     ]
     sp.session_permissions.rules.append(rule)
     sp.merged_permissions.rules.append(rule)
-    # Subagents must see a remembered *denial* too: a non-interactive child
-    # cannot prompt, so an inherited "ask" would execute where the user has
-    # already said no.
-    sp.inheritable_permissions.rules.append(rule)
+    # `inheritable_permissions` picks this up on its own: it is derived from
+    # `session_permissions` above, so a remembered denial reaches subagents
+    # while still sitting *below* the agent-denial ceiling.
 
 
 def _permission_arguments_for_event(

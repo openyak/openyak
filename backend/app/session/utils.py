@@ -518,23 +518,26 @@ def calculate_step_cost(
     input_tokens = usage_data.get("input", 0)
     output_tokens = usage_data.get("output", 0)
     reasoning_tokens = usage_data.get("reasoning", 0)
-    # Providers report cached input separately from `input`, so leaving these
-    # out does not merely mis-price them — it bills them at zero. In a long
-    # session cache reads are most of the input, which is exactly when the
-    # reported cost drifts furthest from the user's provider bill.
+    # `_extract_usage_tokens` subtracts cached reads out of `input`, so without
+    # this term they are billed at nothing — and in a long session cache reads
+    # are most of the input, which is when the reported cost drifts furthest
+    # from the user's actual bill.
+    #
+    # Only priced where the catalog publishes a rate. Substituting the prompt
+    # price would over-state by roughly 10x (Anthropic reads at ~0.1x prompt),
+    # which is a worse answer than the previous zero, not a better one.
+    #
+    # Cache *writes* are deliberately absent: `input` still includes them on the
+    # OpenAI-shaped path (see tests/test_provider/test_usage_parsing.py), so
+    # adding a term here would bill them twice. Splitting them out means
+    # changing the normalizer, which moves every reported `input` figure, and
+    # wants per-provider evidence this change does not have.
     cache_read_tokens = usage_data.get("cache_read", 0)
-    cache_write_tokens = usage_data.get("cache_write", 0)
-    cache_read_price = getattr(model_info.pricing, "cache_read", None)
-    cache_write_price = getattr(model_info.pricing, "cache_write", None)
+    cache_read_price = getattr(model_info.pricing, "cache_read", None) or 0.0
 
     raw_cost = (
         input_tokens * prompt_price / 1_000_000
         + (output_tokens + reasoning_tokens) * completion_price / 1_000_000
-        + cache_read_tokens
-        * (prompt_price if cache_read_price is None else cache_read_price)
-        / 1_000_000
-        + cache_write_tokens
-        * (prompt_price if cache_write_price is None else cache_write_price)
-        / 1_000_000
+        + cache_read_tokens * cache_read_price / 1_000_000
     )
     return raw_cost

@@ -31,12 +31,15 @@ from app.tool.context import ToolContext
 logger = logging.getLogger(__name__)
 
 
-# A failure in one of these cancels the calls the model placed *after* it.
-# Bash commands form implicit dependency chains — once one fails, running the
-# rest produces confusing cascading errors against a state that never happened.
-# Only later calls are cancelled: an earlier one has already run, and under the
-# barrier rules its result was correct when it was produced.
-SIBLING_ABORT_TOOLS = frozenset({"bash"})
+# There is deliberately no failure cascade here. A `SIBLING_ABORT_TOOLS` set
+# existed for bash on the theory that shell commands form dependency chains, but
+# it was unreachable — bash is exclusive, and the cascade lived on a
+# concurrent-only path — so it had never run. Making it run showed why it should
+# not: `BashTool` reports any non-zero exit as `ToolResult.error`, and a non-zero
+# exit is how `grep`, `test` and `diff` answer "no". Every such answer would have
+# cancelled the rest of the turn. The barrier already gives the model ordering it
+# can rely on; deciding that one tool's result invalidates the next is the
+# model's judgement to make, not the scheduler's.
 
 
 @dataclass
@@ -63,7 +66,6 @@ class ToolExecutionResult:
     result: ToolResult | None = None
     error: Exception | None = None
     timed_out: bool = False
-    aborted_by_sibling: bool = False
 
 
 async def _execute_single(info: ToolCallInfo) -> ToolExecutionResult:
@@ -119,8 +121,12 @@ class StreamingToolExecutor:
         self._started: dict[int, asyncio.Task] = {}
         self._results: dict[int, ToolExecutionResult] = {}
         self._barrier_pending = False
-        self._sibling_errored = False
-        self._sibling_error_desc = ""
+        # Indices this executor cancelled itself. `Task.cancelled()` cannot tell
+        # those apart from a tool cancelled as a side effect of the *caller*
+        # being cancelled: a task suspended at `await task` has that task as its
+        # `_fut_waiter`, so cancelling the caller cancels the tool too, and
+        # asyncio never re-delivers the caller's cancellation once it is caught.
+        self._self_cancelled: set[int] = set()
         if max_parallel is None:
             from app.config import get_settings
 
@@ -199,13 +205,21 @@ class StreamingToolExecutor:
             # Cancel every one first, then reap: a cancellation landing on us
             # mid-reap would otherwise leave the untouched remainder running.
             # Recording the outcomes goes in a `finally` for the same reason.
-            live = [t for t in (self._started.get(i.index) for i in group) if t]
-            for task in live:
-                task.cancel()
+            # Anything that already finished keeps its real result; only work
+            # still in flight is cancelled.
+            self.harvest_finished()
+            live = []
+            for info in group:
+                task = self._started.get(info.index)
+                if task is not None and not task.done():
+                    live.append(task)
+                    self._self_cancelled.add(info.index)
+                    task.cancel()
             try:
                 if live:
                     await asyncio.gather(*live, return_exceptions=True)
             finally:
+                self.harvest_finished()
                 for info in group:
                     self._record_cancelled(info)
             return
@@ -245,11 +259,11 @@ class StreamingToolExecutor:
 
         result = await _execute_single(info)
         self._results[info.index] = result
-        self._note_sibling_abort(info, result)
 
     async def _settle(self, info: ToolCallInfo, task: asyncio.Task) -> None:
         """Await one started call and record whatever it produced."""
         if self._stopped and not task.done():
+            self._self_cancelled.add(info.index)
             task.cancel()
         try:
             result = await task
@@ -261,13 +275,12 @@ class StreamingToolExecutor:
             # cancellation cleanup (persist partial output, terminate running
             # ToolParts) is skipped and the turn looks like it finished.
             #
-            # `task.cancelled()` is the reliable discriminator. `Task.cancelling()`
-            # is not: it is a monotone counter reset only by `uncancel()`, which
-            # nothing in this codebase calls, while the processor has several
-            # `except CancelledError: continue` shield loops that bump it. A
-            # caller carrying a stale count would see every later tool
-            # cancellation re-raised.
-            if not task.cancelled():
+            # Only a cancellation this executor issued is ours to absorb.
+            # `task.cancelled()` is true either way — cancelling the caller
+            # cancels the tool it is suspended on — and `Task.cancelling()` is a
+            # monotone counter that nothing here uncancels while the processor's
+            # shield loops bump it. Neither can discriminate; the record can.
+            if info.index not in self._self_cancelled:
                 raise
             return
         except Exception as exc:  # a crash inside the wrapper, not the tool
@@ -279,53 +292,19 @@ class StreamingToolExecutor:
             return
 
         self._results[info.index] = result
-        self._note_sibling_abort(info, result)
-
-    def _note_sibling_abort(
-        self, info: ToolCallInfo, result: ToolExecutionResult
-    ) -> None:
-        """Latch the cascade flag when a dependency-chain tool fails."""
-        # ``ToolDefinition.__call__`` catches everything a tool raises and
-        # returns it as ``ToolResult.error``, so the executor almost never sees
-        # ``ToolExecutionResult.error`` set for an ordinary failure. Checking
-        # only that field is why this cascade has never fired. A timeout counts
-        # too: a build that never finished did not succeed.
-        failed = (
-            result.error is not None
-            or result.timed_out
-            or (result.result is not None and result.result.error is not None)
-        )
-        if (
-            not failed
-            or info.tool_name not in SIBLING_ABORT_TOOLS
-            or self._sibling_errored
-        ):
-            return
-
-        self._sibling_errored = True
-        summary = str(info.tool_args.get("command", ""))[:40]
-        self._sibling_error_desc = f"{info.tool_name}({summary})" if summary else info.tool_name
-        logger.info(
-            "%s (call_id=%s) errored — cancelling the calls queued after it",
-            info.tool_name, info.call_id[:8],
-        )
-        self.cancel_all()
 
     @property
     def _stopped(self) -> bool:
-        return self._abort.is_set() or self._sibling_errored
+        return self._abort.is_set()
 
     def _record_cancelled(self, info: ToolCallInfo) -> None:
-        message = (
-            f"Cancelled: earlier tool call {self._sibling_error_desc} errored"
-            if self._sibling_errored
-            else "Aborted"
-        )
+        """Record a call that never produced a result, without losing one that did."""
+        if info.index in self._results:
+            return  # it finished before the abort landed; keep the real outcome
         self._results[info.index] = ToolExecutionResult(
             index=info.index, tool_name=info.tool_name,
             call_id=info.call_id, tool_args=info.tool_args,
-            error=asyncio.CancelledError(message),
-            aborted_by_sibling=self._sibling_errored,
+            error=asyncio.CancelledError("Aborted"),
         )
 
     def harvest_finished(self) -> list[ToolExecutionResult]:
@@ -355,6 +334,7 @@ class StreamingToolExecutor:
         """Cancel every started call that has not finished."""
         for index, task in self._started.items():
             if not task.done():
+                self._self_cancelled.add(index)
                 task.cancel()
                 logger.debug("Cancelled in-flight tool at index %d", index)
 

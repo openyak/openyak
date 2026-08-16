@@ -20,7 +20,11 @@ def test_write_creates_the_file_owner_only(tmp_path: Path) -> None:
 
     assert target.read_text() == "OPENYAK_API_KEY='sk-secret'\n"
     if sys.platform != "win32":
-        assert os.stat(target).st_mode & 0o777 == SECRET_FILE_MODE
+        # A literal, not the module's own constant: `mode == mode` pins that the
+        # writer honours whatever is declared, not that the file holding every
+        # BYOK key is unreadable by other accounts on the machine.
+        assert os.stat(target).st_mode & 0o777 == 0o600
+        assert SECRET_FILE_MODE == 0o600, "the declared default must stay owner-only"
 
 
 def test_a_secret_is_never_briefly_world_readable(tmp_path: Path) -> None:
@@ -33,7 +37,7 @@ def test_a_secret_is_never_briefly_world_readable(tmp_path: Path) -> None:
     atomic_write_text(target, "OPENYAK_API_KEY='sk-second'\n")
 
     if sys.platform != "win32":
-        assert os.stat(target).st_mode & 0o777 == SECRET_FILE_MODE
+        assert os.stat(target).st_mode & 0o777 == 0o600
 
 
 @pytest.mark.parametrize("failing_call", ["fsync", "replace"])

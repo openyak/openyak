@@ -102,6 +102,10 @@ class AnthropicDesktopProvider(BaseProvider):
                     pricing=ModelPricing(
                         prompt=pricing.get("prompt", 0),
                         completion=pricing.get("completion", 0),
+                        # models.dev already parses these; without them the
+                        # cost calculator cannot price a cached read at all.
+                        cache_read=pricing.get("cache_read_price") or None,
+                        cache_write=pricing.get("cache_write_price") or None,
                     ),
                     metadata=meta,
                 ))

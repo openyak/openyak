@@ -47,7 +47,27 @@ PROTECTED_TOKEN_BUDGET = 40_000  # Protect this many tokens of tool output
 SKIP_RECENT_TURNS = 2  # Don't compact the last N assistant messages
 PROTECTED_TOOLS = frozenset({"skill"})  # Never prune these tool outputs
 AUTO_COMPACT_CONTEXT_RATIO = 0.85  # Proactively compact before the hard context edge
-SUMMARY_MAX_TOKENS = 4096  # Output cap for the summary; hitting it fails the run
+SUMMARY_MAX_TOKENS = 4096  # Output cap for the summary
+SUMMARY_RETRY_MAX_TOKENS = 12_288
+"""Second-attempt cap when the first summary is cut off at the limit.
+
+Discarding a truncated checkpoint is right — it would replace everything it was
+meant to summarise with a sentence that stops mid-thought — but discarding it
+three times in a row trips the caller's circuit breaker and dead-ends a session
+that used to survive. A long history, or a reasoning model spending the budget
+before it writes any summary, needs more room, not fewer attempts.
+"""
+
+
+def _wrap_summary(summary: str, *, visible: bool) -> str:
+    """The exact text a summary is persisted as.
+
+    One definition, so the shrink guard measures what the next request will
+    actually carry rather than the bare summary.
+    """
+    if visible:
+        return f"[Context Summary]\n\n{summary}"
+    return f"[Context Summary]\n\n{summary}\n\nContinue if you have next steps."
 
 
 def _estimate_message_tokens(messages: list[dict[str, Any]]) -> int:
@@ -176,11 +196,7 @@ async def run_compaction(
                     session_id=session_id,
                     data={
                         "type": "text",
-                        "text": (
-                            f"[Context Summary]\n\n{result.summary}"
-                            if visible_summary
-                            else f"[Context Summary]\n\n{result.summary}\n\nContinue if you have next steps."
-                        ),
+                        "text": _wrap_summary(result.summary, visible=visible_summary),
                         "synthetic": True,
                     },
                 )
@@ -283,8 +299,7 @@ async def _phase1_prune(
             await db.flush()
     return pruned_parts, tokens_freed
 
-
-async def _phase2_summarize(
+async def _summarize_once(
     session_id: str,
     *,
     job: GenerationJob,
@@ -292,22 +307,27 @@ async def _phase2_summarize(
     provider_registry: ProviderRegistry,
     agent_registry: AgentRegistry,
     model_id: str | None = None,
-) -> tuple[str | None, int]:
-    """Summarise the conversation. Returns (summary, approximate tokens freed)."""
+    max_tokens: int,
+) -> tuple[str | None, int, bool]:
+    """One summarisation attempt.
+
+    Returns ``(summary, tokens freed, hit the output cap)``. The third value
+    lets the caller decide whether a larger budget is worth one more request.
+    """
     compaction_agent = agent_registry.get("compaction")
     if not compaction_agent or not compaction_agent.system_prompt:
-        return None, 0
+        return None, 0, False
 
     # Find a model
     if not model_id:
         models = provider_registry.all_models()
         if not models:
-            return None, 0
+            return None, 0, False
         model_id = models[0].id
 
     resolved = provider_registry.resolve_model(model_id)
     if not resolved:
-        return None, 0
+        return None, 0, False
 
     provider, model_info = resolved
 
@@ -324,7 +344,7 @@ async def _phase2_summarize(
             )
 
     if not llm_messages:
-        return None, 0
+        return None, 0, False
 
     # Ask compaction agent to summarize
     try:
@@ -341,11 +361,11 @@ async def _phase2_summarize(
             model_id,
             messages,
             system=compaction_agent.system_prompt,
-            max_tokens=SUMMARY_MAX_TOKENS,
+            max_tokens=max_tokens,
         ):
             if job.abort_event.is_set():
                 logger.info("Compaction summarize stream aborted for session %s", session_id)
-                return None, 0
+                return None, 0, False
             if chunk.type == "finish":
                 finish_reason = chunk.data.get("reason")
             if chunk.type == "text-delta":
@@ -386,7 +406,7 @@ async def _phase2_summarize(
 
         summary = summary.strip()
         if not summary:
-            return None, 0
+            return None, 0, False
 
         # A summary that hit the output cap is a half-written checkpoint. It
         # would still be non-empty, still get persisted, and — because the
@@ -395,17 +415,21 @@ async def _phase2_summarize(
         # mid-thought. Refuse it and let the caller's retry budget decide.
         if finish_reason == "length":
             logger.warning(
-                "Compaction summary for session %s hit the %d-token cap; discarding "
-                "the truncated checkpoint",
+                "Compaction summary for session %s hit the %d-token cap",
                 session_id,
-                SUMMARY_MAX_TOKENS,
+                max_tokens,
             )
-            return None, 0
+            return None, 0, True
 
         # Compaction must shrink the context it anchors past. On a short or
         # tool-light history the summary can be larger than the turns it
         # replaces, which makes the next request worse, not better.
-        summary_tokens = estimate_tokens(summary)
+        #
+        # Both sides are measured as they will exist in the next request: the
+        # summary is persisted inside a fixed wrapper, and counting the bare
+        # text instead leaves a permanent positive margin that reads as progress
+        # on a session where compaction is achieving nothing.
+        summary_tokens = estimate_tokens(_wrap_summary(summary, visible=False))
         replaced_tokens = _estimate_message_tokens(llm_messages)
         if summary_tokens >= replaced_tokens:
             logger.warning(
@@ -415,9 +439,9 @@ async def _phase2_summarize(
                 summary_tokens,
                 replaced_tokens,
             )
-            return None, 0
+            return None, 0, False
 
-        return summary, replaced_tokens - summary_tokens
+        return summary, replaced_tokens - summary_tokens, False
 
     except Exception as e:
         logger.warning("Failed to generate compaction summary: %s", e)
@@ -425,7 +449,33 @@ async def _phase2_summarize(
             "session_id": session_id,
             "message": "Context compression failed. Consider starting a new chat.",
         }))
-        return None, 0
+        return None, 0, False
+
+
+
+async def _phase2_summarize(
+    session_id: str,
+    *,
+    job: GenerationJob,
+    session_factory: async_sessionmaker[AsyncSession],
+    provider_registry: ProviderRegistry,
+    agent_registry: AgentRegistry,
+    model_id: str | None = None,
+) -> tuple[str | None, int]:
+    """Summarise the conversation. Returns (summary, approximate tokens freed)."""
+    for max_tokens in (SUMMARY_MAX_TOKENS, SUMMARY_RETRY_MAX_TOKENS):
+        summary, freed, hit_cap = await _summarize_once(
+            session_id,
+            job=job,
+            session_factory=session_factory,
+            provider_registry=provider_registry,
+            agent_registry=agent_registry,
+            model_id=model_id,
+            max_tokens=max_tokens,
+        )
+        if not hit_cap:
+            return summary, freed
+    return None, 0
 
 
 def should_compact(

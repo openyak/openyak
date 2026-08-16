@@ -92,7 +92,12 @@ def test_openrouter_publishes_the_catalog_cache_rates() -> None:
     assert _optional_per_million("0") == 0.0, "a real zero is not 'unknown'"
 
 
-def test_catalog_rates_beat_the_fallback_in_the_cost_calculation() -> None:
+def test_a_published_rate_is_what_prices_a_cached_read() -> None:
+    """Wiring the catalog rate is the whole mechanism — there is no fallback.
+
+    Guessing the prompt price for an unpublished rate over-states by ~10x, so
+    an unpriced model contributes nothing and the fix is to publish the rate.
+    """
     from app.provider.openrouter import _optional_per_million
     from app.schemas.provider import ModelInfo
     from app.session.utils import calculate_step_cost
@@ -100,9 +105,7 @@ def test_catalog_rates_beat_the_fallback_in_the_cost_calculation() -> None:
     priced = ModelInfo(
         id="m", name="m", provider_id="openrouter",
         pricing=ModelPricing(
-            prompt=5.0,
-            completion=25.0,
-            cache_read=_optional_per_million("0.0000005"),
+            prompt=5.0, completion=25.0, cache_read=_optional_per_million("0.0000005")
         ),
     )
     unpriced = ModelInfo(
@@ -112,4 +115,20 @@ def test_catalog_rates_beat_the_fallback_in_the_cost_calculation() -> None:
     usage = {"input": 0, "output": 0, "cache_read": 1_000_000}
 
     assert calculate_step_cost(usage, priced) == pytest.approx(0.5)
-    assert calculate_step_cost(usage, unpriced) == pytest.approx(5.0)
+    assert calculate_step_cost(usage, unpriced) == pytest.approx(0.0)
+
+
+def test_every_models_dev_provider_publishes_its_cache_rate() -> None:
+    """The rate is parsed centrally; each consumer has to actually read it.
+
+    Only OpenRouter did, so three providers priced every cached read at zero.
+    """
+    import inspect
+
+    from app.provider import anthropic_provider, generic_openai, gemini_provider
+
+    for module in (anthropic_provider, generic_openai, gemini_provider):
+        source = inspect.getsource(module)
+        assert "cache_read_price" in source, (
+            f"{module.__name__} builds ModelPricing without the parsed cache rate"
+        )

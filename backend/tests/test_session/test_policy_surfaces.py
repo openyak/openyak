@@ -113,7 +113,9 @@ def test_ask_defaults_closed_when_nobody_can_be_asked() -> None:
         ({"input": 0, "output": 1_000_000}, 15.0),
         # Cached input used to cost nothing at all.
         ({"input": 0, "output": 0, "cache_read": 1_000_000}, 0.3),
-        ({"input": 0, "output": 0, "cache_write": 1_000_000}, 3.75),
+        # Cache writes stay inside `input` on the OpenAI-shaped path, so
+        # pricing them separately here would bill them twice.
+        ({"input": 0, "output": 0, "cache_write": 1_000_000}, 0.0),
     ],
 )
 def test_cached_tokens_are_priced(usage: dict[str, int], expected: float) -> None:
@@ -131,8 +133,13 @@ def test_cached_tokens_are_priced(usage: dict[str, int], expected: float) -> Non
     assert calculate_step_cost(usage, model) == pytest.approx(expected)
 
 
-def test_cached_tokens_fall_back_to_the_prompt_price() -> None:
-    """Absent catalog rates, over-state rather than bill cache reads at zero."""
+def test_an_unpublished_cache_rate_is_not_guessed() -> None:
+    """Substituting the prompt price over-states by ~10x — worse than zero.
+
+    Anthropic reads cache at roughly 0.1x prompt. A provider whose catalog does
+    not publish the rate gets no cache term, exactly as before; the fix is to
+    publish the rate, which models.dev already parses.
+    """
     from app.schemas.provider import ModelInfo, ModelPricing
     from app.session.utils import calculate_step_cost
 
@@ -140,4 +147,4 @@ def test_cached_tokens_fall_back_to_the_prompt_price() -> None:
         id="m", name="m", provider_id="p", pricing=ModelPricing(prompt=3.0, completion=15.0)
     )
     cost = calculate_step_cost({"input": 0, "output": 0, "cache_read": 1_000_000}, model)
-    assert cost == pytest.approx(3.0)
+    assert cost == pytest.approx(0.0)

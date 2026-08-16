@@ -23,13 +23,14 @@ from app.agent.agent import AgentRegistry
 from app.agent.agent import ULTRA_PROMPT
 from app.agent.permission import (
     GLOBAL_DEFAULTS,
+    agent_verdict,
     merge_rulesets,
     parse_session_permissions,
     presets_to_ruleset,
 )
 from app.models.message import Message, Part
 from app.provider.registry import ProviderRegistry
-from app.schemas.agent import Ruleset
+from app.schemas.agent import PermissionRule, Ruleset
 from app.schemas.chat import PromptRequest
 from app.session.manager import (
     create_message,
@@ -112,7 +113,6 @@ class SessionPrompt:
         self.workspace_memory_section: str | None = None
         self.system_prompt_parts: SystemPromptParts | None = None
         self.merged_permissions: list = []
-        self.inheritable_permissions: list = []
         self.request_permissions: list = []
         self.preset_permissions: list = []
         self.session_permissions: list = []
@@ -162,6 +162,17 @@ class SessionPrompt:
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
+
+    @property
+    def inheritable_permissions(self) -> Ruleset:
+        """Recomputed on every read, never snapshotted.
+
+        A stored copy invites callers to append to it — and ``_remember_permission_rule``
+        did, landing a remembered ``allow`` *after* the agent denials that are
+        placed last precisely so nothing permissive can outrank them. Deriving
+        it keeps the layer order authoritative in one place.
+        """
+        return self._merge_inheritable_permissions()
 
     @property
     def system_prompt(self) -> str | list[dict[str, Any]]:
@@ -382,7 +393,6 @@ class SessionPrompt:
         self.preset_permissions = presets_to_ruleset(self.request.permission_presets)
         self.request_permissions = parse_session_permissions(self.request.permission_rules)
         self.merged_permissions = self._merge_effective_permissions()
-        self.inheritable_permissions = self._merge_inheritable_permissions()
 
         # --- Reconstruct artifact cache from message history ---
         # Allows update/rewrite operations to work across generations.
@@ -924,7 +934,6 @@ class SessionPrompt:
         Called by SessionProcessor when the plan tool switches agents.
         """
         self.merged_permissions = self._merge_effective_permissions()
-        self.inheritable_permissions = self._merge_inheritable_permissions()
         self.system_prompt_parts = self._build_system_prompt_parts()
 
     # ------------------------------------------------------------------
@@ -969,9 +978,6 @@ class SessionPrompt:
         The user's own choices — presets, request rules, session rules, and
         remembered approvals — pass through whole and keep narrowing the child.
         """
-        agent_denials = Ruleset(
-            rules=[rule for rule in self.agent.permissions.rules if rule.action == "deny"]
-        )
         return merge_rulesets(
             self.preset_permissions,
             self.request_permissions,
@@ -980,7 +986,25 @@ class SessionPrompt:
             # default. Placing them first would let an Auto preset's
             # `allow file_changes` re-open exactly what a Plan session forbids,
             # inside the very ruleset meant to constrain the child.
-            agent_denials,
+            self._agent_denial_ceiling(),
+        )
+
+    def _agent_denial_ceiling(self) -> Ruleset:
+        """This agent's effective denials, resolved per tool.
+
+        Copying the agent's literal ``deny`` rules does not work: every
+        restrictive agent here is written as ``deny *`` followed by an
+        allow-list, so the copy keeps the ``deny *`` and drops everything that
+        re-opens it — handing a child a ceiling that forbids all tools. Asking
+        for the agent's *verdict* on each known tool preserves the allow-list,
+        because the verdict already accounts for it.
+        """
+        return Ruleset(
+            rules=[
+                PermissionRule(action="deny", permission=tool.id)
+                for tool in self.tool_registry.all_tools()
+                if agent_verdict(tool.id, "*", self.agent.permissions) == "deny"
+            ]
         )
 
     def _build_system_prompt_parts(self) -> SystemPromptParts:

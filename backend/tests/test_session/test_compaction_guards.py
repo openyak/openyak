@@ -120,17 +120,31 @@ async def test_pruned_output_is_still_hidden_from_the_model(session_factory) -> 
 
 
 def _summarizer(
-    monkeypatch, *, text: str, finish_reason: str | None = "stop"
+    monkeypatch,
+    *,
+    text: str,
+    finish_reason: str | None = "stop",
+    first_only_cap: bool = False,
+    budgets: list[int] | None = None,
+    history_chars: int = 40_000,
 ) -> None:
     """Point _phase2_summarize at a scripted model and a fixed history."""
 
     async def fake_history(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
-        return [{"role": "user", "content": "z" * 40_000}]
+        return [{"role": "user", "content": "z" * history_chars}]
+
+    calls = {"n": 0}
 
     async def fake_stream(*args: Any, **kwargs: Any) -> AsyncIterator[StreamChunk]:
+        calls["n"] += 1
+        if budgets is not None:
+            budgets.append(kwargs.get("max_tokens"))
         yield StreamChunk(type="text-delta", data={"text": text})
-        if finish_reason is not None:
-            yield StreamChunk(type="finish", data={"reason": finish_reason})
+        reason = finish_reason
+        if first_only_cap and calls["n"] > 1:
+            reason = "stop"
+        if reason is not None:
+            yield StreamChunk(type="finish", data={"reason": reason})
 
     monkeypatch.setattr(
         "app.session.manager.get_message_history_for_llm", fake_history
@@ -160,6 +174,56 @@ async def test_summary_truncated_at_the_output_cap_is_discarded(
 ) -> None:
     """A ``length`` finish means a half-written checkpoint — never persist it."""
     _summarizer(monkeypatch, text="## Goal\nThe user asked me to", finish_reason="length")
+
+    summary, freed = await _summarize(session_factory, agent_registry)
+
+    assert summary is None
+    assert freed == 0
+
+
+async def test_a_capped_summary_is_retried_at_a_larger_budget(
+    session_factory, agent_registry, monkeypatch
+) -> None:
+    """Discarding is right; discarding without a second try dead-ends sessions.
+
+    Three consecutive discards trip the caller's circuit breaker and tell the
+    user to start a new conversation — for a history that simply needed more
+    room than the first budget allowed.
+    """
+    from app.session.compaction import SUMMARY_MAX_TOKENS, SUMMARY_RETRY_MAX_TOKENS
+
+    budgets: list[int] = []
+    _summarizer(
+        monkeypatch,
+        text="## Goal\nShip it.\n## Accomplished\nDone.",
+        finish_reason="length",
+        first_only_cap=True,
+        budgets=budgets,
+    )
+
+    summary, freed = await _summarize(session_factory, agent_registry)
+
+    assert budgets == [SUMMARY_MAX_TOKENS, SUMMARY_RETRY_MAX_TOKENS]
+    assert summary is not None, "the second attempt succeeded and must be kept"
+    assert freed > 0
+
+
+async def test_the_shrink_guard_measures_the_persisted_wrapper(
+    session_factory, agent_registry, monkeypatch
+) -> None:
+    """A summary is stored inside a fixed wrapper; the guard must count it.
+
+    Counting the bare text leaves a permanent positive margin, which reads as
+    progress on a session where compaction is achieving nothing and keeps
+    resetting the circuit breaker.
+    """
+    from app.session.compaction import _wrap_summary
+
+    bare = "x" * 40
+    assert len(_wrap_summary(bare, visible=False)) > len(bare)
+
+    # A summary that only "shrinks" once its wrapper is ignored must be refused.
+    _summarizer(monkeypatch, text=bare, history_chars=len(bare) + 8)
 
     summary, freed = await _summarize(session_factory, agent_registry)
 

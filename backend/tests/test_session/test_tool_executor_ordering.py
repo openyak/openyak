@@ -160,40 +160,47 @@ async def test_parallel_fan_out_is_bounded() -> None:
     assert all(r.result is not None for r in results)
 
 
-async def test_a_failed_bash_cancels_the_calls_queued_after_it() -> None:
-    """The documented cascade must actually fire — bash is exclusive, and the
-    cancellation used to live on a concurrent-only path it never reached."""
+async def test_a_failing_tool_does_not_cancel_the_calls_after_it() -> None:
+    """A non-zero exit is an answer, not a turn-ending failure.
+
+    A cascade keyed on tool failure was removed rather than kept: `BashTool`
+    reports any non-zero exit as `ToolResult.error`, and that is how `grep`,
+    `test` and `diff` say "no". Cancelling the rest of the turn on that would
+    discard work the model correctly queued.
+    """
     log: list[str] = []
-    bash = _RecordingTool("bash", log, concurrency_safe=False, fails=True)
+    failing = _RecordingTool("bash", log, concurrency_safe=False, fails=True)
     read = _RecordingTool("read", log, concurrency_safe=True)
 
     executor = StreamingToolExecutor(asyncio.Event())
-    executor.submit(_call(0, bash, "bash"))
+    executor.submit(_call(0, failing, "bash"))
     executor.submit(_call(1, read, "after"))
 
     results = await executor.collect()
 
-    assert "start:after" not in log
-    assert results[1].aborted_by_sibling is True
-    assert isinstance(results[1].error, asyncio.CancelledError)
+    assert "start:after" in log, "the later call must still run"
+    assert results[0].error is not None
+    assert results[1].result is not None
+    assert results[1].result.output == "after"
 
 
-async def test_a_failed_bash_keeps_results_the_model_asked_for_first() -> None:
-    """Earlier calls already ran under correct state; their results stand."""
+async def test_a_tool_that_finished_before_an_abort_keeps_its_result() -> None:
+    """Teardown must not relabel work that actually happened."""
+    abort = asyncio.Event()
     log: list[str] = []
     read = _RecordingTool("read", log, concurrency_safe=True)
-    bash = _RecordingTool("bash", log, concurrency_safe=False, fails=True)
 
-    executor = StreamingToolExecutor(asyncio.Event())
-    executor.submit(_call(0, read, "before"))
-    executor.submit(_call(1, bash, "bash"))
+    executor = StreamingToolExecutor(abort)
+    executor.submit(_call(0, read, "done"))
+    await asyncio.sleep(0)  # let it finish
+    while "end:done" not in log:
+        await asyncio.sleep(0)
+    abort.set()
 
     results = await executor.collect()
 
-    assert results[0].result is not None
-    assert results[0].result.output == "before"
-    assert results[0].aborted_by_sibling is False
-    assert results[1].error is not None
+    assert results[0].result is not None, "a completed tool must not become 'Aborted'"
+    assert results[0].result.output == "done"
 
 
 async def test_results_come_back_in_model_order() -> None:

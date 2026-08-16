@@ -195,6 +195,10 @@ def _run_code(
 
     output = "\n".join(parts) if parts else "(no output)"
     if exit_code != 0:
-        output = f"Exit code: {exit_code}\n{output}"
+        # Trailing, not leading: this tool truncates from the head (see
+        # truncation_direction), so a header on a long failing run is the first
+        # thing dropped — and it is the only signal the model gets that the
+        # command failed at all.
+        output = f"{output}\n\nExit code: {exit_code}"
 
     return output, exit_code

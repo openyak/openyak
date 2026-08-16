@@ -58,12 +58,12 @@ def _locked_down() -> AgentInfo:
 
 async def _prompt(
     session_factory,
+    tool_registry,
     *,
     session_id: str,
     agent: AgentInfo,
     permission_rules: list[dict] | None = None,
     presets: dict[str, bool] | None = None,
-    tool_registry=None,
 ) -> SessionPrompt:
     """A real SessionPrompt, set up the way the production loop sets one up."""
     async with session_factory() as db:
@@ -86,7 +86,7 @@ async def _prompt(
         session_factory=session_factory,
         provider_registry=_ProviderRegistry(),
         agent_registry=registry,
-        tool_registry=tool_registry if tool_registry is not None else object(),
+        tool_registry=tool_registry,
     )
     await prompt._setup()
     return prompt
@@ -94,12 +94,12 @@ async def _prompt(
 
 async def _handoff(
     session_factory,
+    tool_registry,
     *,
     parent: AgentInfo,
     child: AgentInfo,
     presets: dict[str, bool] | None = None,
     parent_rules: list[dict] | None = None,
-    tool_registry=None,
 ) -> SessionPrompt:
     """Run the real parent → child permission handoff and return the child.
 
@@ -109,6 +109,7 @@ async def _handoff(
     """
     parent_prompt = await _prompt(
         session_factory,
+        tool_registry,
         session_id=f"parent-{parent.name}-{child.name}",
         agent=parent,
         presets=presets,
@@ -123,20 +124,20 @@ async def _handoff(
     inherited = list(processor._inheritable_permission_rules())
     return await _prompt(
         session_factory,
+        tool_registry,
         session_id=f"child-{parent.name}-{child.name}",
         agent=child,
         permission_rules=inherited,
-        tool_registry=tool_registry,
     )
 
 
-async def test_a_parent_does_not_hand_down_an_allow_all(session_factory) -> None:
+async def test_a_parent_does_not_hand_down_an_allow_all(session_factory, tool_registry) -> None:
     """``GLOBAL_DEFAULTS`` and ``build`` both lead with ``allow *``.
 
     Handing either down puts it above the child's own ``deny *``.
     """
     parent = await _prompt(
-        session_factory, session_id="p-allow-all", agent=BUILTIN_AGENTS["build"]
+        session_factory, tool_registry, session_id="p-allow-all", agent=BUILTIN_AGENTS["build"]
     )
 
     assert GLOBAL_DEFAULTS.rules[0] == PermissionRule(action="allow", permission="*")
@@ -146,20 +147,18 @@ async def test_a_parent_does_not_hand_down_an_allow_all(session_factory) -> None
     ), "no allow-all may be inherited"
 
 
-async def test_a_restrictive_child_keeps_its_denials(session_factory) -> None:
+async def test_a_restrictive_child_keeps_its_denials(session_factory, tool_registry) -> None:
     child = await _handoff(
-        session_factory, parent=BUILTIN_AGENTS["build"], child=_locked_down()
+        session_factory, tool_registry, parent=BUILTIN_AGENTS["build"], child=_locked_down()
     )
 
     assert evaluate("write", "*", child.merged_permissions) == "deny"
     assert evaluate("read", "*", child.merged_permissions) == "allow"
 
 
-async def test_plan_mode_cannot_delegate_around_its_read_only_ceiling(
-    session_factory,
-) -> None:
+async def test_plan_mode_cannot_delegate_around_its_read_only_ceiling(session_factory, tool_registry) -> None:
     child = await _handoff(
-        session_factory, parent=BUILTIN_AGENTS["plan"], child=BUILTIN_AGENTS["general"]
+        session_factory, tool_registry, parent=BUILTIN_AGENTS["plan"], child=BUILTIN_AGENTS["general"]
     )
 
     for mutating in (*MUTATING, "computer", "browser"):
@@ -167,7 +166,7 @@ async def test_plan_mode_cannot_delegate_around_its_read_only_ceiling(
     assert evaluate("read", "*", child.merged_permissions) == "allow"
 
 
-async def test_an_auto_preset_cannot_reopen_an_inherited_denial(session_factory) -> None:
+async def test_an_auto_preset_cannot_reopen_an_inherited_denial(session_factory, tool_registry) -> None:
     """The ceiling must outrank the user layers travelling with it.
 
     An Auto preset emits broad ``allow`` rules. Ordered before the parent's
@@ -176,6 +175,7 @@ async def test_an_auto_preset_cannot_reopen_an_inherited_denial(session_factory)
     """
     child = await _handoff(
         session_factory,
+        tool_registry,
         parent=BUILTIN_AGENTS["plan"],
         child=BUILTIN_AGENTS["general"],
         presets={"file_changes": True, "run_commands": True},
@@ -185,10 +185,56 @@ async def test_an_auto_preset_cannot_reopen_an_inherited_denial(session_factory)
         assert evaluate(mutating, "*", child.merged_permissions) == "deny", mutating
 
 
-async def test_a_parent_denial_still_reaches_the_child(session_factory) -> None:
+async def test_a_deny_all_parent_does_not_zero_out_its_child(
+    session_factory, tool_registry
+) -> None:
+    """The ceiling is the parent's *verdict* per tool, not its literal rules.
+
+    Every restrictive agent here is written as ``deny *`` plus an allow-list.
+    Copying only the ``deny`` rules keeps the ``deny *`` and drops everything
+    that re-opens it, handing the child a ceiling that forbids every tool.
+    """
+    parent = _locked_down()  # deny * + allow read
+    child = await _handoff(
+        session_factory, tool_registry, parent=parent, child=BUILTIN_AGENTS["general"]
+    )
+
+    assert evaluate("read", "*", child.merged_permissions) != "deny", (
+        "the parent allows read, so the child must keep it"
+    )
+    assert evaluate("write", "*", child.merged_permissions) == "deny"
+
+    advertised = {
+        tool.id
+        for tool in tool_registry.resolve_for_agent(
+            child.agent, extra_ruleset=child.merged_permissions
+        )
+    }
+    assert advertised, "a restrictive parent must not leave the child with no tools"
+    assert "read" in advertised
+
+
+async def test_an_explore_parent_keeps_its_allow_list_for_the_child(
+    session_factory, tool_registry
+) -> None:
+    """Same shape, using a built-in: explore is ``deny *`` + seven allows."""
+    child = await _handoff(
+        session_factory,
+        tool_registry,
+        parent=BUILTIN_AGENTS["explore"],
+        child=BUILTIN_AGENTS["general"],
+    )
+
+    for allowed in ("read", "grep", "web_fetch"):
+        assert evaluate(allowed, "*", child.merged_permissions) != "deny", allowed
+    assert evaluate("write", "*", child.merged_permissions) == "deny"
+
+
+async def test_a_parent_denial_still_reaches_the_child(session_factory, tool_registry) -> None:
     """Narrowing must survive the handoff, not just widening be blocked."""
     child = await _handoff(
         session_factory,
+        tool_registry,
         parent=BUILTIN_AGENTS["build"],
         child=BUILTIN_AGENTS["general"],
         parent_rules=[{"action": "deny", "permission": "bash", "pattern": "*"}],
@@ -203,10 +249,10 @@ async def test_a_permissive_parent_does_not_widen_a_strict_child(
     """End to end: the advertised tool list matches what the child may call."""
     child = await _handoff(
         session_factory,
+        tool_registry,
         parent=BUILTIN_AGENTS["build"],
         child=_locked_down(),
         presets={"file_changes": True, "run_commands": True},
-        tool_registry=tool_registry,
     )
 
     advertised = {
@@ -224,9 +270,9 @@ async def test_a_whitelisted_subagent_keeps_its_declared_tools(
     """The narrowing must not shrink an agent whose rules already allow its tools."""
     child = await _handoff(
         session_factory,
+        tool_registry,
         parent=BUILTIN_AGENTS["build"],
         child=BUILTIN_AGENTS["explore"],
-        tool_registry=tool_registry,
     )
 
     advertised = {
@@ -283,7 +329,7 @@ def test_a_session_denial_still_removes_an_agent_allowed_tool(tool_registry) -> 
     assert advertised == set()
 
 
-async def test_a_remembered_denial_propagates_to_subagents(session_factory) -> None:
+async def test_a_remembered_denial_propagates_to_subagents(session_factory, tool_registry) -> None:
     """``_remember_permission_rule`` must reach ``inheritable_permissions``.
 
     A non-interactive child cannot prompt, so an inherited ``ask`` executes
@@ -292,7 +338,7 @@ async def test_a_remembered_denial_propagates_to_subagents(session_factory) -> N
     from app.session.processor import _remember_permission_rule
 
     prompt = await _prompt(
-        session_factory, session_id="remember-denial", agent=BUILTIN_AGENTS["build"]
+        session_factory, tool_registry, session_id="remember-denial", agent=BUILTIN_AGENTS["build"]
     )
     await _remember_permission_rule(
         session_factory, "remember-denial", prompt,
