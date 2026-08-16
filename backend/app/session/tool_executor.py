@@ -195,21 +195,35 @@ class StreamingToolExecutor:
             # the abort check in _execute_single only guards the moment before
             # dispatch. Cancel and reap them rather than reporting "Aborted"
             # while they carry on writing files in the background.
-            for info in group:
-                started = self._started.get(info.index)
-                if started is not None:
-                    started.cancel()
-                    await asyncio.gather(started, return_exceptions=True)
-                self._record_cancelled(info)
+            #
+            # Cancel every one first, then reap: a cancellation landing on us
+            # mid-reap would otherwise leave the untouched remainder running.
+            # Recording the outcomes goes in a `finally` for the same reason.
+            live = [t for t in (self._started.get(i.index) for i in group) if t]
+            for task in live:
+                task.cancel()
+            try:
+                if live:
+                    await asyncio.gather(*live, return_exceptions=True)
+            finally:
+                for info in group:
+                    self._record_cancelled(info)
             return
 
-        tasks = {
-            info.index: self._started.get(info.index)
-            or asyncio.create_task(
-                self._run(info), name=f"tool-{info.tool_name}-{info.call_id[:8]}"
-            )
-            for info in group
-        }
+        tasks: dict[int, asyncio.Task] = {}
+        for info in group:
+            task = self._started.get(info.index)
+            if task is None:
+                task = asyncio.create_task(
+                    self._run(info), name=f"tool-{info.tool_name}-{info.call_id[:8]}"
+                )
+                # Register it: ``_started`` is the one place that knows which
+                # calls have a live task, and cancel_all/harvest_finished both
+                # read it. A task created only here would be invisible to both,
+                # so aborting a turn could not stop anything queued behind a
+                # barrier.
+                self._started[info.index] = task
+            tasks[info.index] = task
 
         try:
             for info in group:
@@ -241,15 +255,19 @@ class StreamingToolExecutor:
             result = await task
         except asyncio.CancelledError:
             self._record_cancelled(info)
-            # Distinguish "this tool was cancelled" from "the caller awaiting
-            # us was cancelled". Swallowing the latter makes collect() return
+            # Distinguish "this tool was cancelled" from "the caller awaiting us
+            # was cancelled". Swallowing the latter makes collect() return
             # normally, and asyncio never re-delivers it — so the processor's
             # cancellation cleanup (persist partial output, terminate running
             # ToolParts) is skipped and the turn looks like it finished.
+            #
+            # `task.cancelled()` is the reliable discriminator. `Task.cancelling()`
+            # is not: it is a monotone counter reset only by `uncancel()`, which
+            # nothing in this codebase calls, while the processor has several
+            # `except CancelledError: continue` shield loops that bump it. A
+            # caller carrying a stale count would see every later tool
+            # cancellation re-raised.
             if not task.cancelled():
-                raise
-            current = asyncio.current_task()
-            if current is not None and current.cancelling():
                 raise
             return
         except Exception as exc:  # a crash inside the wrapper, not the tool
@@ -267,8 +285,18 @@ class StreamingToolExecutor:
         self, info: ToolCallInfo, result: ToolExecutionResult
     ) -> None:
         """Latch the cascade flag when a dependency-chain tool fails."""
+        # ``ToolDefinition.__call__`` catches everything a tool raises and
+        # returns it as ``ToolResult.error``, so the executor almost never sees
+        # ``ToolExecutionResult.error`` set for an ordinary failure. Checking
+        # only that field is why this cascade has never fired. A timeout counts
+        # too: a build that never finished did not succeed.
+        failed = (
+            result.error is not None
+            or result.timed_out
+            or (result.result is not None and result.result.error is not None)
+        )
         if (
-            result.error is None
+            not failed
             or info.tool_name not in SIBLING_ABORT_TOOLS
             or self._sibling_errored
         ):
@@ -299,6 +327,29 @@ class StreamingToolExecutor:
             error=asyncio.CancelledError(message),
             aborted_by_sibling=self._sibling_errored,
         )
+
+    def harvest_finished(self) -> list[ToolExecutionResult]:
+        """Results from calls that already ran, without starting any more.
+
+        For teardown: a turn abandoned mid-stream still has tools that
+        completed during it. Recording those as "cancelled" tells the user an
+        email was not sent when it was. Nothing not already running is started.
+        """
+        harvested: list[ToolExecutionResult] = []
+        for info in self._calls:
+            existing = self._results.get(info.index)
+            if existing is not None:
+                harvested.append(existing)
+                continue
+            task = self._started.get(info.index)
+            if task is None or not task.done() or task.cancelled():
+                continue
+            if task.exception() is not None:
+                continue
+            result = task.result()
+            self._results[info.index] = result
+            harvested.append(result)
+        return harvested
 
     def cancel_all(self) -> None:
         """Cancel every started call that has not finished."""

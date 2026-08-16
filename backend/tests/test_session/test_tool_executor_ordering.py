@@ -87,9 +87,16 @@ def _call(index: int, tool: ToolDefinition, tag: str) -> ToolCallInfo:
 
 
 async def test_an_exclusive_call_is_a_barrier_for_later_reads() -> None:
-    """``[write(f), read(f)]`` must not answer from the pre-write file."""
+    """``[write(f), read(f)]`` must not answer from the pre-write file.
+
+    The exclusive tool must actually suspend. Awaiting a coroutine that never
+    yields does not hand control back to the loop, so an eagerly-started read
+    could not interleave even without the barrier — and the test would pass
+    against the very bug it names. Every real exclusive tool (write, edit,
+    bash, apply_patch) does I/O and suspends.
+    """
     log: list[str] = []
-    write = _RecordingTool("write", log, concurrency_safe=False)
+    write = _RecordingTool("write", log, concurrency_safe=False, delay=0.02)
     read = _RecordingTool("read", log, concurrency_safe=True)
 
     executor = StreamingToolExecutor(asyncio.Event())
@@ -98,7 +105,7 @@ async def test_an_exclusive_call_is_a_barrier_for_later_reads() -> None:
 
     results = await executor.collect()
 
-    assert log.index("end:write") < log.index("start:read")
+    assert log == ["start:write", "end:write", "start:read", "end:read"]
     assert [r.tool_name for r in results] == ["write", "read"]
 
 

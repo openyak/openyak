@@ -877,22 +877,22 @@ class SessionProcessor:
         # for after_tool_exec to append) actually runs, and so any other policy
         # middleware gets the same hook instead of a seam nothing calls.
         if self._mw_ctx is not None:
-            decision = await sp.middleware_chain.run_before_tool_exec(tn, ta, self._mw_ctx)
+            policy = await sp.middleware_chain.run_before_tool_exec(tn, ta, self._mw_ctx)
         else:
             # No chain (direct construction in tests) — run the detector itself
             # so loop protection is never silently absent.
             lr: LoopCheckResult = loop_detector.check(job.session_id, tn, ta)
-            decision = ToolAction(action=lr.action, message=lr.message)
-        if decision.action == "block":
+            policy = ToolAction(action=lr.action, message=lr.message)
+        if policy.action == "block":
             job.publish(SSEEvent(AGENT_ERROR, {
                 "error_type": "loop_detected",
-                "error_message": decision.message,
+                "error_message": policy.message,
                 "tool": tn,
             }))
             await _persist_tool_error(
                 session_factory, self._assistant_msg_id,
                 job.session_id, tn, ci, ta,
-                decision.message or "Loop detected — hard stop",
+                policy.message or "Loop detected — hard stop",
             )
             self._exec_blocked = True
             return
@@ -1075,14 +1075,7 @@ class SessionProcessor:
             "tool_registry": sp.tool_registry,
             "stream_manager": get_stream_manager(),
         }
-        # What a subagent inherits (via task/swarm) — this session's decisions
-        # without the global defaults the child re-applies itself. Handing down
-        # the fully merged set instead would carry ``allow *`` into the child's
-        # request layer, outranking its own agent-level denials.
-        effective_permission_rules = tuple(
-            rule.model_dump()
-            for rule in sp.inheritable_permissions.rules
-        )
+        effective_permission_rules = self._inheritable_permission_rules()
         ctx = ToolContext(
             session_id=job.session_id,
             message_id=self._assistant_msg_id,
@@ -1129,7 +1122,7 @@ class SessionProcessor:
         ))
         self._exec_metadata[self._exec_index] = {
             "tool_part_id": tool_part_id,
-            "policy_decision": decision,
+            "policy_decision": policy,
             "tool": tool,
             "tool_args": ta,
             "call_id": ci,
@@ -1258,9 +1251,24 @@ class SessionProcessor:
         job = sp.job
 
         # The stream can fail after tool calls were dispatched. Nothing else
-        # will collect them from here, so terminate their persisted "running"
-        # parts rather than leaving the session with rows that never resolve.
+        # will collect them from here, so record what actually happened and
+        # terminate the rest, rather than leaving rows that never resolve.
         if self._streaming_executor.has_submissions:
+            # Tools that finished during streaming really did run. Persist their
+            # real outcome first — sweeping them into the cancellation cleanup
+            # would tell the user an email was not sent when it was.
+            for exec_result in self._streaming_executor.harvest_finished():
+                meta = self._exec_metadata.get(exec_result.index)
+                if meta is None:
+                    continue
+                try:
+                    await self._finalize_exec_result(exec_result.index, meta, exec_result)
+                except Exception:
+                    logger.warning(
+                        "Could not persist a tool result after the stream failed; "
+                        "cancellation cleanup will terminate its part",
+                        exc_info=True,
+                    )
             await self._cancel_running_tools()
 
         # --- Reactive compact: recover from context overflow via compaction ---
@@ -1460,6 +1468,19 @@ class SessionProcessor:
                 )
 
         return None
+
+    def _inheritable_permission_rules(self) -> tuple[dict[str, Any], ...]:
+        """The rules a subagent spawned from this turn will be given.
+
+        ``task`` and ``swarm`` pass ``ToolContext.permission_rules`` straight to
+        the child, where it lands in the request layer — *after* the child's own
+        agent rules under last-match-wins. So it must carry this session's
+        restrictions and nothing permissive: handing down the fully merged set
+        would put the global ``allow *`` above the child's own ``deny *``.
+        """
+        return tuple(
+            rule.model_dump() for rule in self._sp.inheritable_permissions.rules
+        )
 
     async def _cancel_running_tools(self) -> None:
         """Cancel executor work and durably terminate every running ToolPart."""
