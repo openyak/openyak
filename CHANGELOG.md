@@ -6,6 +6,88 @@ Format follows [Keep a Changelog](https://keepachangelog.com/), and this project
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-08-27
+
+The stable release of the 1.5.0 line. It carries everything from rc.1 through
+rc.4 — native Computer Use on macOS and Windows, the in-app Playwright browser,
+the shared-control contract, and the versioned agent evaluation harness — plus
+the fixes below, which landed after rc.4 was cut.
+
+### Fixed
+
+- **Desktop (Windows):** Upgrading the app left it dead. The NSIS installer
+  overwrites the files it ships but never prunes, so a `freetype/` directory left
+  behind by an April build stayed on the frozen interpreter's `sys.path` and was
+  imported as an implicit namespace package, killing the backend at startup with
+  `AttributeError: module 'freetype' has no attribute 'FT_LOAD_DEFAULT'`. A clean
+  install of the same version worked, which is why CI — whose smoke test runs
+  against a fresh bundle — never saw it.
+- **Session:** Retry was dead code for roughly 25 of 27 providers.
+  `OpenAICompatProvider` caught every exception and yielded it as a `type="error"`
+  chunk, and `_stream_llm_with_retry` returned out of its own retry loop on that
+  chunk. Backoff, the 429/5xx budget and reactive compaction never ran for Generic
+  OpenAI, OpenRouter, Ollama, Rapid-MLX or the ChatGPT subscription — a 429 simply
+  ended the session. Providers now raise; the chunk path remains as a defensive
+  net that re-raises.
+- **Session:** Tools executed out of model order. Every concurrency-safe call ran
+  before every exclusive one and the results were sorted back into submission
+  order, so `[write(f), read(f)]` answered from the pre-write file while the
+  transcript looked correct. Exclusive calls are barriers now, adjacent safe calls
+  run in parallel up to `max_parallel_tool_calls` (previously unbounded), and
+  `SIBLING_ABORT_TOOLS` fires for the first time.
+- **Session:** Compaction destroyed the user's tool output. Pruning overwrote the
+  stored output with `[truncated]` even though `get_message_history_for_llm`
+  already substitutes that from the `time_compacted` flag — an identical prompt,
+  and the only copy of the result gone. It also accepted summaries that hit the
+  output cap or exceeded the history they anchor past, and a compaction that freed
+  nothing reset its own circuit breaker.
+- **Permissions:** Subagents inherited `allow *`. The parent handed down its fully
+  merged ruleset, which leads with the global `allow *`, and a child layers
+  inherited rules after its own under last-match-wins. Only a parent's denials
+  propagate now, so a Plan session cannot delegate around its read-only ceiling.
+- **Permissions:** An agent with no `permissions` block was refused every tool.
+  `evaluate` returns `deny` when no rule matches, so reading an agent's ruleset in
+  isolation denied everything it did not mention — the default shape of a
+  user-defined agent in `.openyak/agents/*.md`. `agent_verdict` now reads that
+  layer over the global defaults, the way it is actually stacked.
+- **Storage:** Credential files were rewritten non-atomically. `.env`,
+  `channels.json` and the MCP token store were whole-file `write_text` under no
+  lock, and the generation hot path writes `.env` on every Ollama call. Two
+  concurrent writes lost each other; an interrupted one lost every key.
+- **Policy:** Two surfaces were unreachable. `run_before_tool_exec` had zero
+  callers, so loop detection's warn stage had never fired and any policy
+  middleware a contributor added would have been silently inert.
+  `after_llm_response` was never implemented or called and is removed.
+- **Cost:** Cached tokens were billed at zero — `cache_read` and `cache_write`
+  were absent from the calculation entirely. OpenRouter's catalog already
+  publishes the real per-model rates.
+- **Session:** `max_tokens` was matched as an overflow substring, so a 400 naming
+  the parameter entered a compaction loop that cannot fix it. `bash` and
+  `code_execute` now keep the tail of oversized output, where the error is, tool
+  errors go through the truncator, and `ToolContext.ask` defaults closed.
+- **Models:** The selected model silently reset to the default whenever the models
+  list reloaded — on cold load, or on returning from settings while `/models` was
+  still refetching. The auto-select effect ran against a transiently empty list
+  and wiped the persisted choice. Closes #146.
+- **Sessions:** The rename input flashed and closed instantly when opened from the
+  ••• or context menu. Radix restored focus to the trigger on close, blurring the
+  just-opened inline input, which committed and dismissed the rename. Closes #144.
+- **Channels:** Removed vestigial `transcribe_audio` calls from the Matrix,
+  WhatsApp, Feishu and WeChat channels, where the method itself no longer exists.
+  Closes #70. Thanks to @haciniemiku.
+
+### Validation
+
+- CI green on `main` at `a4fa7b0`: backend tests on ubuntu-latest,
+  windows-latest and macos-latest, plus frontend checks.
+- Every fix in the session and permissions group above ships with a regression
+  test that was verified to fail without it.
+- Carried over from rc.4 and still outstanding: the macOS visible Computer Use
+  matrix (`test_computer_macos_integration.py`) has not been re-run on physical
+  Apple hardware. The macOS changes in this line are additive and covered by the
+  unit suites on macos-latest, but a Mac smoke test of the signed build is worth
+  doing before this release is published.
+
 ## [1.5.0-rc.4] - 2026-08-08
 
 This RC closes the item v1.5.0-rc.3 left open: "the signed RC installer still
