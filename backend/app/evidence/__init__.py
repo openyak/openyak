@@ -1,1 +1,0 @@
-"""Shared evidence extraction primitives."""

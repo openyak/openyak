@@ -1,0 +1,23 @@
+[package]
+name = "openyak-core"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+
+[[bin]]
+name = "openyak-core"
+path = "src/main.rs"
+
+[dependencies]
+agent-client-protocol = "2.0.0"
+anyhow = "1"
+chrono = "0.4"
+clap = { version = "4", features = ["derive"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+ulid = "1"
+which = "8"

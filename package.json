@@ -1,26 +1,19 @@
 {
   "name": "openyak",
-  "version": "1.5.0",
+  "version": "2.0.0-alpha.0",
   "private": true,
   "license": "Apache-2.0",
-  "description": "OpenYak — local-first AI agent for desktop work",
+  "description": "OpenYak — Project → Task → Chat, served by the coding agents you already have",
+  "workspaces": [
+    "app"
+  ],
   "scripts": {
-    "dev:frontend": "cd frontend && npm run dev",
-    "dev:backend": "cd backend && node -e \"const p=process.platform==='win32'?'venv\\\\Scripts\\\\python.exe':'./venv/bin/python';require('child_process').execSync(p+' -m uvicorn app.main:create_app --factory --reload --reload-dir app --host 0.0.0.0 --port 8000',{stdio:'inherit'})\"",
-    "dev:all": "node scripts/dev-all.mjs",
-    "dev:desktop": "node scripts/dev-desktop.mjs",
-    "build:frontend": "cd frontend && cross-env DESKTOP_BUILD=true NEXT_PUBLIC_DESKTOP_BUILD=true npm run build",
-    "build:backend": "cd backend && node -e \"const p=process.platform==='win32'?'venv/Scripts/pyinstaller':'venv/bin/pyinstaller';require('child_process').execSync(p+' openyak.spec --noconfirm',{stdio:'inherit'})\"",
-    "sync:desktop-meta": "node scripts/sync-desktop-meta.mjs",
-    "build:desktop": "npm run sync:desktop-meta && cd desktop-tauri && cargo tauri build",
-    "preflight": "npm run preflight:ui",
-    "preflight:ui": "cd frontend && npm run preflight:ui"
+    "build:core": "cargo build --release --manifest-path core/Cargo.toml",
+    "dev": "npm run build:core && npm run dev -w app",
+    "build": "npm run build:core && npm run build -w app",
+    "check": "cargo test --manifest-path core/Cargo.toml && npm run check -w app"
   },
-  "devDependencies": {
-    "concurrently": "^9.1.0",
-    "cross-env": "^7.0.3",
-    "esbuild": "^0.27.3",
-    "typescript": "^5.7.0",
-    "wait-on": "^8.0.0"
+  "allowScripts": {
+    "electron@44.1.1": true
   }
 }

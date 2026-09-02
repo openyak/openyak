@@ -1,6 +1,0 @@
-{
-  "name": "canvas",
-  "version": "0.0.0",
-  "description": "Stub for the Node.js-only canvas module (used by @kandiforge/pptx-renderer)",
-  "main": "index.js"
-}

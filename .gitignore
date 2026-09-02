@@ -1,82 +1,19 @@
-# === Node.js ===
+# Node
 node_modules/
-.next/
-tsconfig.tsbuildinfo
+app/out/
+app/dist/
+app/release/
+*.log
 
-# === Python ===
-__pycache__/
-*.py[cod]
-*.egg-info/
-.venv/
-venv/
-venv*/
-backend/venv
-.python-*/
-.pytest_cache/
-evals/results/
+# Rust
+core/target/
 
-# === Environment & secrets ===
-.env
-.env.local
-.env.*.local
-backend/session_token.json
-session_token.json
-
-# === Database & runtime data ===
-*.db
-data/
-backend/data/
-.openyakdb/
-.openyak/
-backend/.openyak/
-
-# === IDE & OS ===
-.vscode/
-.idea/
-.cursor/
-*.swp
-*.swo
+# OS / editors
 .DS_Store
-Thumbs.db
+.idea/
+.vscode/
+*.swp
 
-# === Claude local config ===
-.claude/
-CLAUDE.md
-cowork/
-.dev/
-.harness/
-
-# === Codex local config ===
-AGENTS.md
-.codex-artifacts/
-
-# === Ollama runtime binaries ===
-backend/ollama/
-
-# === Bundled Node.js runtime (downloaded by scripts/download_node.py) ===
-backend/resources/nodejs/
-
-# === OpenClaw local install ===
-backend/openclaw/
-
-# === Auto-copied vendor files ===
-frontend/public/pdf.worker.min.mjs
-frontend/public/cmaps/
-frontend/public/standard_fonts/
-frontend/test-results/
-frontend/playwright-report/
-
-# === Build artifacts ===
-dist*/
-build*/
-*.egg
-out/
-desktop/release/
-desktop-tauri/src-tauri/target/
-desktop-tauri/src-tauri/gen/schemas/
-
-# === Certificates & keys ===
-*.pem
-
-# uiautomation drops this beside the process working directory
-@AutomationLog.txt
+# Local data
+.env
+.env.*

@@ -1,79 +1,32 @@
-name: Tests & Type Check
+name: CI
 
 on:
   push:
     branches: [main]
-  # Not restricted to PRs against main: stacked PRs target their parent branch
-  # and would otherwise merge with no checks having run at all.
   pull_request:
 
 jobs:
-  backend:
-    name: Backend Tests (${{ matrix.os }})
+  core:
     runs-on: ${{ matrix.os }}
     strategy:
-      # Report every platform's result rather than cancelling siblings on the
-      # first failure, which is the whole point of testing more than one.
-      fail-fast: false
       matrix:
-        # OpenYak ships a desktop app on all three, and parts of the backend are
-        # platform-specific (native Computer Use, subprocess and path handling).
-        # Linux-only CI let a module-scope `ctypes.windll` reach main-adjacent
-        # branches, and equally would not have caught a POSIX-only assumption
-        # breaking Windows users. release.yml already builds and signs on
-        # macos-latest, so the runner and the dependency set are proven there.
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    defaults:
-      run:
-        working-directory: backend
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
+      - uses: dtolnay/rust-toolchain@1.90.0
+      - uses: Swatinem/rust-cache@v2
         with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: backend/pyproject.toml
+          workspaces: core
+      - run: cargo test --manifest-path core/Cargo.toml
+      - run: cargo clippy --manifest-path core/Cargo.toml -- -D warnings
 
-      - name: Install system dependencies
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libcairo2-dev pkg-config
-
-      - name: Install dependencies
-        run: pip install -e ".[dev,mcp]"
-
-      - name: Run tests
-        run: pytest -x --tb=short -q --ignore=tests/test_tool/test_code_execute.py
-
-      - name: Run offline agent smoke suite
-        if: runner.os == 'Linux'
-        working-directory: .
-        run: >-
-          PYTHONPATH=backend:.
-          python -m evals run-suite
-          evals/suites/runtime-v0/tasks
-          --output "${RUNNER_TEMP}/openyak-evals-runtime-v0"
-
-  frontend:
-    name: Frontend Checks
+  app:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: 26
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci --legacy-peer-deps
-
-      - name: Type check
-        run: npx tsc --noEmit
-
-      - name: Lint
-        run: npm run lint
+      - run: npm ci
+      - run: npm run check -w app

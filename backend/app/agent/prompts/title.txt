@@ -1,1 +1,0 @@
-Generate a short, descriptive title (3-8 words) for this conversation based on the user's first message. The title should capture the main topic or task. Return ONLY the title text, nothing else.

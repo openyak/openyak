@@ -1,6 +1,0 @@
-Summarize the changes made in this conversation. Include:
-- Files added, modified, or deleted
-- Lines added and removed (approximate counts)
-- Brief description of what changed and why
-
-Format as a concise bullet list. Focus on what changed, not on the discussion.
