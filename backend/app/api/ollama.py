@@ -64,20 +64,26 @@ def _ollama_url(request: Request) -> str:
 
 
 def _is_cloud_model_tag(name: str) -> bool:
-    """True for Ollama cloud-routed models (e.g. ``glm-5.1:cloud``).
+    """True for explicit Ollama cloud-routed model tags.
 
-    Cloud tags execute on Ollama's hosted infra rather than pulling local
-    weights, so OpenYak's pull/discovery flow doesn't fit them today. Detect
-    them up-front and surface a useful message instead of letting the request
-    fail with an opaque manifest error.
+    Ollama currently documents both a dedicated ``:cloud`` tag (for example,
+    ``glm-5.1:cloud``) and parameterized tags ending in ``-cloud`` (for
+    example, ``gpt-oss:120b-cloud``).  Cloud tags execute on Ollama's hosted
+    infrastructure rather than loading local weights, so OpenYak's local-only
+    Ollama product boundary does not fit them today.  Normalise whitespace and
+    case here so a cosmetic input difference cannot bypass that boundary.
     """
-    return name.split("/")[-1].endswith(":cloud")
+    leaf = name.strip().rsplit("/", 1)[-1].casefold()
+    _, separator, tag = leaf.rpartition(":")
+    return bool(separator) and (tag == "cloud" or tag.endswith("-cloud"))
 
 
 _CLOUD_BLOCK_MESSAGE = (
-    "{name} is a cloud-hosted Ollama model — not yet supported in OpenYak. "
-    "Try a local tag (e.g. qwen3:8b, llama3.2:3b) or use ChatGPT / "
-    "OpenRouter in Settings → Providers."
+    "{name} is hosted by Ollama Cloud, while OpenYak currently treats Ollama "
+    "as a local-only provider. To use this model directly, run 'ollama signin' "
+    "and then 'ollama run {name}' in a terminal. In OpenYak, choose a local "
+    "tag (for example qwen3:8b or llama3.2:3b), or use ChatGPT / OpenRouter "
+    "in Settings → Providers."
 )
 
 
@@ -219,8 +225,9 @@ async def get_library(
 async def pull_model(request: Request, registry: ProviderRegistryDep, body: ModelPullRequest):
     """Pull (download) a model. Returns SSE stream with progress."""
     if _is_cloud_model_tag(body.name):
-        message = _CLOUD_BLOCK_MESSAGE.format(name=body.name)
-        logger.info("Ollama: blocked pull for cloud-tagged model %s", body.name)
+        model_name = body.name.strip()
+        message = _CLOUD_BLOCK_MESSAGE.format(name=model_name)
+        logger.info("Ollama: blocked pull for cloud-tagged model %s", model_name)
 
         async def cloud_block_stream():
             yield f"data: {json.dumps({'status': 'error', 'reason': 'cloud_model_unsupported', 'message': message})}\n\n"

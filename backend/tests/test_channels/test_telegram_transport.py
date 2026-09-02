@@ -365,3 +365,41 @@ async def test_inbound_command_routed_via_forward_command():
     inbound = await bus.consume_inbound()
     # Underscore-style commands are normalised to dash style on the way in.
     assert inbound.content == "/dream-log foo bar"
+
+
+async def test_stream_metadata_targets_topic_and_cleans_up_reaction():
+    """Adapter-preserved generic metadata reaches TelegramTransport."""
+    config = TelegramConfig(
+        token="x",
+        allow_from=["*"],
+        react_emoji="👀",
+        streaming=True,
+        stream_edit_interval=0.1,
+    )
+    channel = TelegramChannel(config, MessageBus())
+    bot = MagicMock()
+    bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=999))
+    bot.edit_message_text = AsyncMock()
+    bot.set_message_reaction = AsyncMock()
+    app = MagicMock()
+    app.bot = bot
+    channel.transport._app = app
+    channel._reaction_tokens[("100", "7")] = None
+
+    metadata = {
+        "message_id": "7",
+        "message_thread_id": "55",
+    }
+    await channel.send_delta("100", "partial", metadata=metadata)
+    await channel.send_delta(
+        "100",
+        "",
+        metadata={**metadata, "_stream_end": True},
+    )
+
+    assert bot.send_message.await_args.kwargs["message_thread_id"] == 55
+    assert bot.set_message_reaction.await_args.kwargs == {
+        "chat_id": 100,
+        "message_id": 7,
+        "reaction": [],
+    }

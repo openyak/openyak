@@ -3,6 +3,14 @@
 Fetches ``https://ollama.com/search?q=...`` and parses the server-rendered
 HTML to extract model data (name, description, sizes, pull count, capabilities).
 Falls back to a curated local list when offline.
+
+The public library and the local Ollama API have different scopes.  Library
+results can advertise cloud-hosted tags (``:cloud`` or ``*-cloud``), while
+``GET /api/tags`` is the discovery source for models available through the
+user's local Ollama process.  Ollama can create a locally listed cloud stub
+after account sign-in, but inference then leaves the machine.  OpenYak's
+Ollama provider is intentionally local-only for now, so the API/UI identify
+and block those variants rather than presenting them as downloaded weights.
 """
 
 from __future__ import annotations

@@ -298,13 +298,17 @@ class ChatChannel(BaseChannel):
             except Exception as exc:
                 logger.error("%s: media send failed for %s: %s", self.name, media_path, exc)
 
-        if msg.content and msg.content != "[empty message]":
+        content = msg.content
+        if not content and not (msg.media or []):
+            content = self.profile.empty_message_fallback or ""
+
+        if content and content != "[empty message]":
             render = (
                 self.transport.render_quote
                 if msg.metadata.get("_tool_hint")
                 else self.transport.render_text
             )
-            for chunk in split_message(msg.content, self.profile.max_message_len):
+            for chunk in split_message(content, self.profile.max_message_len):
                 await self._with_retry(
                     self.transport.send_text,
                     msg.chat_id,
@@ -447,7 +451,11 @@ class ChatChannel(BaseChannel):
     # ------------------------------------------------------------------
 
     async def _remove_inbound_reaction(self, msg: OutboundMessage) -> None:
-        message_id = msg.metadata.get("message_id")
+        # ``AgentAdapter`` carries the triggering vendor message id in the
+        # long-standing ``OutboundMessage.reply_to`` field.  Direct channel
+        # callers may instead put it in metadata, so accept both shapes and
+        # prefer the more explicit metadata value when both are present.
+        message_id = msg.metadata.get("message_id") or msg.reply_to
         if message_id is None:
             return
         await self._remove_reaction_by_keys(msg.chat_id, str(message_id))
@@ -485,7 +493,7 @@ class ChatChannel(BaseChannel):
 
     @staticmethod
     def _inbound_ref_from_outbound(msg: OutboundMessage) -> VendorMessageRef | None:
-        message_id = msg.metadata.get("message_id")
+        message_id = msg.metadata.get("message_id") or msg.reply_to
         if message_id is None:
             return None
         return VendorMessageRef(chat_id=msg.chat_id, message_id=str(message_id))
