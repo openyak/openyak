@@ -15,10 +15,13 @@ from app.api.ollama import _is_cloud_model_tag
         ("glm-5.1:cloud", True),
         ("qwen3:cloud", True),
         ("user/glm-5.1:cloud", True),
+        (" gpt-oss:120b-cloud ", True),
+        ("GLM-5.1:CLOUD", True),
         ("glm-5.1", False),
         ("llama3.2:3b", False),
         ("library/llama3.2:3b", False),
         ("cloudburst:7b", False),
+        ("cloud", False),
     ],
 )
 def test_cloud_tag_detection(name: str, expected: bool) -> None:
@@ -43,7 +46,10 @@ async def test_pull_cloud_model_short_circuits_with_redirect_message(app_client)
     assert payload["status"] == "error"
     assert payload["reason"] == "cloud_model_unsupported"
     assert "glm-5.1:cloud" in payload["message"]
-    # The message should redirect the user to alternative providers / local tags.
+    # The message should explain the manual Ollama path as well as OpenYak's
+    # supported local/provider alternatives.
+    assert "ollama signin" in payload["message"]
+    assert "ollama run glm-5.1:cloud" in payload["message"]
     assert "local" in payload["message"].lower()
 
 

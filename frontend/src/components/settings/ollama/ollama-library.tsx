@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import {
+  CircleAlert,
   Check,
   Loader2,
   Square,
@@ -14,6 +15,10 @@ import { Input } from "@/components/ui/input";
 import { api, apiFetch } from "@/lib/api";
 import { API } from "@/lib/constants";
 import { LOCAL_MODEL_RECOMMENDATIONS } from "@/lib/local-models";
+import {
+  getOllamaCloudModelMessage,
+  isOllamaCloudModelTag,
+} from "@/lib/ollama-cloud-models";
 import { cn } from "@/lib/utils";
 import type { LibraryData, LibraryModel } from "./types";
 
@@ -241,7 +246,11 @@ export function ModelLibrary({
       {pullingModel && pullProgress && (
         <div className="mb-3 rounded-lg border border-[var(--brand-primary)]/20 bg-[var(--brand-primary)]/5 p-3 space-y-1.5">
           <div className="flex items-center gap-2 text-xs">
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-[var(--brand-primary)] shrink-0" />
+            {pullProgress.status === "error" ? (
+              <CircleAlert className="h-3.5 w-3.5 text-[var(--color-destructive)] shrink-0" />
+            ) : (
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-[var(--brand-primary)] shrink-0" />
+            )}
             <span className="text-[var(--text-secondary)] flex-1">
               {pullProgress.status === "error"
                 ? `Error: ${pullProgress.message ?? "Unknown error"}`
@@ -250,7 +259,11 @@ export function ModelLibrary({
             <button
               onClick={cancelPull}
               className="text-[var(--text-tertiary)] hover:text-[var(--color-destructive)] transition-colors shrink-0"
-              title={t("cancel", "Cancel")}
+              title={
+                pullProgress.status === "error"
+                  ? t("dismiss", "Dismiss")
+                  : t("cancel", "Cancel")
+              }
             >
               <Square className="h-3.5 w-3.5" />
             </button>
@@ -481,8 +494,18 @@ export function ModelLibrary({
             size="sm"
             className="h-8"
             onClick={() => {
-              if (customModel.trim()) {
-                pullModel(customModel.trim());
+              const modelName = customModel.trim();
+              if (modelName) {
+                if (isOllamaCloudModelTag(modelName)) {
+                  setPullingModel(modelName);
+                  setPullProgress({
+                    status: "error",
+                    reason: "cloud_model_unsupported",
+                    message: getOllamaCloudModelMessage(modelName),
+                  });
+                  return;
+                }
+                pullModel(modelName);
                 setCustomModel("");
               }
             }}
@@ -543,9 +566,8 @@ function ModelCard({
         {model.sizes.map((size) => {
           const fullName = `${model.name}:${size}`;
           const isInstalled = installedNames.has(fullName);
-          const isCloud = size.toLowerCase() === "cloud";
-          const cloudTooltip =
-            "Cloud-hosted Ollama model — not yet supported in OpenYak. Use a local-weights tag, or pick ChatGPT / OpenRouter in Settings → Providers.";
+          const isCloud = isOllamaCloudModelTag(fullName);
+          const cloudTooltip = getOllamaCloudModelMessage(fullName);
           return (
             <button
               key={size}
