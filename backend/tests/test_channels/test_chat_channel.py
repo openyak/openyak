@@ -198,6 +198,19 @@ async def test_reaction_added_on_inbound_and_removed_on_send():
     assert "remove_reaction" in transport.methods_called()
 
 
+async def test_reaction_cleanup_accepts_outbound_reply_to_contract():
+    """AgentAdapter preserves the inbound vendor id in ``reply_to``."""
+    channel, _, transport = _make_channel()
+    await channel.start()
+    await transport.push_inbound(_inbound(message_id="42"))
+
+    await channel.send(OutboundMessage(
+        channel="base", chat_id="chat-1", content="response", reply_to="42",
+    ))
+
+    assert ("chat-1", "42") not in transport.outstanding_reactions
+
+
 async def test_reaction_not_removed_for_progress_messages():
     channel, _, transport = _make_channel()
     await channel.start()
@@ -297,6 +310,18 @@ async def test_outbound_propagates_reply_and_thread():
     assert send.kwargs["thread_id"] == "topic-9"
 
 
+async def test_outbound_reply_ref_falls_back_to_reply_to_field():
+    channel, _, transport = _make_channel()
+    await channel.start()
+
+    await channel.send(OutboundMessage(
+        channel="base", chat_id="c-1", content="hi", reply_to="55",
+    ))
+
+    send = next(c for c in transport.calls if c.method == "send_text")
+    assert send.kwargs["reply_to"] == VendorMessageRef(chat_id="c-1", message_id="55")
+
+
 async def test_tool_hint_uses_render_quote():
     transport = RecordingTransport(render_quote_prefix="QUOTE> ")
     channel, _, transport = _make_channel(transport=transport)
@@ -355,6 +380,29 @@ async def test_streaming_end_finalises_with_full_text():
     final_edit = edits[-1]
     assert "partial" in final_edit.kwargs["text"]
     assert "c-1" not in channel._stream_bufs
+
+
+async def test_streaming_metadata_keeps_thread_and_cleans_up_reaction():
+    channel, _, transport = _make_channel()
+    await channel.start()
+    await transport.push_inbound(_inbound(message_id="42"))
+
+    metadata = {
+        "message_id": "42",
+        "message_thread_id": "topic-9",
+        "_stream_id": "s1",
+    }
+    await channel.send_delta("chat-1", "partial", metadata=metadata)
+    await channel.send_delta(
+        "chat-1",
+        "",
+        metadata={**metadata, "_stream_end": True},
+    )
+
+    initial_send = next(c for c in transport.calls if c.method == "send_text")
+    assert initial_send.kwargs["thread_id"] == "topic-9"
+    assert ("chat-1", "42") not in transport.outstanding_reactions
+    assert "remove_reaction" in transport.methods_called()
 
 
 async def test_streaming_end_with_overlong_text_chunks_remainder():

@@ -36,6 +36,9 @@ class ChatProfile:
             sent message. False forces ``ChatChannel`` to send each delta
             as a new message instead of editing in place; rarely toggled —
             most chat vendors support it.
+        empty_message_fallback: Vendor-safe text to send when an outbound
+            message contains neither text nor media. ``None`` keeps the
+            default no-op behaviour.
     """
 
     max_message_len: int
@@ -45,3 +48,4 @@ class ChatProfile:
     send_retries: int = 3
     send_retry_base_delay: float = 0.5
     supports_edit: bool = True
+    empty_message_fallback: str | None = None

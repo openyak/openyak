@@ -187,7 +187,7 @@ class AgentAdapter:
                             channel=msg.channel,
                             chat_id=msg.chat_id,
                             content=text,
-                            metadata={"_stream_delta": True},
+                            metadata=self._stream_metadata(msg),
                         ))
             elif event.event == DONE:
                 if wants_stream:
@@ -195,7 +195,11 @@ class AgentAdapter:
                         channel=msg.channel,
                         chat_id=msg.chat_id,
                         content="",
-                        metadata={"_stream_delta": True, "_stream_end": True, "_streamed": True},
+                        metadata=self._stream_metadata(
+                            msg,
+                            stream_end=True,
+                            streamed=True,
+                        ),
                     ))
                 break
             elif event.event == AGENT_ERROR:
@@ -210,6 +214,31 @@ class AgentAdapter:
             return ""  # Already sent via deltas
 
         return full_text or "[No response generated]"
+
+    @staticmethod
+    def _stream_metadata(
+        msg: InboundMessage,
+        *,
+        stream_end: bool = False,
+        streamed: bool = False,
+    ) -> dict[str, Any]:
+        """Build generic channel metadata for one streamed outbound event.
+
+        The triggering vendor message and thread are part of the channel
+        reply contract.  Keeping just those generic keys lets ChatChannel
+        target the correct thread and clean up its inbound reaction without
+        copying an entire vendor event into every text delta.
+        """
+        metadata: dict[str, Any] = {"_stream_delta": True}
+        for key in ("message_id", "message_thread_id"):
+            value = msg.metadata.get(key)
+            if value is not None:
+                metadata[key] = value
+        if stream_end:
+            metadata["_stream_end"] = True
+        if streamed:
+            metadata["_streamed"] = True
+        return metadata
 
     @staticmethod
     async def _get_or_create_session(session_factory, channel_user_key: str, sender_id: str) -> str:
