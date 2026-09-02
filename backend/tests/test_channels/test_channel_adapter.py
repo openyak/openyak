@@ -43,4 +43,3 @@ def test_stream_metadata_omits_missing_optional_reply_context():
         content="hello",
     )
     assert AgentAdapter._stream_metadata(inbound) == {"_stream_delta": True}
-
