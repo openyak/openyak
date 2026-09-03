@@ -270,7 +270,7 @@ textarea:focus-visible {
 .sidebar-resize-handle:hover::after,
 .sidebar-resize-handle:focus-visible::after,
 .sidebar.resizing .sidebar-resize-handle::after {
-  background: color-mix(in srgb, var(--blue) 72%, transparent);
+  background: var(--border-strong);
 }
 .sidebar-resize-handle:focus-visible {
   outline: none;
