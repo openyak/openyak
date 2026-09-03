@@ -8,6 +8,7 @@ export interface MenuItem {
   icon?: ReactNode
   checked?: boolean
   disabled?: boolean
+  danger?: boolean
   onSelect?: () => void
 }
 
@@ -105,9 +106,9 @@ export function Menu({
               <button
                 key={e.id}
                 type="button"
-                role="menuitemradio"
-                aria-checked={!!e.checked}
-                className={`popover-item${e.checked ? ' checked' : ''}`}
+                role={e.checked === undefined ? 'menuitem' : 'menuitemradio'}
+                aria-checked={e.checked === undefined ? undefined : e.checked}
+                className={`popover-item${e.checked ? ' checked' : ''}${e.danger ? ' is-danger' : ''}`}
                 disabled={e.disabled}
                 onClick={() => {
                   setOpen(false)

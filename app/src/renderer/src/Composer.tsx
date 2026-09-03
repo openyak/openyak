@@ -1,4 +1,4 @@
-import { useState, type ClipboardEvent, type DragEvent } from 'react'
+import { useRef, useState, type ClipboardEvent, type DragEvent } from 'react'
 import type {
   Agent,
   AgentConfigOption,
@@ -7,14 +7,21 @@ import type {
   Attachment,
   Project,
 } from '../../shared/protocol'
-import { Menu, type MenuEntry } from './Menu'
+import {
+  draftsFromFiles,
+  draftsFromPaths,
+  mergeDrafts,
+  toAttachment,
+  type AttachmentDraft,
+} from './attachmentDrafts'
+import { Menu, useDismiss, type MenuEntry } from './Menu'
 import { ModelPicker } from './ModelPicker'
+import { ProjectPicker } from './ProjectPicker'
 import {
   IconArrowUp,
   IconBulb,
   IconClose,
   IconFile,
-  IconFolder,
   IconHand,
   IconMore,
   IconPaperclip,
@@ -25,56 +32,6 @@ import {
 } from './icons'
 
 type SelectOption = Extract<AgentConfigOption, { type: 'select' }>
-
-/** An attachment being composed: images are read into memory, files stay on disk. */
-type Draft =
-  | { id: string; type: 'image'; name: string; mime_type: string; data: string }
-  | { id: string; type: 'file'; name: string; path: string }
-
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024
-
-let nextDraft = 1
-const uid = () => String(nextDraft++)
-
-function basename(p: string): string {
-  const parts = p.replace(/[\\/]+$/, '').split(/[\\/]/)
-  return parts[parts.length - 1] || p
-}
-
-function readBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader()
-    r.onload = () => resolve(String(r.result).split(',')[1] ?? '')
-    r.onerror = () => reject(r.error)
-    r.readAsDataURL(file)
-  })
-}
-
-/** Images go inline so the agent can see them; everything else is a link to its path. */
-async function draftsFromFiles(files: Iterable<File>): Promise<Draft[]> {
-  const out: Draft[] = []
-  for (const f of files) {
-    const path = window.openyak.pathForFile(f)
-    if (f.type.startsWith('image/') && f.size <= MAX_IMAGE_BYTES) {
-      out.push({
-        id: uid(),
-        type: 'image',
-        name: f.name || 'Image',
-        mime_type: f.type,
-        data: await readBase64(f),
-      })
-    } else if (path) {
-      out.push({ id: uid(), type: 'file', name: basename(path), path })
-    }
-  }
-  return out
-}
-
-function toAttachment(d: Draft): Attachment {
-  return d.type === 'image'
-    ? { type: 'image', mime_type: d.mime_type, data: d.data }
-    : { type: 'file', path: d.path }
-}
 
 /** Icon for a permission mode, from the kind the agent tags it with. */
 function modeIcon(kind: string | undefined, size = 15) {
@@ -108,7 +65,8 @@ interface Props {
   settingConfig: string | null
   onSetConfig: (agent: AgentId, configId: string, value: string | boolean) => void
   streaming: boolean
-  onSend: (text: string, attachments: Attachment[]) => void
+  cancelling: boolean
+  onSend: (text: string, attachments: Attachment[], interrupt: boolean) => Promise<boolean>
   onCancel: () => void
 }
 
@@ -127,43 +85,76 @@ export function Composer({
   settingConfig,
   onSetConfig,
   streaming,
+  cancelling,
   onSend,
   onCancel,
 }: Props) {
   const [text, setText] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const submittingRef = useRef(false)
   const options = agent ? (optionsByAgent[agent] ?? null) : null
   const status = agent ? (statusByAgent[agent] ?? null) : null
   const set = (configId: string, value: string | boolean) => {
     if (agent) onSetConfig(agent, configId, value)
   }
-  const [attachments, setAttachments] = useState<Draft[]>([])
+  const [attachments, setAttachments] = useState<AttachmentDraft[]>([])
   const [dragging, setDragging] = useState(false)
+  const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null)
+  const [addOpen, setAddOpen] = useState(false)
+  const composerAreaRef = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  useDismiss(composerAreaRef, addOpen, () => setAddOpen(false))
 
   const agentInfo = agents.find((a) => a.id === agent) ?? null
   const noAgent = !agents.some((a) => a.available)
   const needsProject = !hasChat
   const hasContent = text.trim().length > 0 || attachments.length > 0
-  const canSend = !noAgent && !streaming && !needsProject && hasContent
+  const canSend = !noAgent && !submitting && !needsProject && hasContent
 
   const submit = () => {
-    if (!canSend) return
-    onSend(text.trim(), attachments.map(toAttachment))
+    if (!canSend || submittingRef.current) return
+    const draftText = text
+    const draftAttachments = attachments
+    submittingRef.current = true
+    setSubmitting(true)
     setText('')
     setAttachments([])
+    void onSend(draftText.trim(), draftAttachments.map(toAttachment), streaming)
+      .then((sent) => {
+        if (sent) return
+        // A failed send should never eat the draft. Preserve anything typed meanwhile.
+        setText((current) => current || draftText)
+        setAttachments((current) => [...draftAttachments, ...current])
+      })
+      .finally(() => {
+        submittingRef.current = false
+        setSubmitting(false)
+      })
   }
 
   const addFiles = (files: Iterable<File>) => {
-    void draftsFromFiles(files).then((d) => {
-      if (d.length) setAttachments((prev) => [...prev, ...d])
+    void draftsFromFiles(files).then(({ drafts, notices }) => {
+      const merged = mergeDrafts(attachments, drafts)
+      setAttachments(merged.drafts)
+      const allNotices = [
+        ...notices,
+        ...merged.duplicateNames.map((name) => `${name} is already attached`),
+      ]
+      setAttachmentNotice(allNotices.length ? allNotices.join('. ') : null)
     })
   }
   const pickFiles = async () => {
     const paths = await window.openyak.pickFiles()
     if (paths.length === 0) return
-    setAttachments((prev) => [
-      ...prev,
-      ...paths.map((path): Draft => ({ id: uid(), type: 'file', name: basename(path), path })),
-    ])
+    const merged = mergeDrafts(attachments, draftsFromPaths(paths))
+    setAttachments(merged.drafts)
+    const duplicateCount = merged.duplicateNames.length
+    setAttachmentNotice(
+      duplicateCount > 0
+        ? `${duplicateCount} duplicate attachment${duplicateCount === 1 ? ' was' : 's were'} skipped`
+        : null,
+    )
   }
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
     const files = [...e.clipboardData.files]
@@ -179,34 +170,7 @@ export function Composer({
 
   const placeholder = noAgent
     ? 'Install and log in to Claude Code or Codex to start'
-    : agentInfo
-      ? `Work with ${agentInfo.name}`
-      : 'Ask anything'
-
-  // Project picker (new chat only).
-  const project = projects.find((p) => p.id === draftProjectId) ?? null
-  const projectEntries: MenuEntry[] = [
-    ...projects.map((p) => ({
-      id: p.id,
-      label: p.name,
-      description: p.path,
-      checked: p.id === draftProjectId,
-      onSelect: () => onChooseProject(p.id),
-    })),
-    ...(projects.length > 0 ? [{ separator: true } as const] : []),
-    { id: '__add', label: 'Add project…', icon: <IconPlus size={14} />, onSelect: onAddProject },
-  ]
-
-  const addEntries: MenuEntry[] = [
-    { section: 'Add' },
-    {
-      id: 'files',
-      label: 'Files and folders',
-      description: 'Or paste and drop them here',
-      icon: <IconPaperclip size={15} />,
-      onSelect: () => void pickFiles(),
-    },
-  ]
+    : 'Do anything'
 
   // The agent's options, placed by category: mode on the left; model and effort (and the
   // agent itself) share one picker on the right; anything else sits behind "more".
@@ -219,6 +183,8 @@ export function Composer({
       o !== modeOpt &&
       o.category !== 'model' &&
       o.category !== 'thought_level' &&
+      o.category !== 'collaboration_mode' &&
+      !(o.category === 'model_config' && /fast/i.test(`${o.id} ${o.name}`)) &&
       o.type !== 'unknown',
   )
 
@@ -266,20 +232,43 @@ export function Composer({
   const modeKind = modeOpt ? current(modeOpt)?.kind : undefined
 
   return (
-    <div className="composer-area">
+    <div
+      className="composer-area"
+      ref={composerAreaRef}
+      onMouseDownCapture={(event) => {
+        if (!addOpen) return
+        const target = event.target as Element
+        if (target.closest('.composer-add-panel, .composer-add-trigger')) return
+        setAddOpen(false)
+      }}
+    >
       {draft && (
         <div className="composer-above">
-          <Menu
-            className="chip"
-            trigger={
-              <>
-                <IconFolder size={15} />
-                <span className="pill-label">{project ? project.name : 'Choose project'}</span>
-              </>
-            }
-            entries={projectEntries}
-            title={project?.path ?? 'The folder your agents will work in'}
+          <ProjectPicker
+            projects={projects}
+            selectedId={draftProjectId}
+            onChoose={onChooseProject}
+            onAdd={onAddProject}
           />
+        </div>
+      )}
+
+      {addOpen && (
+        <div className="composer-add-panel" role="menu" aria-label="Add files">
+          <div className="composer-add-heading">Add</div>
+          <button
+            type="button"
+            className="composer-add-item"
+            role="menuitem"
+            onClick={() => {
+              setAddOpen(false)
+              void pickFiles()
+            }}
+          >
+            <IconPaperclip size={17} />
+            <span className="composer-add-label">Files and folders</span>
+            <span className="composer-add-description">Or paste and drop them here</span>
+          </button>
         </div>
       )}
 
@@ -320,15 +309,38 @@ export function Composer({
             ))}
           </div>
         )}
+        {attachmentNotice && (
+          <div className="attachment-notice" role="status">
+            <IconWarning size={13} />
+            <span>{attachmentNotice}</span>
+            <button
+              type="button"
+              className="icon-btn small"
+              onClick={() => setAttachmentNotice(null)}
+              aria-label="Dismiss attachment notice"
+            >
+              <IconClose size={12} />
+            </button>
+          </div>
+        )}
 
         <textarea
+          ref={textareaRef}
           rows={1}
           placeholder={placeholder}
           value={text}
           disabled={noAgent}
+          onFocus={() => setAddOpen(false)}
           onChange={(e) => setText(e.target.value)}
           onPaste={onPaste}
           onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              if (streaming) {
+                e.preventDefault()
+                onCancel()
+              }
+              return
+            }
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault()
               submit()
@@ -338,19 +350,21 @@ export function Composer({
 
         <div className="composer-row">
           <div className="composer-group">
-            <Menu
-              plain
-              inlineDesc
-              className="menu-add"
-              triggerClassName="plus"
-              trigger={<IconPlus size={17} />}
-              entries={addEntries}
+            <button
+              type="button"
+              className={`plus composer-add-trigger${addOpen ? ' pill-open' : ''}`}
               disabled={noAgent}
-              ariaLabel="Add files and more"
-              title="Add files and more"
-            />
+              aria-label="Add files"
+              aria-haspopup="menu"
+              aria-expanded={addOpen}
+              title="Add files"
+              onClick={() => setAddOpen((open) => !open)}
+            >
+              <IconPlus size={17} />
+            </button>
             {modeOpt && (
               <Menu
+                plain
                 triggerClassName={`pill${modeKind === 'full_access' ? ' pill-warn' : ''}`}
                 trigger={
                   <>
@@ -359,7 +373,7 @@ export function Composer({
                   </>
                 }
                 entries={selectEntries(modeOpt, true)}
-                disabled={settingConfig === modeOpt.id}
+                disabled={settingConfig === modeOpt.id || streaming || submitting}
                 title={current(modeOpt)?.description ?? modeOpt.description ?? modeOpt.name}
               />
             )}
@@ -376,7 +390,7 @@ export function Composer({
               optionsByAgent={optionsByAgent}
               statusByAgent={statusByAgent}
               hasChat={hasChat}
-              busy={settingConfig !== null}
+              busy={settingConfig !== null || streaming || submitting}
               onAgentChange={onAgentChange}
               onSetConfig={onSetConfig}
             />
@@ -384,20 +398,22 @@ export function Composer({
               <Menu
                 align="end"
                 plain
+                triggerClassName="composer-more"
                 trigger={<IconMore size={16} />}
                 entries={restEntries}
-                disabled={settingConfig !== null}
+                disabled={settingConfig !== null || streaming || submitting}
                 ariaLabel="More options"
                 title="More options"
               />
             )}
-            {streaming ? (
+            {streaming && !hasContent ? (
               <button
                 type="button"
-                className="send stop"
+                className={`send stop${cancelling ? ' is-cancelling' : ''}`}
                 onClick={onCancel}
-                title="Stop"
-                aria-label="Stop"
+                disabled={cancelling}
+                title={cancelling ? 'Stopping…' : 'Stop response'}
+                aria-label={cancelling ? 'Stopping response' : 'Stop response'}
               >
                 <IconStop size={16} />
               </button>
@@ -407,8 +423,14 @@ export function Composer({
                 className="send"
                 disabled={!canSend}
                 onClick={submit}
-                title={needsProject ? 'Choose a project first' : 'Send'}
-                aria-label="Send"
+                title={
+                  needsProject
+                    ? 'Choose a project first'
+                    : streaming
+                      ? 'Interrupt and send'
+                      : 'Send message'
+                }
+                aria-label={streaming ? 'Interrupt and send message' : 'Send message'}
               >
                 <IconArrowUp size={18} />
               </button>

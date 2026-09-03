@@ -20,6 +20,7 @@ import { Thread } from './Thread'
 import { Composer } from './Composer'
 import { IconClose, IconSidebar } from './icons'
 import { titleFrom } from './format'
+import { ButtonTooltip } from './ButtonTooltip'
 
 export interface PendingPermission {
   request: PermissionRequest
@@ -63,12 +64,18 @@ export function App() {
   const [configs, setConfigs] = useState<Record<string, AgentConfigOption[]>>({})
   const [settingConfig, setSettingConfig] = useState<string | null>(null)
   const [permission, setPermission] = useState<PendingPermission | null>(null)
+  const [cancelling, setCancelling] = useState(false)
+  const [editingMessage, setEditingMessage] = useState<Message | null>(null)
+  const [workingTasks, setWorkingTasks] = useState<Set<string>>(() => new Set())
   const [coreExited, setCoreExited] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(readSidebar)
 
   // Latest values, readable from handlers and callbacks without re-creating them.
   const taskRef = useRef<string | null>(null)
+  const agentRef = useRef<AgentId | null>(null)
+  const optimisticSequence = useRef(0)
+  const bootstrapped = useRef(false)
   const tasksRef = useRef<Record<string, Task[]>>({})
   const projectsRef = useRef<Project[]>([])
   useEffect(() => {
@@ -82,6 +89,16 @@ export function App() {
   }, [projects])
 
   const fail = useCallback((err: unknown) => setError(String(err)), [])
+
+  const markTaskWorking = useCallback((id: string, working: boolean) => {
+    setWorkingTasks((current) => {
+      if (current.has(id) === working) return current
+      const next = new Set(current)
+      if (working) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }, [])
 
   const loadTasks = useCallback(async (projectId: string): Promise<Task[]> => {
     const t = await request<Task[]>('task.list', { project_id: projectId })
@@ -128,6 +145,10 @@ export function App() {
 
   // Initial load: agents, projects, every project's tasks, then a new chat to start in.
   useEffect(() => {
+    // React Strict Mode intentionally replays effects in development. Creating a draft
+    // is not idempotent, so guard the one-time boot sequence explicitly.
+    if (bootstrapped.current) return
+    bootstrapped.current = true
     request<Agent[]>('agent.list').then(setAgents).catch(fail)
     request<Project[]>('project.list')
       .then(async (ps) => {
@@ -173,6 +194,30 @@ export function App() {
     })
   }, [])
 
+  /** Replays can shorten a transcript, so update its count rather than applying a delta. */
+  const setTaskActivity = useCallback((id: string, messageCount: number, title?: string) => {
+    const now = new Date().toISOString()
+    setTasksByProject((prev) => {
+      const next = { ...prev }
+      for (const pid of Object.keys(next)) {
+        if (!next[pid].some((t) => t.id === id)) continue
+        next[pid] = next[pid]
+          .map((t) =>
+            t.id === id
+              ? {
+                  ...t,
+                  title: title ?? t.title,
+                  updated_at: now,
+                  message_count: messageCount,
+                }
+              : t,
+          )
+          .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+      }
+      return next
+    })
+  }, [])
+
   // Core notifications, permission requests, and exit.
   useEffect(() => {
     const offNotification = window.openyak.onNotification((n) => {
@@ -180,24 +225,18 @@ export function App() {
       switch (n.method) {
         case 'chat.update': {
           const u = n.params as ChatUpdate
+          markTaskWorking(u.task_id, true)
           if (u.task_id !== taskRef.current) return
-          setMessages((prev) => applyUpdate(prev, u))
+          setMessages((prev) => applyUpdate(prev, u, agentRef.current))
           return
         }
         case 'chat.done': {
           const d = n.params as ChatDone
+          markTaskWorking(d.task_id, false)
           bumpTask(d.task_id)
           if (d.task_id !== taskRef.current) return
-          setMessages((prev) =>
-            prev.map((m) => {
-              if (m.id !== d.message_id) return m
-              const parts =
-                d.status === 'error' && d.error
-                  ? [...m.parts, { type: 'error' as const, message: d.error }]
-                  : m.parts
-              return { ...m, status: d.status, parts }
-            }),
-          )
+          setCancelling(false)
+          setMessages((prev) => applyDone(prev, d, agentRef.current))
           return
         }
         case 'agent.status': {
@@ -228,6 +267,7 @@ export function App() {
         }),
     )
     const offExit = window.openyak.onCoreExited((exit) => {
+      setWorkingTasks(new Set())
       setCoreExited(
         `Core exited (code ${exit.code ?? '-'}, signal ${exit.signal ?? '-'}). Restart OpenYak.`,
       )
@@ -237,7 +277,7 @@ export function App() {
       offPermission()
       offExit()
     }
-  }, [bumpTask])
+  }, [bumpTask, markTaskWorking])
 
   // The agent the next message goes to: the explicit pick for this chat, else the agent
   // that last served it, else the first one installed.
@@ -251,6 +291,10 @@ export function App() {
     : isAvailable(lastUsed)
       ? lastUsed
       : (available[0]?.id ?? null)
+
+  useEffect(() => {
+    agentRef.current = agent
+  }, [agent])
 
   // Bring every installed agent's session up for the selected chat, so their models are
   // all listed in the picker and switching costs nothing.
@@ -286,6 +330,7 @@ export function App() {
     if (isDraft(current)) return
     const pid = current?.project_id ?? projectsRef.current[0]?.id
     if (!pid) return
+    setEditingMessage(null)
     void openDraft(pid).catch(fail)
   }, [currentTask, openDraft, fail])
 
@@ -293,6 +338,8 @@ export function App() {
     (id: string) => {
       if (id === taskRef.current) return
       dropIfDraft(taskRef.current)
+      setCancelling(false)
+      setEditingMessage(null)
       setTaskId(id)
       setMessages([])
     },
@@ -304,6 +351,8 @@ export function App() {
       const current = currentTask()
       if (current && isDraft(current) && current.project_id === pid) return
       dropIfDraft(taskRef.current)
+      setCancelling(false)
+      setEditingMessage(null)
       void openDraft(pid).catch(fail)
     },
     [currentTask, dropIfDraft, openDraft, fail],
@@ -323,6 +372,141 @@ export function App() {
     }
   }, [dropIfDraft, openDraft, fail])
 
+  const renameProject = useCallback(
+    async (id: string, name: string) => {
+      try {
+        setError(null)
+        const renamed = await request<Project>('project.rename', { project_id: id, name })
+        setProjects((prev) => prev.map((project) => (project.id === id ? renamed : project)))
+      } catch (err) {
+        fail(err)
+        throw err
+      }
+    },
+    [fail],
+  )
+
+  const renameTask = useCallback(
+    async (id: string, title: string) => {
+      try {
+        setError(null)
+        const renamed = await request<Task>('task.rename', { task_id: id, title })
+        setTasksByProject((prev) => ({
+          ...prev,
+          [renamed.project_id]: (prev[renamed.project_id] ?? []).map((task) =>
+            task.id === id ? renamed : task,
+          ),
+        }))
+      } catch (err) {
+        fail(err)
+        throw err
+      }
+    },
+    [fail],
+  )
+
+  const deleteProject = useCallback(
+    async (id: string) => {
+      const deletedTasks = tasksRef.current[id] ?? []
+      const deletedIds = new Set(deletedTasks.map((task) => task.id))
+      const selectedWillClose = !!taskRef.current && deletedIds.has(taskRef.current)
+      try {
+        setError(null)
+        await request('project.delete', { project_id: id })
+
+        const remainingProjects = projectsRef.current.filter((project) => project.id !== id)
+        const nextTasks = { ...tasksRef.current }
+        delete nextTasks[id]
+        projectsRef.current = remainingProjects
+        tasksRef.current = nextTasks
+        setProjects(remainingProjects)
+        setTasksByProject(nextTasks)
+        setStatuses((prev) =>
+          Object.fromEntries(
+            Object.entries(prev).filter(([key]) => ![...deletedIds].some((taskId) => key.startsWith(`${taskId}/`))),
+          ),
+        )
+        setConfigs((prev) =>
+          Object.fromEntries(
+            Object.entries(prev).filter(([key]) => ![...deletedIds].some((taskId) => key.startsWith(`${taskId}/`))),
+          ),
+        )
+        setAgentChoice((prev) =>
+          Object.fromEntries(Object.entries(prev).filter(([key]) => !deletedIds.has(key))),
+        )
+        setWorkingTasks((prev) => {
+          const next = new Set(prev)
+          for (const taskId of deletedIds) next.delete(taskId)
+          return next
+        })
+
+        if (permission && deletedIds.has(permission.request.task_id)) {
+          permission.resolve(null)
+          setPermission(null)
+        }
+        if (!selectedWillClose) return
+        taskRef.current = null
+        setTaskId(null)
+        setMessages([])
+        setEditingMessage(null)
+        setCancelling(false)
+        const nextProject = remainingProjects[0]
+        if (nextProject) await openDraft(nextProject.id, nextTasks[nextProject.id] ?? [])
+      } catch (err) {
+        fail(err)
+        throw err
+      }
+    },
+    [fail, openDraft, permission],
+  )
+
+  const deleteTask = useCallback(
+    async (id: string) => {
+      const task = Object.values(tasksRef.current)
+        .flat()
+        .find((candidate) => candidate.id === id)
+      if (!task) return
+      const selectedWillClose = taskRef.current === id
+      try {
+        setError(null)
+        await request('task.delete', { task_id: id })
+        const remaining = (tasksRef.current[task.project_id] ?? []).filter(
+          (candidate) => candidate.id !== id,
+        )
+        const nextTasks = { ...tasksRef.current, [task.project_id]: remaining }
+        tasksRef.current = nextTasks
+        setTasksByProject(nextTasks)
+        setStatuses((prev) =>
+          Object.fromEntries(Object.entries(prev).filter(([key]) => !key.startsWith(`${id}/`))),
+        )
+        setConfigs((prev) =>
+          Object.fromEntries(Object.entries(prev).filter(([key]) => !key.startsWith(`${id}/`))),
+        )
+        setAgentChoice((prev) => {
+          const next = { ...prev }
+          delete next[id]
+          return next
+        })
+        markTaskWorking(id, false)
+        if (permission?.request.task_id === id) {
+          permission.resolve(null)
+          setPermission(null)
+        }
+        if (!selectedWillClose) return
+        taskRef.current = null
+        setTaskId(null)
+        setMessages([])
+        setEditingMessage(null)
+        setCancelling(false)
+        await openDraft(task.project_id, remaining)
+      } catch (err) {
+        fail(err)
+        throw err
+      }
+    },
+    [fail, markTaskWorking, openDraft, permission],
+  )
+
   const chooseAgent = useCallback(
     (id: AgentId) => setAgentChoice((prev) => ({ ...prev, [taskId ?? NO_TASK]: id })),
     [taskId],
@@ -330,70 +514,270 @@ export function App() {
 
   // Not memoized: the React Compiler lint cannot prove `agent` stable across the
   // attachment handling below, and nothing downstream is memoized anyway.
-  const send = async (text: string, attachments: Attachment[]) => {
+  const send = async (
+    text: string,
+    attachments: Attachment[],
+    interrupt = false,
+  ): Promise<boolean> => {
     const id = taskRef.current
-    if (!agent || !id) return
+    if (!agent || !id) return false
+    const originalTask = currentTask()
+    const firstMessage = isDraft(originalTask)
+    const firstFile = attachments.find((a) => a.type === 'file')
+    const optimisticTitle = text.trim()
+      ? titleFrom(text)
+      : firstFile
+        ? basename(firstFile.path)
+        : 'Image'
+    const optimisticKey = ++optimisticSequence.current
+    const temporaryUserId = `optimistic-user-${optimisticKey}`
+    const temporaryAssistantId = `optimistic-assistant-${optimisticKey}`
+    const now = new Date().toISOString()
+    const parts = partsFrom(text, attachments)
+
+    // Echo the message immediately. Besides feeling faster, this closes the tiny window
+    // where a second Enter could start a concurrent run before chat.send returns.
+    setError(null)
+    setCancelling(false)
+    markTaskWorking(id, true)
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: temporaryUserId,
+        task_id: id,
+        role: 'user',
+        agent,
+        parts,
+        created_at: now,
+        status: 'done',
+      },
+      {
+        id: temporaryAssistantId,
+        task_id: id,
+        role: 'assistant',
+        agent,
+        parts: [],
+        created_at: now,
+        status: 'streaming',
+      },
+    ])
+    if (firstMessage && originalTask) {
+      setTasksByProject((prev) => ({
+        ...prev,
+        [originalTask.project_id]: (prev[originalTask.project_id] ?? []).map((t) =>
+          t.id === id ? { ...t, title: optimisticTitle } : t,
+        ),
+      }))
+    }
+    bumpTask(id, 2)
+
     try {
-      if (isDraft(currentTask())) {
-        // The first message names the chat and makes it appear in the sidebar.
-        const firstFile = attachments.find((a) => a.type === 'file')
-        const title = text.trim()
-          ? titleFrom(text)
-          : firstFile
-            ? basename(firstFile.path)
-            : 'Image'
-        const renamed = await request<Task>('task.rename', { task_id: id, title })
-        setTasksByProject((prev) => ({
-          ...prev,
-          [renamed.project_id]: (prev[renamed.project_id] ?? []).map((t) =>
-            t.id === id ? { ...t, title: renamed.title } : t,
-          ),
-        }))
-      }
       const r = await request<{ user_message_id: string; assistant_message_id: string }>(
         'chat.send',
         attachments.length ? { task_id: id, agent, text, attachments } : { task_id: id, agent, text },
       )
-      const now = new Date().toISOString()
-      const parts: Message['parts'] = [
-        ...(text.trim() ? [{ type: 'text' as const, text }] : []),
-        ...attachments.map((a): Message['parts'][number] =>
-          a.type === 'image'
-            ? { type: 'image', mime_type: a.mime_type, data: a.data }
-            : { type: 'file', path: a.path, name: basename(a.path) },
+      setMessages((prev) =>
+        reconcileSentMessages(
+          prev,
+          temporaryUserId,
+          temporaryAssistantId,
+          r.user_message_id,
+          r.assistant_message_id,
+          agent,
         ),
-      ]
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: r.user_message_id,
-          task_id: id,
-          role: 'user',
-          agent,
-          parts,
-          created_at: now,
-          status: 'done',
-        },
-        {
-          id: r.assistant_message_id,
-          task_id: id,
-          role: 'assistant',
-          agent,
-          parts: [],
-          created_at: now,
-          status: 'streaming',
-        },
-      ])
-      bumpTask(id, 2)
+      )
+      if (interrupt) {
+        // Queue the correction first, then interrupt the active turn. The agent connection
+        // keeps the new Job queued and starts it as soon as cancellation settles.
+        if (permission) {
+          permission.resolve(null)
+          setPermission(null)
+        }
+        void request('chat.cancel', { task_id: id }).catch(fail)
+      }
+      if (firstMessage) {
+        void request<Task>('task.rename', { task_id: id, title: optimisticTitle })
+          .then((renamed) => {
+            setTasksByProject((prev) => ({
+              ...prev,
+              [renamed.project_id]: (prev[renamed.project_id] ?? []).map((t) =>
+                t.id === id ? { ...t, title: renamed.title } : t,
+              ),
+            }))
+          })
+          .catch(fail)
+      }
+      return true
     } catch (err) {
+      setMessages((prev) =>
+        prev.filter((m) => m.id !== temporaryUserId && m.id !== temporaryAssistantId),
+      )
+      if (originalTask) {
+        setTasksByProject((prev) => ({
+          ...prev,
+          [originalTask.project_id]: (prev[originalTask.project_id] ?? []).map((t) =>
+            t.id === id ? originalTask : t,
+          ),
+        }))
+      }
+      markTaskWorking(id, false)
+      fail(err)
+      return false
+    }
+  }
+
+  const reconnectOtherAgents = (id: string, active: AgentId) => {
+    for (const candidate of available) {
+      if (candidate.id === active) continue
+      void request('agent.connect', { task_id: id, agent: candidate.id }).catch(fail)
+    }
+  }
+
+  /** Replace a user turn and replay from there. Later transcript turns are intentionally
+   * replaced; working-tree edits are not rolled back. */
+  const editAndResend = async (
+    source: Message,
+    text: string,
+    attachments: Attachment[],
+  ): Promise<boolean> => {
+    const id = taskRef.current
+    if (!agent || !id || source.task_id !== id) return false
+    const index = messages.findIndex((message) => message.id === source.id)
+    if (index < 0 || source.role !== 'user' || messages.some((m) => m.status === 'streaming')) {
+      return false
+    }
+    const originalMessages = messages
+    const originalTask = currentTask()
+    const prefix = messages.slice(0, index)
+    const optimisticKey = ++optimisticSequence.current
+    // Keep the edited row mounted while the request is in flight so a failed RPC can
+    // restore the exact draft (including attachment changes) instead of resetting it.
+    const temporaryUserId = source.id
+    const temporaryAssistantId = `optimistic-edit-assistant-${optimisticKey}`
+    const now = new Date().toISOString()
+    const parts = partsFrom(text, attachments)
+    const nextMessages: Message[] = [
+      ...prefix,
+      {
+        id: temporaryUserId,
+        task_id: id,
+        role: 'user',
+        agent,
+        parts,
+        created_at: now,
+        status: 'done',
+      },
+      {
+        id: temporaryAssistantId,
+        task_id: id,
+        role: 'assistant',
+        agent,
+        parts: [],
+        created_at: now,
+        status: 'streaming',
+      },
+    ]
+    const firstTurn = prefix.length === 0
+    const firstFile = attachments.find((attachment) => attachment.type === 'file')
+    const nextTitle = firstTurn
+      ? text.trim()
+        ? titleFrom(text)
+        : firstFile
+          ? basename(firstFile.path)
+          : 'Image'
+      : undefined
+
+    setError(null)
+    markTaskWorking(id, true)
+    setMessages(nextMessages)
+    setTaskActivity(id, nextMessages.length, nextTitle)
+    try {
+      const result = await request<{ user_message_id: string; assistant_message_id: string }>(
+        'chat.edit',
+        { task_id: id, message_id: source.id, agent, text, attachments },
+      )
+      setMessages((prev) =>
+        reconcileSentMessages(
+          prev,
+          temporaryUserId,
+          temporaryAssistantId,
+          result.user_message_id,
+          result.assistant_message_id,
+          agent,
+        ),
+      )
+      setEditingMessage(null)
+      reconnectOtherAgents(id, agent)
+      if (nextTitle) {
+        void request<Task>('task.rename', { task_id: id, title: nextTitle }).catch(fail)
+      }
+      return true
+    } catch (err) {
+      markTaskWorking(id, false)
+      setMessages(originalMessages)
+      setTaskActivity(id, originalMessages.length, originalTask?.title)
+      fail(err)
+      return false
+    }
+  }
+
+  const retry = async (source: Message): Promise<void> => {
+    const id = taskRef.current
+    const targetAgent = agent ?? source.agent
+    if (!targetAgent || !id || source.task_id !== id || source.role !== 'assistant') return
+    if (messages.some((message) => message.status === 'streaming')) return
+    const index = messages.findIndex((message) => message.id === source.id)
+    if (index < 1 || messages[index - 1]?.role !== 'user') return
+    const originalMessages = messages
+    const prefix = messages.slice(0, index)
+    const optimisticKey = ++optimisticSequence.current
+    const temporaryAssistantId = `optimistic-retry-assistant-${optimisticKey}`
+    const nextMessages: Message[] = [
+      ...prefix,
+      {
+        id: temporaryAssistantId,
+        task_id: id,
+        role: 'assistant',
+        agent: targetAgent,
+        parts: [],
+        created_at: new Date().toISOString(),
+        status: 'streaming',
+      },
+    ]
+    setError(null)
+    markTaskWorking(id, true)
+    setMessages(nextMessages)
+    setTaskActivity(id, nextMessages.length)
+    try {
+      const result = await request<{ assistant_message_id: string }>('chat.retry', {
+        task_id: id,
+        message_id: source.id,
+        agent: targetAgent,
+      })
+      setMessages((prev) =>
+        reconcileAssistant(prev, temporaryAssistantId, result.assistant_message_id, targetAgent),
+      )
+      reconnectOtherAgents(id, targetAgent)
+    } catch (err) {
+      markTaskWorking(id, false)
+      setMessages(originalMessages)
+      setTaskActivity(id, originalMessages.length)
       fail(err)
     }
   }
 
   const cancel = useCallback(() => {
-    if (!taskId) return
-    request('chat.cancel', { task_id: taskId }).catch(fail)
-  }, [taskId, fail])
+    if (!taskId || cancelling) return
+    setCancelling(true)
+    if (permission) {
+      permission.resolve(null)
+      setPermission(null)
+    }
+    request('chat.cancel', { task_id: taskId }).catch((err) => {
+      setCancelling(false)
+      fail(err)
+    })
+  }, [taskId, cancelling, permission, fail])
 
   const setConfig = useCallback(
     async (target: AgentId, configId: string, value: string | boolean) => {
@@ -446,6 +830,7 @@ export function App() {
         onToggle={toggleSidebar}
         projects={projects}
         tasksByProject={tasksByProject}
+        workingTaskIds={workingTasks}
         selectedTaskId={taskId}
         draft={draft}
         draftProjectId={draftProjectId}
@@ -453,6 +838,10 @@ export function App() {
         onSelectTask={selectTask}
         onSelectProject={selectProject}
         onAddProject={addProject}
+        onRenameProject={renameProject}
+        onDeleteProject={deleteProject}
+        onRenameTask={renameTask}
+        onDeleteTask={deleteTask}
       />
       <main className="main">
         <header
@@ -475,8 +864,15 @@ export function App() {
         <Thread
           messages={messages}
           agents={agents}
+          busy={streaming}
           permission={permission}
           onPermission={resolvePermission}
+          editingMessage={editingMessage}
+          onEdit={setEditingMessage}
+          onCancelEdit={() => setEditingMessage(null)}
+          onSubmitEdit={editAndResend}
+          onRetry={(message) => void retry(message)}
+          onContinue={() => void send('Continue from where you stopped.', [])}
           empty={
             draft ? (
               <div className="hero">
@@ -486,24 +882,28 @@ export function App() {
           }
         />
 
-        <Composer
-          draft={draft}
-          hasChat={task !== null}
-          projects={projects}
-          draftProjectId={draftProjectId}
-          onChooseProject={selectProject}
-          onAddProject={addProject}
-          agents={agents}
-          agent={agent}
-          onAgentChange={chooseAgent}
-          optionsByAgent={optionsByAgent}
-          statusByAgent={statusByAgent}
-          settingConfig={settingConfig}
-          onSetConfig={setConfig}
-          streaming={streaming}
-          onSend={send}
-          onCancel={cancel}
-        />
+        {!editingMessage && (
+          <Composer
+            key={taskId ?? NO_TASK}
+            draft={draft}
+            hasChat={task !== null}
+            projects={projects}
+            draftProjectId={draftProjectId}
+            onChooseProject={selectProject}
+            onAddProject={addProject}
+            agents={agents}
+            agent={agent}
+            onAgentChange={chooseAgent}
+            optionsByAgent={optionsByAgent}
+            statusByAgent={statusByAgent}
+            settingConfig={settingConfig}
+            onSetConfig={setConfig}
+            streaming={streaming}
+            cancelling={cancelling}
+            onSend={send}
+            onCancel={cancel}
+          />
+        )}
 
         {notice && (
           <div className={`toast${coreExited ? ' toast-error' : ''}`} role="alert">
@@ -521,11 +921,12 @@ export function App() {
           </div>
         )}
       </main>
+      <ButtonTooltip />
     </div>
   )
 }
 
-function applyUpdate(prev: Message[], u: ChatUpdate): Message[] {
+function applyUpdate(prev: Message[], u: ChatUpdate, agent: AgentId | null): Message[] {
   const idx = prev.findIndex((m) => m.id === u.message_id)
   if (idx === -1) {
     const parts: Message['parts'] = []
@@ -536,7 +937,7 @@ function applyUpdate(prev: Message[], u: ChatUpdate): Message[] {
         id: u.message_id,
         task_id: u.task_id,
         role: 'assistant',
-        agent: null,
+        agent,
         parts,
         created_at: new Date().toISOString(),
         status: 'streaming',
@@ -549,4 +950,78 @@ function applyUpdate(prev: Message[], u: ChatUpdate): Message[] {
   const next = prev.slice()
   next[idx] = { ...m, parts }
   return next
+}
+
+function applyDone(prev: Message[], d: ChatDone, agent: AgentId | null): Message[] {
+  const idx = prev.findIndex((m) => m.id === d.message_id)
+  if (idx === -1) {
+    return [
+      ...prev,
+      {
+        id: d.message_id,
+        task_id: d.task_id,
+        role: 'assistant',
+        agent,
+        parts: d.status === 'error' && d.error ? [{ type: 'error', message: d.error }] : [],
+        created_at: new Date().toISOString(),
+        status: d.status,
+      },
+    ]
+  }
+  const next = prev.slice()
+  const message = next[idx]
+  const hasError = message.parts.some((part) => part?.type === 'error')
+  const parts =
+    d.status === 'error' && d.error && !hasError
+      ? [...message.parts, { type: 'error' as const, message: d.error }]
+      : message.parts
+  next[idx] = { ...message, status: d.status, parts }
+  return next
+}
+
+/** Merge the optimistic pair with core ids without losing an unusually early update/done. */
+function reconcileSentMessages(
+  prev: Message[],
+  temporaryUserId: string,
+  temporaryAssistantId: string,
+  userMessageId: string,
+  assistantMessageId: string,
+  agent: AgentId,
+): Message[] {
+  const hasRealAssistant = prev.some((m) => m.id === assistantMessageId)
+  return prev
+    .filter((m) => m.id !== temporaryAssistantId || !hasRealAssistant)
+    .map((m) => {
+      if (m.id === temporaryUserId) return { ...m, id: userMessageId }
+      if (m.id === temporaryAssistantId) return { ...m, id: assistantMessageId }
+      if (m.id === assistantMessageId && !m.agent) return { ...m, agent }
+      return m
+    })
+}
+
+function reconcileAssistant(
+  prev: Message[],
+  temporaryAssistantId: string,
+  assistantMessageId: string,
+  agent: AgentId,
+): Message[] {
+  const hasRealAssistant = prev.some((message) => message.id === assistantMessageId)
+  return prev
+    .filter((message) => message.id !== temporaryAssistantId || !hasRealAssistant)
+    .map((message) => {
+      if (message.id === temporaryAssistantId) return { ...message, id: assistantMessageId }
+      if (message.id === assistantMessageId && !message.agent) return { ...message, agent }
+      return message
+    })
+}
+
+function partsFrom(text: string, attachments: Attachment[]): Message['parts'] {
+  return [
+    ...(text.trim() ? [{ type: 'text' as const, text }] : []),
+    ...attachments.map((attachment): Message['parts'][number] =>
+      attachment.type === 'image'
+        ? { type: 'image', mime_type: attachment.mime_type, data: attachment.data }
+        : { type: 'file', path: attachment.path, name: basename(attachment.path) },
+    ),
+  ]
 }

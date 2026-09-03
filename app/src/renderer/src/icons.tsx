@@ -43,6 +43,13 @@ export const IconFolder = (p: Props) => (
   </Svg>
 )
 
+export const IconSearch = (p: Props) => (
+  <Svg {...p}>
+    <circle cx="11" cy="11" r="7" />
+    <path d="m16.2 16.2 4.1 4.1" />
+  </Svg>
+)
+
 export const IconPlus = (p: Props) => (
   <Svg {...p}>
     <path d="M12 5v14M5 12h14" />
@@ -71,6 +78,13 @@ export const IconArrowUp = (p: Props) => (
   </Svg>
 )
 
+export const IconArrowDown = (p: Props) => (
+  <Svg strokeWidth={2} {...p}>
+    <path d="M12 5v14" />
+    <path d="m19 12-7 7-7-7" />
+  </Svg>
+)
+
 export const IconStop = (p: Props) => (
   <Svg {...p}>
     <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none" />
@@ -80,6 +94,26 @@ export const IconStop = (p: Props) => (
 export const IconCheck = (p: Props) => (
   <Svg strokeWidth={2.2} {...p}>
     <path d="m5 12 5 5L20 7" />
+  </Svg>
+)
+
+export const IconCopy = (p: Props) => (
+  <Svg {...p}>
+    <rect x="8" y="8" width="11" height="11" rx="2" />
+    <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+  </Svg>
+)
+
+export const IconRetry = (p: Props) => (
+  <Svg {...p}>
+    <path d="M20 11a8 8 0 1 0-2.3 5.7" />
+    <path d="M20 4v7h-7" />
+  </Svg>
+)
+
+export const IconPlay = (p: Props) => (
+  <Svg {...p}>
+    <path d="m8 5 11 7-11 7Z" />
   </Svg>
 )
 
@@ -111,6 +145,20 @@ export const IconMore = (p: Props) => (
     <circle cx="6" cy="12" r="1.3" fill="currentColor" stroke="none" />
     <circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none" />
     <circle cx="18" cy="12" r="1.3" fill="currentColor" stroke="none" />
+  </Svg>
+)
+
+export const IconSort = (p: Props) => (
+  <Svg {...p}>
+    <path d="M4 7h11M4 12h8M4 17h5" />
+    <path d="m16 14 3 3 3-3M19 17V6" />
+  </Svg>
+)
+
+export const IconTrash = (p: Props) => (
+  <Svg {...p}>
+    <path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13" />
+    <path d="M10 11v5M14 11v5" />
   </Svg>
 )
 

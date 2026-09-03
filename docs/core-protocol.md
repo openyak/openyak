@@ -62,12 +62,16 @@ it only for the mode pill's icon and colour.
 | `agent.list`         | `{}`                                                   | `Agent[]`          |
 | `project.list`       | `{}`                                                   | `Project[]`        |
 | `project.create`     | `{ name: string, path: string }`                       | `Project`          |
+| `project.rename`     | `{ project_id, name }`                                 | `Project`          |
+| `project.delete`     | `{ project_id }`                                       | `{}` — removes the Project and all of its Chats and agent sessions |
 | `task.list`          | `{ project_id }`                                       | `Task[]` (most recently updated first) |
 | `task.create`        | `{ project_id, title }`                                | `Task`             |
 | `task.rename`        | `{ task_id, title }`                                   | `Task`             |
 | `task.delete`        | `{ task_id }`                                          | `{}` — removes the Chat and the task's agent sessions |
 | `chat.history`       | `{ task_id }`                                          | `Message[]`        |
 | `chat.send`          | `{ task_id, agent: AgentId, text, attachments?: Attachment[] }` | `{ user_message_id, assistant_message_id }` |
+| `chat.edit`          | `{ task_id, message_id, agent: AgentId, text, attachments?: Attachment[] }` | `{ user_message_id, assistant_message_id }` |
+| `chat.retry`         | `{ task_id, message_id, agent: AgentId }`              | `{ assistant_message_id }` |
 | `chat.cancel`        | `{ task_id }`                                          | `{}`               |
 | `agent.connect`      | `{ task_id, agent: AgentId }`                          | `{}`               |
 | `agent.set_config`   | `{ task_id, agent: AgentId, config_id: string, value: string \| boolean }` | `{}` |
@@ -76,6 +80,13 @@ it only for the mode pill's icon and colour.
 `chat.send` returns immediately; the assistant reply streams via notifications. A message
 needs text or at least one attachment. Attachments are stored as `image` / `file` Parts of
 the user message and sent to the agent as ACP content blocks after the text.
+
+`chat.edit` rewinds the conversation to the selected user message, replaces that prompt
+(including its attachments), and starts a fresh reply. `chat.retry` rewinds from the
+selected assistant message and runs the preceding user prompt again without duplicating it.
+Both operations require an idle chat, discard later transcript messages, preserve files on
+disk, and start fresh agent sessions so discarded context cannot leak into the replay. Saved
+model, effort, and permission-mode config is reapplied to those fresh sessions.
 
 `agent.connect` starts the agent's adapter and session for the Task if they are not
 running, so that `agent.config` arrives before the first prompt. It returns as soon as

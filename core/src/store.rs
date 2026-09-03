@@ -227,6 +227,37 @@ impl Store {
         })
     }
 
+    /// Rename a Project without changing its folder path.
+    pub fn rename_project(&self, id: &str, name: &str) -> Result<Option<Project>> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE projects SET name = ?1 WHERE id = ?2",
+                params![name, id],
+            )
+        })?;
+        self.get_project(id)
+    }
+
+    /// Delete a Project, all of its Tasks and Chats, and their agent state.
+    pub fn delete_project(&self, id: &str) -> Result<bool> {
+        self.with(|c| {
+            const TASKS: &str = "SELECT id FROM tasks WHERE project_id = ?1";
+            for table in [
+                "agent_cursors",
+                "agent_sessions",
+                "agent_config",
+                "messages",
+            ] {
+                c.execute(
+                    &format!("DELETE FROM {table} WHERE task_id IN ({TASKS})"),
+                    [id],
+                )?;
+            }
+            c.execute("DELETE FROM tasks WHERE project_id = ?1", [id])?;
+            Ok(c.execute("DELETE FROM projects WHERE id = ?1", [id])? > 0)
+        })
+    }
+
     /// Tasks of a Project, most recently updated first.
     pub fn list_tasks(&self, project_id: &str) -> Result<Vec<Task>> {
         self.with(|c| {
@@ -396,6 +427,52 @@ impl Store {
         Ok(())
     }
 
+    /// Remove `message_id` and everything after it from a Task's transcript.
+    ///
+    /// Replaying an earlier turn must not resume an ACP session that still remembers the
+    /// discarded suffix, so session ids and cursors are cleared in the same transaction.
+    /// User-selected config is intentionally kept and will be applied to the fresh session.
+    pub fn truncate_messages_from(&self, task_id: &str, message_id: &str) -> Result<bool> {
+        let changed_at = now();
+        self.with(|c| {
+            let rowid: Option<i64> = c
+                .query_row(
+                    "SELECT rowid FROM messages WHERE id = ?1 AND task_id = ?2",
+                    params![message_id, task_id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let Some(rowid) = rowid else {
+                return Ok(false);
+            };
+
+            c.execute_batch("BEGIN IMMEDIATE")?;
+            let result = (|| {
+                c.execute(
+                    "DELETE FROM messages WHERE task_id = ?1 AND rowid >= ?2",
+                    params![task_id, rowid],
+                )?;
+                c.execute("DELETE FROM agent_cursors WHERE task_id = ?1", [task_id])?;
+                c.execute("DELETE FROM agent_sessions WHERE task_id = ?1", [task_id])?;
+                c.execute(
+                    "UPDATE tasks SET updated_at = ?1 WHERE id = ?2",
+                    params![changed_at, task_id],
+                )?;
+                Ok::<(), rusqlite::Error>(())
+            })();
+            match result {
+                Ok(()) => {
+                    c.execute_batch("COMMIT")?;
+                    Ok(true)
+                }
+                Err(e) => {
+                    let _ = c.execute_batch("ROLLBACK");
+                    Err(e)
+                }
+            }
+        })
+    }
+
     /// Index of the last transcript message this agent has seen, or -1 if none.
     pub fn cursor(&self, task_id: &str, agent: &str) -> Result<i64> {
         self.with(|c| {
@@ -508,6 +585,28 @@ mod tests {
         assert_eq!(t.updated_at, t.created_at);
         assert_eq!(t.message_count, 0);
         assert!(s.get_task("missing").unwrap().is_none());
+    }
+
+    #[test]
+    fn projects_can_be_renamed_and_deleted_with_their_tasks() {
+        let s = Store::in_memory().unwrap();
+        let p = s.create_project("demo", "/tmp/demo").unwrap();
+        let t = s.create_task(&p.id, "chat").unwrap();
+        s.insert_message(&t.id, "user", Some("codex"), &text("hi"), "done")
+            .unwrap();
+        s.begin_session(&t.id, "codex", "session", true).unwrap();
+
+        let renamed = s.rename_project(&p.id, "renamed").unwrap().unwrap();
+        assert_eq!(renamed.name, "renamed");
+        assert_eq!(renamed.path, p.path);
+        assert!(s.rename_project("missing", "x").unwrap().is_none());
+
+        assert!(s.delete_project(&p.id).unwrap());
+        assert!(!s.delete_project(&p.id).unwrap());
+        assert!(s.get_project(&p.id).unwrap().is_none());
+        assert!(s.get_task(&t.id).unwrap().is_none());
+        assert!(s.list_messages(&t.id).unwrap().is_empty());
+        assert!(s.session_id(&t.id, "codex").unwrap().is_none());
     }
 
     #[test]
@@ -671,6 +770,42 @@ mod tests {
         assert_eq!(history[1].status, "cancelled");
         assert_eq!(history[1].parts, text("par"));
         assert_eq!(s.reap_streaming().unwrap(), 0);
+    }
+
+    #[test]
+    fn truncating_a_transcript_clears_runtime_but_keeps_config() {
+        let s = Store::in_memory().unwrap();
+        let p = s.create_project("demo", "/tmp/demo").unwrap();
+        let t = s.create_task(&p.id, "first").unwrap();
+        let first = s
+            .insert_message(&t.id, "user", Some("codex"), &text("one"), "done")
+            .unwrap();
+        let reply = s
+            .insert_message(&t.id, "assistant", Some("codex"), &text("two"), "done")
+            .unwrap();
+        s.insert_message(&t.id, "user", Some("codex"), &text("three"), "done")
+            .unwrap();
+        s.begin_session(&t.id, "codex", "sess", false).unwrap();
+        s.set_cursor(&t.id, "codex", 2).unwrap();
+        s.set_config_value(&t.id, "codex", "model", &Value::from("gpt"))
+            .unwrap();
+
+        assert!(s.truncate_messages_from(&t.id, &reply.id).unwrap());
+        assert_eq!(
+            s.list_messages(&t.id)
+                .unwrap()
+                .into_iter()
+                .map(|m| m.id)
+                .collect::<Vec<_>>(),
+            [first.id]
+        );
+        assert!(s.session_id(&t.id, "codex").unwrap().is_none());
+        assert_eq!(s.cursor(&t.id, "codex").unwrap(), -1);
+        assert_eq!(
+            s.config_values(&t.id, "codex").unwrap(),
+            vec![("model".to_string(), Value::from("gpt"))]
+        );
+        assert!(!s.truncate_messages_from(&t.id, "missing").unwrap());
     }
 
     #[test]
