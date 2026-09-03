@@ -292,6 +292,9 @@ const MODE_OPTION_ID: &str = "mode";
 struct Options {
     config: Vec<SessionConfigOption>,
     modes: Option<SessionModeState>,
+    /// Values an agent advertised but then definitively rejected for this session.
+    /// Keep these across config refreshes so the app cannot immediately retry them.
+    unavailable: HashMap<String, HashMap<String, String>>,
 }
 
 impl Options {
@@ -321,10 +324,59 @@ impl Options {
         }
     }
 
+    fn mark_unavailable(&mut self, config_id: &str, value: &Value, reason: String) {
+        let Some(value) = config_value_key(value) else {
+            return;
+        };
+        self.unavailable
+            .entry(config_id.to_string())
+            .or_default()
+            .insert(value, reason);
+    }
+
+    fn clear_unavailable(&mut self, config_id: &str, value: &Value) {
+        let Some(value) = config_value_key(value) else {
+            return;
+        };
+        if let Some(values) = self.unavailable.get_mut(config_id) {
+            values.remove(&value);
+            if values.is_empty() {
+                self.unavailable.remove(config_id);
+            }
+        }
+    }
+
+    fn decorate_unavailable(&self, config_id: &str, option: &mut Value) {
+        let Some(values) = self.unavailable.get(config_id) else {
+            return;
+        };
+        let Some(options) = option.get_mut("options").and_then(Value::as_array_mut) else {
+            return;
+        };
+        for candidate in options {
+            let Some(value) = candidate.get("value").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(reason) = values.get(value) else {
+                continue;
+            };
+            candidate["disabled"] = json!(true);
+            candidate["disabled_reason"] = json!(reason);
+        }
+    }
+
     /// The options as the app sees them (`agent.config` in docs/core-protocol.md).
     fn to_json(&self) -> Vec<Value> {
         if !self.config.is_empty() {
-            return self.config.iter().map(config_option_json).collect();
+            return self
+                .config
+                .iter()
+                .map(|option| {
+                    let mut value = config_option_json(option);
+                    self.decorate_unavailable(&option.id.0, &mut value);
+                    value
+                })
+                .collect();
         }
         let Some(m) = &self.modes else {
             return vec![];
@@ -340,14 +392,24 @@ impl Options {
                 v
             })
             .collect();
-        vec![json!({
+        let mut mode = json!({
             "id": MODE_OPTION_ID,
             "name": "Mode",
             "category": "mode",
             "type": "select",
             "current_value": &*m.current_mode_id.0,
             "options": options,
-        })]
+        });
+        self.decorate_unavailable(MODE_OPTION_ID, &mut mode);
+        vec![mode]
+    }
+}
+
+fn config_value_key(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => Some(value.clone()),
+        Value::Bool(value) => Some(value.to_string()),
+        _ => None,
     }
 }
 
@@ -666,9 +728,18 @@ impl Connection {
             }
             Ok(())
         };
-        tokio::time::timeout(SET_CONFIG_TIMEOUT, request)
+        let result = tokio::time::timeout(SET_CONFIG_TIMEOUT, request)
             .await
-            .unwrap_or_else(|_| Err(SET_CONFIG_TIMED_OUT.to_string()))?;
+            .unwrap_or_else(|_| Err(SET_CONFIG_TIMED_OUT.to_string()));
+        if let Err(error) = result {
+            if is_definitive_config_rejection(&error) {
+                self.lock_options()
+                    .mark_unavailable(config_id, value, error.clone());
+                self.emit_config();
+            }
+            return Err(error);
+        }
+        self.lock_options().clear_unavailable(config_id, value);
         if let Err(e) =
             self.ctx
                 .store
@@ -955,10 +1026,34 @@ fn enum_str<T: Serialize>(v: &T) -> String {
 }
 
 pub fn error_text(e: &agent_client_protocol::Error) -> String {
+    if let Some(details) = e
+        .data
+        .as_ref()
+        .and_then(|data| data.get("details"))
+        .and_then(Value::as_str)
+    {
+        return details.to_string();
+    }
     match &e.data {
-        Some(d) => format!("{} ({d})", e.message),
+        Some(data) => format!("{} ({data})", e.message),
         None => e.message.clone(),
     }
+}
+
+/// Only disable an advertised value when the response proves it cannot work in this
+/// session. Timeouts, disconnects, and generic internal errors remain retryable.
+fn is_definitive_config_rejection(error: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    [
+        "disabled by settings",
+        "not supported",
+        "unsupported",
+        "option is not available",
+        "mode is not available",
+        "invalid option",
+    ]
+    .iter()
+    .any(|needle| error.contains(needle))
 }
 
 fn chunk_text(block: ContentBlock) -> Option<String> {
@@ -1320,6 +1415,56 @@ mod tests {
                 .as_ref()
                 .map(|m| m.current_mode_id.0.to_string()),
             Some("plan".to_string())
+        );
+    }
+
+    #[test]
+    fn rejected_config_value_stays_disabled_across_agent_refreshes() {
+        let mut options = Options::default();
+        options.set(Some(vec![mode_option("default")]), None);
+        options.mark_unavailable(
+            "mode",
+            &json!("plan"),
+            "Plan mode disabled by settings".to_string(),
+        );
+
+        let rejected = &options.to_json()[0]["options"][1];
+        assert_eq!(rejected["disabled"], true);
+        assert_eq!(
+            rejected["disabled_reason"],
+            "Plan mode disabled by settings"
+        );
+        assert!(options.to_json()[0]["options"][0].get("disabled").is_none());
+
+        // Agents often send a fresh list after a config change. The local rejection
+        // remains attached until a new connection creates a fresh Options value.
+        options.set(Some(vec![mode_option("default")]), None);
+        assert_eq!(options.to_json()[0]["options"][1]["disabled"], true);
+
+        options.clear_unavailable("mode", &json!("plan"));
+        assert!(options.to_json()[0]["options"][1].get("disabled").is_none());
+    }
+
+    #[test]
+    fn only_definitive_config_rejections_disable_a_value() {
+        assert!(is_definitive_config_rejection(
+            "Cannot set permission mode to auto: auto mode disabled by settings"
+        ));
+        assert!(is_definitive_config_rejection(
+            "This mode is not supported by the agent"
+        ));
+        assert!(!is_definitive_config_rejection(SET_CONFIG_TIMED_OUT));
+        assert!(!is_definitive_config_rejection("agent exited"));
+        assert!(!is_definitive_config_rejection("Internal error"));
+    }
+
+    #[test]
+    fn protocol_error_prefers_actionable_details() {
+        let error = agent_client_protocol::Error::new(-32603, "Internal error")
+            .data(json!({ "details": "Cannot set permission mode to auto: auto mode disabled by settings" }));
+        assert_eq!(
+            error_text(&error),
+            "Cannot set permission mode to auto: auto mode disabled by settings"
         );
     }
 }

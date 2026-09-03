@@ -213,6 +213,7 @@ export function ModelPicker({
                               description={isDefault ? o.description : undefined}
                               title={o.description}
                               checked={isCurrent && o.value === m.current_value}
+                              disabled={o.disabled}
                               onSelect={() => pick(o.value)}
                             />
                             {isDefault && <div className="popover-separator" />}

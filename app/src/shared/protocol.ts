@@ -69,6 +69,9 @@ export interface AgentConfigSelectOption {
   name: string
   description?: string
   group?: string
+  /** The agent advertised this value but definitively rejected it for this session. */
+  disabled?: boolean
+  disabled_reason?: string
   /** Agent-provided hint for modes: standard, auto_review, full_access, plan, … */
   kind?: string
 }

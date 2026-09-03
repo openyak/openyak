@@ -45,6 +45,19 @@ const PROJECTLESS_TASKS = '__projectless'
 const SIDEBAR_KEY = 'openyak.sidebar'
 const isMac = navigator.platform.startsWith('Mac')
 
+/** Remove Electron/RPC implementation details before an error reaches the UI. */
+function userErrorMessage(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err)
+  const message = raw
+    .replace(/^Error:\s*/, '')
+    .replace(/^Error invoking remote method 'core:request': Error:\s*/, '')
+    .replace(/\s*\(code -?\d+\)\s*$/, '')
+  if (/auto mode disabled by settings/i.test(message)) {
+    return 'Auto mode is disabled in Claude Code settings.'
+  }
+  return message
+}
+
 function readSidebar(): boolean {
   try {
     return localStorage.getItem(SIDEBAR_KEY) !== 'closed'
@@ -93,7 +106,7 @@ export function App() {
     projectsRef.current = projects
   }, [projects])
 
-  const fail = useCallback((err: unknown) => setError(String(err)), [])
+  const fail = useCallback((err: unknown) => setError(userErrorMessage(err)), [])
 
   const markTaskWorking = useCallback((id: string, working: boolean) => {
     setWorkingTasks((current) => {
@@ -796,6 +809,7 @@ export function App() {
     async (target: AgentId, configId: string, value: string | boolean) => {
       if (!taskId) return
       setSettingConfig(configId)
+      setError(null)
       try {
         await request('agent.set_config', {
           task_id: taskId,
@@ -803,6 +817,7 @@ export function App() {
           config_id: configId,
           value,
         })
+        setError(null)
       } catch (err) {
         fail(err)
       } finally {

@@ -205,6 +205,7 @@ export function Composer({
         description: v.description,
         icon: icons ? modeIcon(v.kind, 15) : undefined,
         checked: v.value === o.current_value,
+        disabled: v.disabled,
         onSelect: () => set(o.id, v.value),
       })
     }

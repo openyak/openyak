@@ -107,7 +107,7 @@ whenever it has to start a fresh session for that pair.
 | `chat.update`   | `{ task_id, message_id, part_index: number, part: Part }` — upsert one part of the streaming assistant message. Text parts are sent whole (accumulated), not as deltas. |
 | `chat.done`     | `{ task_id, message_id, status: "done" \| "error" \| "cancelled", error?: string }` |
 | `agent.status`  | `{ task_id, agent: AgentId, state: "starting" \| "ready" \| "exited", detail?: string }` |
-| `agent.config`  | `{ task_id, agent: AgentId, options: AgentConfigOption[] }` — the agent's session options and their current values. Sent when a session starts or resumes, after every accepted `agent.set_config`, and whenever the agent changes an option itself. Replaces any earlier list for the pair. |
+| `agent.config`  | `{ task_id, agent: AgentId, options: AgentConfigOption[] }` — the agent's session options and their current values. A select value can carry `disabled: true` and `disabled_reason` when the agent advertised but definitively rejected it for this session. Sent when a session starts or resumes, after an accepted `agent.set_config`, after a definitive rejection, and whenever the agent changes an option itself. Replaces any earlier list for the pair. |
 
 ## Requests (core → app)
 
