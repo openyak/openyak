@@ -1,4 +1,14 @@
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+  type RefObject,
+} from 'react'
+import { createPortal } from 'react-dom'
 import { IconCheck, IconChevronDown } from './icons'
 
 export interface MenuItem {
@@ -51,6 +61,135 @@ interface Props {
   plain?: boolean
   /** Put each item's description on the same line as its label. */
   inlineDesc?: boolean
+  /** Use the denser menu treatment for short action lists. */
+  compact?: boolean
+  onOpenChange?: (open: boolean) => void
+}
+
+interface MenuSurfaceProps {
+  entries: MenuEntry[]
+  className?: string
+  inlineDesc?: boolean
+  compact?: boolean
+  style?: CSSProperties
+  surfaceRef?: RefObject<HTMLDivElement | null>
+  autoFocus?: boolean
+  onSelect?: () => void
+}
+
+export function MenuSurface({
+  entries,
+  className,
+  inlineDesc,
+  compact,
+  style,
+  surfaceRef,
+  autoFocus,
+  onSelect,
+}: MenuSurfaceProps) {
+  useEffect(() => {
+    if (!autoFocus) return
+    surfaceRef?.current?.querySelector<HTMLButtonElement>('.popover-item:not(:disabled)')?.focus()
+  }, [autoFocus, surfaceRef])
+
+  return (
+    <div
+      ref={surfaceRef}
+      className={`popover${compact ? ' popover-compact' : ''}${inlineDesc ? ' popover-inline' : ''}${className ? ` ${className}` : ''}`}
+      role="menu"
+      style={style}
+    >
+      {entries.map((entry, index) => {
+        if ('separator' in entry)
+          return <div key={index} className="popover-separator" role="separator" />
+        if ('section' in entry)
+          return (
+            <div key={index} className="popover-section">
+              {entry.section}
+            </div>
+          )
+        return (
+          <button
+            key={entry.id}
+            type="button"
+            role={entry.checked === undefined ? 'menuitem' : 'menuitemradio'}
+            aria-checked={entry.checked === undefined ? undefined : entry.checked}
+            className={`popover-item${entry.checked ? ' checked' : ''}${entry.danger ? ' is-danger' : ''}`}
+            disabled={entry.disabled}
+            onClick={() => {
+              onSelect?.()
+              entry.onSelect?.()
+            }}
+          >
+            {entry.icon && <span className="popover-item-icon">{entry.icon}</span>}
+            <span className="popover-item-body">
+              <span className="popover-item-label">{entry.label}</span>
+              {entry.description && <span className="popover-item-desc">{entry.description}</span>}
+            </span>
+            {entry.checked && <IconCheck size={14} className="popover-item-check" />}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+interface ContextMenuProps {
+  entries: MenuEntry[]
+  x: number
+  y: number
+  className?: string
+  compact?: boolean
+  autoFocus?: boolean
+  onClose: () => void
+}
+
+/** A menu surface positioned at the pointer and kept inside the viewport. */
+export function ContextMenu({
+  entries,
+  x,
+  y,
+  className,
+  compact,
+  autoFocus,
+  onClose,
+}: ContextMenuProps) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [position, setPosition] = useState({ left: x, top: y })
+  useDismiss(ref, true, onClose)
+
+  useLayoutEffect(() => {
+    const rect = ref.current?.getBoundingClientRect()
+    if (!rect) return
+    const gutter = 8
+    setPosition({
+      left: Math.max(gutter, Math.min(x, window.innerWidth - rect.width - gutter)),
+      top: Math.max(gutter, Math.min(y, window.innerHeight - rect.height - gutter)),
+    })
+  }, [x, y])
+
+  useEffect(() => {
+    const dismiss = () => onClose()
+    window.addEventListener('resize', dismiss)
+    window.addEventListener('scroll', dismiss, true)
+    return () => {
+      window.removeEventListener('resize', dismiss)
+      window.removeEventListener('scroll', dismiss, true)
+    }
+  }, [onClose])
+
+  return createPortal(
+    <MenuSurface
+      entries={entries}
+      compact={compact}
+      className={`popover-context${className ? ` ${className}` : ''}`}
+      style={position}
+      surfaceRef={ref}
+      autoFocus={autoFocus}
+      onSelect={onClose}
+    />,
+    document.body,
+  )
 }
 
 /**
@@ -69,62 +208,43 @@ export function Menu({
   ariaLabel,
   plain,
   inlineDesc,
+  compact,
+  onOpenChange,
 }: Props) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
-  useDismiss(ref, open, () => setOpen(false))
+  const updateOpen = useCallback(
+    (next: boolean) => {
+      setOpen(next)
+      onOpenChange?.(next)
+    },
+    [onOpenChange],
+  )
+  useDismiss(ref, open, () => updateOpen(false))
 
   return (
     <div className={`menu${className ? ` ${className}` : ''}`} ref={ref}>
       <button
         type="button"
         className={`${triggerClassName}${open ? ' pill-open' : ''}`}
-        title={title}
+        title={open ? undefined : title}
         aria-label={ariaLabel}
         aria-haspopup="menu"
         aria-expanded={open}
         disabled={disabled}
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => updateOpen(!open)}
       >
         {trigger}
         {!plain && <IconChevronDown size={12} className="pill-chevron" />}
       </button>
       {open && (
-        <div
-          className={`popover popover-${side} popover-${align}${inlineDesc ? ' popover-inline' : ''}`}
-          role="menu"
-        >
-          {entries.map((e, i) => {
-            if ('separator' in e) return <div key={i} className="popover-separator" />
-            if ('section' in e)
-              return (
-                <div key={i} className="popover-section">
-                  {e.section}
-                </div>
-              )
-            return (
-              <button
-                key={e.id}
-                type="button"
-                role={e.checked === undefined ? 'menuitem' : 'menuitemradio'}
-                aria-checked={e.checked === undefined ? undefined : e.checked}
-                className={`popover-item${e.checked ? ' checked' : ''}${e.danger ? ' is-danger' : ''}`}
-                disabled={e.disabled}
-                onClick={() => {
-                  setOpen(false)
-                  e.onSelect?.()
-                }}
-              >
-                {e.icon && <span className="popover-item-icon">{e.icon}</span>}
-                <span className="popover-item-body">
-                  <span className="popover-item-label">{e.label}</span>
-                  {e.description && <span className="popover-item-desc">{e.description}</span>}
-                </span>
-                {e.checked && <IconCheck size={14} className="popover-item-check" />}
-              </button>
-            )
-          })}
-        </div>
+        <MenuSurface
+          entries={entries}
+          compact={compact}
+          inlineDesc={inlineDesc}
+          className={`popover-${side} popover-${align}`}
+          onSelect={() => updateOpen(false)}
+        />
       )}
     </div>
   )

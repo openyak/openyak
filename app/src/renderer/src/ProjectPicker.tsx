@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import type { Project } from '../../shared/protocol'
 import { useDismiss } from './Menu'
-import { IconCheck, IconFolder, IconPlus, IconSearch } from './icons'
+import { IconCheck, IconClose, IconFolder, IconPlus, IconSearch } from './icons'
 
 interface Props {
   projects: Project[]
   selectedId: string | null
-  onChoose: (id: string) => void
+  onChoose: (id: string | null) => void
   onAdd: () => void
 }
 
@@ -37,7 +37,7 @@ export function ProjectPicker({ projects, selectedId, onChoose, onAdd }: Props) 
       )
     : projects
 
-  const choose = (id: string) => {
+  const choose = (id: string | null) => {
     close()
     if (id !== selectedId) onChoose(id)
   }
@@ -135,7 +135,17 @@ export function ProjectPicker({ projects, selectedId, onChoose, onAdd }: Props) 
             )}
           </div>
 
-          {projects.length > 0 && <div className="popover-separator project-separator" />}
+          <div className="popover-separator project-separator" />
+          <button
+            type="button"
+            aria-pressed={selectedId === null}
+            className={`project-action${selectedId === null ? ' checked' : ''}`}
+            onClick={() => choose(null)}
+          >
+            <IconClose size={16} />
+            <span>Don&apos;t work in a project</span>
+            {selectedId === null && <IconCheck size={15} className="project-check" />}
+          </button>
           <button
             type="button"
             className="project-action"

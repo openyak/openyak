@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
 use crate::agents::{self, Job};
-use crate::store::{Part, Project, Task};
+use crate::store::{Part, Task};
 use crate::Ctx;
 
 /// Sender of complete JSON lines to the app; a single writer task drains it to stdout.
@@ -75,6 +75,10 @@ struct ProjectId {
     project_id: String,
 }
 #[derive(Deserialize)]
+struct TaskList {
+    project_id: Option<String>,
+}
+#[derive(Deserialize)]
 struct TaskId {
     task_id: String,
 }
@@ -90,7 +94,7 @@ struct ProjectRename {
 }
 #[derive(Deserialize)]
 struct TaskCreate {
-    project_id: String,
+    project_id: Option<String>,
     title: String,
 }
 #[derive(Deserialize)]
@@ -190,7 +194,7 @@ async fn handle(ctx: &Arc<Ctx>, method: &str, params: Value) -> Result<Value, Rp
         "project.delete" => {
             let p: ProjectId = parse(params)?;
             // Sessions serving any Chat in this Project go with it.
-            for task in store.list_tasks(&p.project_id)? {
+            for task in store.list_tasks(Some(&p.project_id))? {
                 ctx.agents.drop_task(&task.id);
             }
             if !store.delete_project(&p.project_id)? {
@@ -199,15 +203,17 @@ async fn handle(ctx: &Arc<Ctx>, method: &str, params: Value) -> Result<Value, Rp
             json!({})
         }
         "task.list" => {
-            let p: ProjectId = parse(params)?;
-            json!(store.list_tasks(&p.project_id)?)
+            let p: TaskList = parse(params)?;
+            json!(store.list_tasks(p.project_id.as_deref())?)
         }
         "task.create" => {
             let p: TaskCreate = parse(params)?;
-            if store.get_project(&p.project_id)?.is_none() {
-                return Err(RpcError::invalid_params("unknown project_id"));
+            if let Some(project_id) = p.project_id.as_deref() {
+                if store.get_project(project_id)?.is_none() {
+                    return Err(RpcError::invalid_params("unknown project_id"));
+                }
             }
-            json!(store.create_task(&p.project_id, &p.title)?)
+            json!(store.create_task(p.project_id.as_deref(), &p.title)?)
         }
         "task.rename" => {
             let p: TaskRename = parse(params)?;
@@ -248,8 +254,8 @@ async fn handle(ctx: &Arc<Ctx>, method: &str, params: Value) -> Result<Value, Rp
         }
         "agent.connect" => {
             let p: TaskAgent = parse(params)?;
-            let (task, project) = locate(ctx, &p.task_id, &p.agent)?;
-            ctx.agents.connect(ctx, &task.id, &p.agent, &project.path);
+            let (task, cwd) = locate(ctx, &p.task_id, &p.agent)?;
+            ctx.agents.connect(ctx, &task.id, &p.agent, &cwd);
             json!({})
         }
         "agent.set_config" => {
@@ -278,8 +284,8 @@ async fn handle(ctx: &Arc<Ctx>, method: &str, params: Value) -> Result<Value, Rp
     Ok(v)
 }
 
-/// The Task and its Project for a `(task, agent)` request, after validating the agent id.
-fn locate(ctx: &Arc<Ctx>, task_id: &str, agent: &str) -> Result<(Task, Project), RpcError> {
+/// The Task and its working directory for a `(task, agent)` request.
+fn locate(ctx: &Arc<Ctx>, task_id: &str, agent: &str) -> Result<(Task, String), RpcError> {
     if !agents::is_known(agent) {
         return Err(RpcError::invalid_params(format!("unknown agent: {agent}")));
     }
@@ -287,16 +293,21 @@ fn locate(ctx: &Arc<Ctx>, task_id: &str, agent: &str) -> Result<(Task, Project),
         .store
         .get_task(task_id)?
         .ok_or_else(|| RpcError::invalid_params("unknown task_id"))?;
-    let project = ctx
-        .store
-        .get_project(&task.project_id)?
-        .ok_or_else(|| RpcError::invalid_params("task has no project"))?;
-    Ok((task, project))
+    let cwd = match task.project_id.as_deref() {
+        Some(project_id) => {
+            ctx.store
+                .get_project(project_id)?
+                .ok_or_else(|| RpcError::invalid_params("task references an unknown project"))?
+                .path
+        }
+        None => ctx.projectless_dir.clone(),
+    };
+    Ok((task, cwd))
 }
 
 async fn chat_send(ctx: &Arc<Ctx>, p: ChatSend) -> Result<Value, RpcError> {
     let store = &ctx.store;
-    let (task, project) = locate(ctx, &p.task_id, &p.agent)?;
+    let (task, cwd) = locate(ctx, &p.task_id, &p.agent)?;
 
     let parts = message_parts(p.text, p.attachments)?;
     let user = store.insert_message(&task.id, "user", Some(&p.agent), &parts, "done")?;
@@ -308,7 +319,7 @@ async fn chat_send(ctx: &Arc<Ctx>, p: ChatSend) -> Result<Value, RpcError> {
         ctx,
         &task.id,
         &p.agent,
-        &project.path,
+        &cwd,
         Job {
             user_message_id: user.id.clone(),
             assistant_message_id: assistant.id.clone(),
@@ -322,7 +333,7 @@ async fn chat_send(ctx: &Arc<Ctx>, p: ChatSend) -> Result<Value, RpcError> {
 /// behavior, not a source-control rollback.
 async fn chat_edit(ctx: &Arc<Ctx>, p: ChatEdit) -> Result<Value, RpcError> {
     let store = &ctx.store;
-    let (task, project) = locate(ctx, &p.task_id, &p.agent)?;
+    let (task, cwd) = locate(ctx, &p.task_id, &p.agent)?;
     let transcript = replayable_transcript(store.list_messages(&task.id)?)?;
     let target = transcript
         .iter()
@@ -346,7 +357,7 @@ async fn chat_edit(ctx: &Arc<Ctx>, p: ChatEdit) -> Result<Value, RpcError> {
         ctx,
         &task.id,
         &p.agent,
-        &project.path,
+        &cwd,
         Job {
             user_message_id: user.id.clone(),
             assistant_message_id: assistant.id.clone(),
@@ -358,7 +369,7 @@ async fn chat_edit(ctx: &Arc<Ctx>, p: ChatEdit) -> Result<Value, RpcError> {
 /// Retry a terminal assistant turn without duplicating the user prompt above it.
 async fn chat_retry(ctx: &Arc<Ctx>, p: ChatRetry) -> Result<Value, RpcError> {
     let store = &ctx.store;
-    let (task, project) = locate(ctx, &p.task_id, &p.agent)?;
+    let (task, cwd) = locate(ctx, &p.task_id, &p.agent)?;
     let transcript = replayable_transcript(store.list_messages(&task.id)?)?;
     let index = transcript
         .iter()
@@ -387,7 +398,7 @@ async fn chat_retry(ctx: &Arc<Ctx>, p: ChatRetry) -> Result<Value, RpcError> {
         ctx,
         &task.id,
         &p.agent,
-        &project.path,
+        &cwd,
         Job {
             user_message_id,
             assistant_message_id: assistant.id.clone(),

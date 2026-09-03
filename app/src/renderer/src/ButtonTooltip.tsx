@@ -72,7 +72,13 @@ export function ButtonTooltip() {
 
   useEffect(() => {
     const schedule = (button: HTMLButtonElement, delay: number) => {
-      if (button.dataset.tooltipIgnore === 'true') return
+      if (
+        button.dataset.tooltipIgnore === 'true' ||
+        button.closest('.popover, [role="menu"], [role="listbox"]')
+      ) {
+        dismiss()
+        return
+      }
       const text = buttonTooltip(button)
       if (!text) return
 

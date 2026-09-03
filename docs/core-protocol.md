@@ -18,7 +18,7 @@ type AgentId = "claude" | "codex";          // more later
 
 interface Agent   { id: AgentId; name: string; available: boolean; command: string }
 interface Project { id: string; name: string; path: string; created_at: string }
-interface Task    { id: string; project_id: string; title: string; created_at: string; updated_at: string;
+interface Task    { id: string; project_id: string | null; title: string; created_at: string; updated_at: string;
                     message_count: number }   // 0 = a chat that has not started
 interface Message {
   id: string; task_id: string; role: "user" | "assistant";
@@ -64,8 +64,8 @@ it only for the mode pill's icon and colour.
 | `project.create`     | `{ name: string, path: string }`                       | `Project`          |
 | `project.rename`     | `{ project_id, name }`                                 | `Project`          |
 | `project.delete`     | `{ project_id }`                                       | `{}` — removes the Project and all of its Chats and agent sessions |
-| `task.list`          | `{ project_id }`                                       | `Task[]` (most recently updated first) |
-| `task.create`        | `{ project_id, title }`                                | `Task`             |
+| `task.list`          | `{ project_id: string \| null }`                        | `Task[]` (most recently updated first) |
+| `task.create`        | `{ project_id: string \| null, title }`                 | `Task`             |
 | `task.rename`        | `{ task_id, title }`                                   | `Task`             |
 | `task.delete`        | `{ task_id }`                                          | `{}` — removes the Chat and the task's agent sessions |
 | `chat.history`       | `{ task_id }`                                          | `Message[]`        |

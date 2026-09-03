@@ -36,6 +36,8 @@ pub struct Ctx {
     pub store: Store,
     pub out: Outbound,
     pub agents: AgentPool,
+    /// Neutral workspace used by Chats that are not attached to a Project.
+    pub projectless_dir: String,
     permissions: Mutex<HashMap<String, oneshot::Sender<Option<String>>>>,
 }
 
@@ -91,6 +93,9 @@ async fn run() -> Result<()> {
     let args = Args::parse();
     std::fs::create_dir_all(&args.data_dir)
         .with_context(|| format!("create {}", args.data_dir.display()))?;
+    let projectless_dir = args.data_dir.join("projectless");
+    std::fs::create_dir_all(&projectless_dir)
+        .with_context(|| format!("create {}", projectless_dir.display()))?;
     let store = Store::open(&args.data_dir.join("openyak.db"))?;
 
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<String>();
@@ -108,6 +113,7 @@ async fn run() -> Result<()> {
         store,
         out: Outbound(out_tx),
         agents: AgentPool::default(),
+        projectless_dir: projectless_dir.to_string_lossy().into_owned(),
         permissions: Mutex::default(),
     });
 

@@ -41,6 +41,7 @@ function pairKey(taskId: string, agent: AgentId): string {
 const isDraft = (t: Task | null | undefined): boolean => !!t && t.message_count === 0
 
 const NO_TASK = '__none'
+const PROJECTLESS_TASKS = '__projectless'
 const SIDEBAR_KEY = 'openyak.sidebar'
 const isMac = navigator.platform.startsWith('Mac')
 
@@ -50,6 +51,10 @@ function readSidebar(): boolean {
   } catch {
     return true
   }
+}
+
+function taskBucket(projectId: string | null): string {
+  return projectId ?? PROJECTLESS_TASKS
 }
 
 export function App() {
@@ -100,9 +105,9 @@ export function App() {
     })
   }, [])
 
-  const loadTasks = useCallback(async (projectId: string): Promise<Task[]> => {
+  const loadTasks = useCallback(async (projectId: string | null): Promise<Task[]> => {
     const t = await request<Task[]>('task.list', { project_id: projectId })
-    setTasksByProject((prev) => ({ ...prev, [projectId]: t }))
+    setTasksByProject((prev) => ({ ...prev, [taskBucket(projectId)]: t }))
     return t
   }, [])
 
@@ -111,8 +116,9 @@ export function App() {
    * the project has none. Its sessions come up right away, so the picker shows real
    * models and effort levels before anything is sent.
    */
-  const openDraft = useCallback(async (projectId: string, known?: Task[]) => {
-    const list = known ?? tasksRef.current[projectId] ?? []
+  const openDraft = useCallback(async (projectId: string | null, known?: Task[]) => {
+    const bucket = taskBucket(projectId)
+    const list = known ?? tasksRef.current[bucket] ?? []
     let task = list.find((t) => t.message_count === 0) ?? null
     if (!task) {
       const created = await request<Task>('task.create', {
@@ -122,7 +128,7 @@ export function App() {
       task = created
       setTasksByProject((prev) => ({
         ...prev,
-        [projectId]: [created, ...(prev[projectId] ?? [])],
+        [bucket]: [created, ...(prev[bucket] ?? [])],
       }))
     }
     taskRef.current = task.id
@@ -136,9 +142,10 @@ export function App() {
       .flat()
       .find((t) => t.id === id)
     if (!task || !isDraft(task)) return
+    const bucket = taskBucket(task.project_id)
     setTasksByProject((prev) => ({
       ...prev,
-      [task.project_id]: (prev[task.project_id] ?? []).filter((t) => t.id !== task.id),
+      [bucket]: (prev[bucket] ?? []).filter((t) => t.id !== task.id),
     }))
     request('task.delete', { task_id: task.id }).catch(() => {})
   }, [])
@@ -153,8 +160,11 @@ export function App() {
     request<Project[]>('project.list')
       .then(async (ps) => {
         setProjects(ps)
-        const lists = await Promise.all(ps.map((p) => loadTasks(p.id)))
-        if (ps[0]) await openDraft(ps[0].id, lists[0])
+        const [projectless] = await Promise.all([
+          loadTasks(null),
+          ...ps.map((p) => loadTasks(p.id)),
+        ])
+        await openDraft(null, projectless)
       })
       .catch(fail)
   }, [fail, loadTasks, openDraft])
@@ -327,12 +337,11 @@ export function App() {
 
   const newChat = useCallback(() => {
     const current = currentTask()
-    if (isDraft(current)) return
-    const pid = current?.project_id ?? projectsRef.current[0]?.id
-    if (!pid) return
+    if (isDraft(current) && current?.project_id === null) return
+    dropIfDraft(taskRef.current)
     setEditingMessage(null)
-    void openDraft(pid).catch(fail)
-  }, [currentTask, openDraft, fail])
+    void openDraft(null).catch(fail)
+  }, [currentTask, dropIfDraft, openDraft, fail])
 
   const selectTask = useCallback(
     (id: string) => {
@@ -347,7 +356,7 @@ export function App() {
   )
 
   const selectProject = useCallback(
-    (pid: string) => {
+    (pid: string | null) => {
       const current = currentTask()
       if (current && isDraft(current) && current.project_id === pid) return
       dropIfDraft(taskRef.current)
@@ -391,9 +400,10 @@ export function App() {
       try {
         setError(null)
         const renamed = await request<Task>('task.rename', { task_id: id, title })
+        const bucket = taskBucket(renamed.project_id)
         setTasksByProject((prev) => ({
           ...prev,
-          [renamed.project_id]: (prev[renamed.project_id] ?? []).map((task) =>
+          [bucket]: (prev[bucket] ?? []).map((task) =>
             task.id === id ? renamed : task,
           ),
         }))
@@ -450,8 +460,7 @@ export function App() {
         setMessages([])
         setEditingMessage(null)
         setCancelling(false)
-        const nextProject = remainingProjects[0]
-        if (nextProject) await openDraft(nextProject.id, nextTasks[nextProject.id] ?? [])
+        await openDraft(null, nextTasks[PROJECTLESS_TASKS] ?? [])
       } catch (err) {
         fail(err)
         throw err
@@ -466,14 +475,15 @@ export function App() {
         .flat()
         .find((candidate) => candidate.id === id)
       if (!task) return
+      const bucket = taskBucket(task.project_id)
       const selectedWillClose = taskRef.current === id
       try {
         setError(null)
         await request('task.delete', { task_id: id })
-        const remaining = (tasksRef.current[task.project_id] ?? []).filter(
+        const remaining = (tasksRef.current[bucket] ?? []).filter(
           (candidate) => candidate.id !== id,
         )
-        const nextTasks = { ...tasksRef.current, [task.project_id]: remaining }
+        const nextTasks = { ...tasksRef.current, [bucket]: remaining }
         tasksRef.current = nextTasks
         setTasksByProject(nextTasks)
         setStatuses((prev) =>
@@ -562,9 +572,10 @@ export function App() {
       },
     ])
     if (firstMessage && originalTask) {
+      const bucket = taskBucket(originalTask.project_id)
       setTasksByProject((prev) => ({
         ...prev,
-        [originalTask.project_id]: (prev[originalTask.project_id] ?? []).map((t) =>
+        [bucket]: (prev[bucket] ?? []).map((t) =>
           t.id === id ? { ...t, title: optimisticTitle } : t,
         ),
       }))
@@ -598,9 +609,10 @@ export function App() {
       if (firstMessage) {
         void request<Task>('task.rename', { task_id: id, title: optimisticTitle })
           .then((renamed) => {
+            const bucket = taskBucket(renamed.project_id)
             setTasksByProject((prev) => ({
               ...prev,
-              [renamed.project_id]: (prev[renamed.project_id] ?? []).map((t) =>
+              [bucket]: (prev[bucket] ?? []).map((t) =>
                 t.id === id ? { ...t, title: renamed.title } : t,
               ),
             }))
@@ -613,9 +625,10 @@ export function App() {
         prev.filter((m) => m.id !== temporaryUserId && m.id !== temporaryAssistantId),
       )
       if (originalTask) {
+        const bucket = taskBucket(originalTask.project_id)
         setTasksByProject((prev) => ({
           ...prev,
-          [originalTask.project_id]: (prev[originalTask.project_id] ?? []).map((t) =>
+          [bucket]: (prev[bucket] ?? []).map((t) =>
             t.id === id ? originalTask : t,
           ),
         }))
@@ -813,7 +826,7 @@ export function App() {
         .find((t) => t.id === taskId) ?? null)
     : null
   const draft = !task || isDraft(task)
-  const draftProjectId = draft ? (task?.project_id ?? projects[0]?.id ?? null) : null
+  const draftProjectId = draft ? (task?.project_id ?? null) : null
   const optionsByAgent: Partial<Record<AgentId, AgentConfigOption[] | null>> = taskId
     ? Object.fromEntries(available.map((a) => [a.id, configs[pairKey(taskId, a.id)] ?? null]))
     : {}
@@ -836,7 +849,6 @@ export function App() {
         draftProjectId={draftProjectId}
         onNewChat={newChat}
         onSelectTask={selectTask}
-        onSelectProject={selectProject}
         onAddProject={addProject}
         onRenameProject={renameProject}
         onDeleteProject={deleteProject}

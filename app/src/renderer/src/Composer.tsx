@@ -50,11 +50,11 @@ function modeIcon(kind: string | undefined, size = 15) {
 interface Props {
   /** The chat has no messages yet: the project can still be changed. */
   draft: boolean
-  /** A chat (task) exists to attach sessions to; false only with no projects. */
+  /** A chat (task) exists to attach sessions to. */
   hasChat: boolean
   projects: Project[]
   draftProjectId: string | null
-  onChooseProject: (id: string) => void
+  onChooseProject: (id: string | null) => void
   onAddProject: () => void
   agents: Agent[]
   agent: AgentId | null
@@ -108,9 +108,9 @@ export function Composer({
 
   const agentInfo = agents.find((a) => a.id === agent) ?? null
   const noAgent = !agents.some((a) => a.available)
-  const needsProject = !hasChat
+  const needsChat = !hasChat
   const hasContent = text.trim().length > 0 || attachments.length > 0
-  const canSend = !noAgent && !submitting && !needsProject && hasContent
+  const canSend = !noAgent && !submitting && !needsChat && hasContent
 
   const submit = () => {
     if (!canSend || submittingRef.current) return
@@ -424,8 +424,8 @@ export function Composer({
                 disabled={!canSend}
                 onClick={submit}
                 title={
-                  needsProject
-                    ? 'Choose a project first'
+                  needsChat
+                    ? 'Start a new chat first'
                     : streaming
                       ? 'Interrupt and send'
                       : 'Send message'

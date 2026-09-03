@@ -18,7 +18,8 @@ export interface Project {
 
 export interface Task {
   id: string
-  project_id: string
+  /** Null when the chat is not attached to a project. */
+  project_id: string | null
   title: string
   created_at: string
   /** Last time a message was added or finished; task lists are sorted by it. */

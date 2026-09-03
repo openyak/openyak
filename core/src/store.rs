@@ -21,7 +21,7 @@ pub struct Project {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
     pub id: String,
-    pub project_id: String,
+    pub project_id: Option<String>,
     pub title: String,
     pub created_at: String,
     /// Last time a Message was added or finished; what the app sorts Tasks by.
@@ -85,7 +85,7 @@ const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS projects (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS tasks (
-    id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+    id TEXT PRIMARY KEY, project_id TEXT REFERENCES projects(id),
     title TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS messages (
     id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id),
@@ -118,6 +118,30 @@ fn migrate(conn: &Connection) -> Result<()> {
         conn.execute_batch(
             "ALTER TABLE tasks ADD COLUMN updated_at TEXT NOT NULL DEFAULT '';
              UPDATE tasks SET updated_at = created_at WHERE updated_at = '';",
+        )?;
+    }
+
+    let project_id_is_required = conn
+        .prepare("PRAGMA table_info(tasks)")?
+        .query_map([], |r| Ok((r.get::<_, String>(1)?, r.get::<_, i64>(3)?)))?
+        .filter_map(Result::ok)
+        .any(|(name, not_null)| name == "project_id" && not_null != 0);
+    if project_id_is_required {
+        // SQLite cannot remove a NOT NULL constraint in place. Foreign keys are disabled
+        // only for the table rebuild; the replacement keeps the same parent relationship.
+        conn.execute_batch(
+            "PRAGMA foreign_keys=OFF;
+             BEGIN IMMEDIATE;
+             CREATE TABLE tasks_new (
+                 id TEXT PRIMARY KEY, project_id TEXT REFERENCES projects(id),
+                 title TEXT NOT NULL, created_at TEXT NOT NULL,
+                 updated_at TEXT NOT NULL DEFAULT '');
+             INSERT INTO tasks_new (id, project_id, title, created_at, updated_at)
+                 SELECT id, project_id, title, created_at, updated_at FROM tasks;
+             DROP TABLE tasks;
+             ALTER TABLE tasks_new RENAME TO tasks;
+             COMMIT;
+             PRAGMA foreign_keys=ON;",
         )?;
     }
     Ok(())
@@ -258,13 +282,14 @@ impl Store {
         })
     }
 
-    /// Tasks of a Project, most recently updated first.
-    pub fn list_tasks(&self, project_id: &str) -> Result<Vec<Task>> {
+    /// Tasks of a Project (or projectless Tasks), most recently updated first.
+    pub fn list_tasks(&self, project_id: Option<&str>) -> Result<Vec<Task>> {
         self.with(|c| {
             c.prepare(
                 "SELECT id, project_id, title, created_at, updated_at, \
                  (SELECT COUNT(*) FROM messages m WHERE m.task_id = t.id) \
-                 FROM tasks t WHERE project_id = ?1 ORDER BY updated_at DESC, rowid DESC",
+                 FROM tasks t WHERE project_id = ?1 OR (project_id IS NULL AND ?1 IS NULL) \
+                 ORDER BY updated_at DESC, rowid DESC",
             )?
             .query_map([project_id], |r| {
                 Ok(Task {
@@ -280,11 +305,11 @@ impl Store {
         })
     }
 
-    pub fn create_task(&self, project_id: &str, title: &str) -> Result<Task> {
+    pub fn create_task(&self, project_id: Option<&str>, title: &str) -> Result<Task> {
         let created_at = now();
         let t = Task {
             id: new_id(),
-            project_id: project_id.to_string(),
+            project_id: project_id.map(str::to_string),
             title: title.to_string(),
             updated_at: created_at.clone(),
             created_at,
@@ -580,18 +605,30 @@ mod tests {
         let p = s.create_project("demo", "/tmp/demo").unwrap();
         assert_eq!(s.list_projects().unwrap().len(), 1);
         assert_eq!(s.get_project(&p.id).unwrap().unwrap().path, "/tmp/demo");
-        let t = s.create_task(&p.id, "first").unwrap();
-        assert_eq!(s.list_tasks(&p.id).unwrap()[0].id, t.id);
+        let t = s.create_task(Some(&p.id), "first").unwrap();
+        assert_eq!(s.list_tasks(Some(&p.id)).unwrap()[0].id, t.id);
         assert_eq!(t.updated_at, t.created_at);
         assert_eq!(t.message_count, 0);
         assert!(s.get_task("missing").unwrap().is_none());
     }
 
     #[test]
+    fn projectless_tasks_roundtrip_separately_from_project_tasks() {
+        let s = Store::in_memory().unwrap();
+        let p = s.create_project("demo", "/tmp/demo").unwrap();
+        let project_task = s.create_task(Some(&p.id), "in project").unwrap();
+        let projectless_task = s.create_task(None, "no project").unwrap();
+
+        assert_eq!(projectless_task.project_id, None);
+        assert_eq!(s.list_tasks(None).unwrap()[0].id, projectless_task.id);
+        assert_eq!(s.list_tasks(Some(&p.id)).unwrap()[0].id, project_task.id);
+    }
+
+    #[test]
     fn projects_can_be_renamed_and_deleted_with_their_tasks() {
         let s = Store::in_memory().unwrap();
         let p = s.create_project("demo", "/tmp/demo").unwrap();
-        let t = s.create_task(&p.id, "chat").unwrap();
+        let t = s.create_task(Some(&p.id), "chat").unwrap();
         s.insert_message(&t.id, "user", Some("codex"), &text("hi"), "done")
             .unwrap();
         s.begin_session(&t.id, "codex", "session", true).unwrap();
@@ -613,13 +650,13 @@ mod tests {
     fn tasks_count_messages_and_can_be_renamed_and_deleted() {
         let s = Store::in_memory().unwrap();
         let p = s.create_project("demo", "/tmp/demo").unwrap();
-        let t = s.create_task(&p.id, "New chat").unwrap();
+        let t = s.create_task(Some(&p.id), "New chat").unwrap();
         s.insert_message(&t.id, "user", Some("codex"), &text("hi"), "done")
             .unwrap();
         s.insert_message(&t.id, "assistant", Some("codex"), &[], "streaming")
             .unwrap();
         assert_eq!(s.get_task(&t.id).unwrap().unwrap().message_count, 2);
-        assert_eq!(s.list_tasks(&p.id).unwrap()[0].message_count, 2);
+        assert_eq!(s.list_tasks(Some(&p.id)).unwrap()[0].message_count, 2);
 
         let renamed = s.rename_task(&t.id, "say hi").unwrap().unwrap();
         assert_eq!(renamed.title, "say hi");
@@ -656,7 +693,7 @@ mod tests {
         .unwrap();
         let s = Store::init(conn).unwrap();
         let ids: Vec<String> = s
-            .list_tasks("p")
+            .list_tasks(Some("p"))
             .unwrap()
             .into_iter()
             .map(|t| t.id)
@@ -669,11 +706,11 @@ mod tests {
     fn tasks_list_most_recently_updated_first() {
         let s = Store::in_memory().unwrap();
         let p = s.create_project("demo", "/tmp/demo").unwrap();
-        let a = s.create_task(&p.id, "a").unwrap();
-        let b = s.create_task(&p.id, "b").unwrap();
+        let a = s.create_task(Some(&p.id), "a").unwrap();
+        let b = s.create_task(Some(&p.id), "b").unwrap();
         // Newest first when nothing has happened yet.
         let ids: Vec<String> = s
-            .list_tasks(&p.id)
+            .list_tasks(Some(&p.id))
             .unwrap()
             .into_iter()
             .map(|t| t.id)
@@ -683,7 +720,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(2));
         s.insert_message(&a.id, "user", Some("codex"), &text("hi"), "done")
             .unwrap();
-        let listed = s.list_tasks(&p.id).unwrap();
+        let listed = s.list_tasks(Some(&p.id)).unwrap();
         assert_eq!(listed[0].id, a.id);
         assert!(listed[0].updated_at > listed[0].created_at);
         // Finishing a reply bumps it too.
@@ -692,7 +729,7 @@ mod tests {
             .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(2));
         s.finish_message(&reply.id, &text("done"), "done").unwrap();
-        assert_eq!(s.list_tasks(&p.id).unwrap()[0].id, b.id);
+        assert_eq!(s.list_tasks(Some(&p.id)).unwrap()[0].id, b.id);
     }
 
     #[test]
@@ -711,14 +748,19 @@ mod tests {
         let t = s.get_task("t").unwrap().unwrap();
         assert_eq!(t.updated_at, "2026-01-02T00:00:00.000Z");
         assert_eq!(t.message_count, 1);
-        assert_eq!(s.list_tasks("p").unwrap().len(), 1);
+        assert_eq!(s.list_tasks(Some("p")).unwrap().len(), 1);
+
+        let projectless = s.create_task(None, "no project").unwrap();
+        assert_eq!(projectless.project_id, None);
+        assert_eq!(s.list_tasks(None).unwrap()[0].id, projectless.id);
+        assert!(s.create_task(Some("missing"), "invalid").is_err());
     }
 
     #[test]
     fn messages_keep_order_and_parts() {
         let s = Store::in_memory().unwrap();
         let p = s.create_project("demo", "/tmp/demo").unwrap();
-        let t = s.create_task(&p.id, "first").unwrap();
+        let t = s.create_task(Some(&p.id), "first").unwrap();
         let u = s
             .insert_message(&t.id, "user", Some("claude"), &text("hi"), "done")
             .unwrap();
@@ -753,7 +795,7 @@ mod tests {
     fn streaming_messages_are_reaped_on_open() {
         let s = Store::in_memory().unwrap();
         let p = s.create_project("demo", "/tmp/demo").unwrap();
-        let t = s.create_task(&p.id, "first").unwrap();
+        let t = s.create_task(Some(&p.id), "first").unwrap();
         s.insert_message(&t.id, "user", Some("claude"), &text("hi"), "done")
             .unwrap();
         s.insert_message(
@@ -776,7 +818,7 @@ mod tests {
     fn truncating_a_transcript_clears_runtime_but_keeps_config() {
         let s = Store::in_memory().unwrap();
         let p = s.create_project("demo", "/tmp/demo").unwrap();
-        let t = s.create_task(&p.id, "first").unwrap();
+        let t = s.create_task(Some(&p.id), "first").unwrap();
         let first = s
             .insert_message(&t.id, "user", Some("codex"), &text("one"), "done")
             .unwrap();
