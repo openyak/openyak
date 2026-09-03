@@ -45,9 +45,10 @@ v2 is an alpha. It runs, it is not yet polished, and the shape will change. What
   (via `@agentclientprotocol/codex-acp`), selectable per message
 - Streaming text, thoughts, tool calls, and permission prompts from the agent
 - Agent handoff: switch agents inside a task and keep the context
+- The agent's own session options (model, reasoning effort, permission mode, …) in the
+  chat header, exactly as the agent exposes them, remembered per task
 
-Not yet: model picker inside an agent, packaged installers, Grok and other agents, Linux
-and Windows testing.
+Not yet: packaged installers, Grok and other agents, Linux and Windows testing.
 
 ## Run it
 

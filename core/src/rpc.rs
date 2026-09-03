@@ -7,8 +7,7 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
 use crate::agents::{self, Job};
-use crate::handoff;
-use crate::store::Part;
+use crate::store::{Part, Project, Task};
 use crate::Ctx;
 
 /// Sender of complete JSON lines to the app; a single writer task drains it to stdout.
@@ -52,14 +51,18 @@ impl RpcError {
             message: message.into(),
         }
     }
+
+    fn failed(message: impl Into<String>) -> Self {
+        Self {
+            code: -32000,
+            message: message.into(),
+        }
+    }
 }
 
 impl From<anyhow::Error> for RpcError {
     fn from(e: anyhow::Error) -> Self {
-        Self {
-            code: -32000,
-            message: format!("{e:#}"),
-        }
+        Self::failed(format!("{e:#}"))
     }
 }
 
@@ -86,10 +89,22 @@ struct TaskCreate {
     title: String,
 }
 #[derive(Deserialize)]
+struct TaskAgent {
+    task_id: String,
+    agent: String,
+}
+#[derive(Deserialize)]
 struct ChatSend {
     task_id: String,
     agent: String,
     text: String,
+}
+#[derive(Deserialize)]
+struct AgentSetConfig {
+    task_id: String,
+    agent: String,
+    config_id: String,
+    value: Value,
 }
 #[derive(Deserialize)]
 struct PermissionRespond {
@@ -138,6 +153,21 @@ async fn handle(ctx: &Arc<Ctx>, method: &str, params: Value) -> Result<Value, Rp
             ctx.agents.cancel(&p.task_id);
             json!({})
         }
+        "agent.connect" => {
+            let p: TaskAgent = parse(params)?;
+            let (task, project) = locate(ctx, &p.task_id, &p.agent)?;
+            ctx.agents.connect(ctx, &task.id, &p.agent, &project.path);
+            json!({})
+        }
+        "agent.set_config" => {
+            let p: AgentSetConfig = parse(params)?;
+            locate(ctx, &p.task_id, &p.agent)?;
+            ctx.agents
+                .set_config(&p.task_id, &p.agent, &p.config_id, p.value)
+                .await
+                .map_err(RpcError::failed)?;
+            json!({})
+        }
         "permission.respond" => {
             let p: PermissionRespond = parse(params)?;
             if !ctx.resolve_permission(&p.request_id, p.option_id) {
@@ -155,20 +185,25 @@ async fn handle(ctx: &Arc<Ctx>, method: &str, params: Value) -> Result<Value, Rp
     Ok(v)
 }
 
-async fn chat_send(ctx: &Arc<Ctx>, p: ChatSend) -> Result<Value, RpcError> {
-    let store = &ctx.store;
-    if !agents::is_known(&p.agent) {
-        return Err(RpcError::invalid_params(format!(
-            "unknown agent: {}",
-            p.agent
-        )));
+/// The Task and its Project for a `(task, agent)` request, after validating the agent id.
+fn locate(ctx: &Arc<Ctx>, task_id: &str, agent: &str) -> Result<(Task, Project), RpcError> {
+    if !agents::is_known(agent) {
+        return Err(RpcError::invalid_params(format!("unknown agent: {agent}")));
     }
-    let task = store
-        .get_task(&p.task_id)?
+    let task = ctx
+        .store
+        .get_task(task_id)?
         .ok_or_else(|| RpcError::invalid_params("unknown task_id"))?;
-    let project = store
+    let project = ctx
+        .store
         .get_project(&task.project_id)?
         .ok_or_else(|| RpcError::invalid_params("task has no project"))?;
+    Ok((task, project))
+}
+
+async fn chat_send(ctx: &Arc<Ctx>, p: ChatSend) -> Result<Value, RpcError> {
+    let store = &ctx.store;
+    let (task, project) = locate(ctx, &p.task_id, &p.agent)?;
 
     let user = store.insert_message(
         &task.id,
@@ -177,21 +212,18 @@ async fn chat_send(ctx: &Arc<Ctx>, p: ChatSend) -> Result<Value, RpcError> {
         &[Part::Text { text: p.text }],
         "done",
     )?;
-    let transcript = store.list_messages(&task.id)?;
-    let cursor = store.cursor(&task.id, &p.agent)?;
-    let prompt = handoff::build_prompt(&transcript, cursor, &user);
-    store.set_cursor(&task.id, &p.agent, handoff::end_cursor(&transcript))?;
-
     let assistant =
         store.insert_message(&task.id, "assistant", Some(&p.agent), &[], "streaming")?;
+    // The prompt text (handoff + message) is assembled by the agent connection once it
+    // knows which session it is talking to; see agents::Connection::build_prompt.
     ctx.agents.send(
         ctx,
         &task.id,
         &p.agent,
         &project.path,
         Job {
-            message_id: assistant.id.clone(),
-            prompt,
+            user_message_id: user.id.clone(),
+            assistant_message_id: assistant.id.clone(),
         },
     );
     Ok(json!({ "user_message_id": user.id, "assistant_message_id": assistant.id }))

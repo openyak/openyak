@@ -41,6 +41,32 @@ export type Part =
   | { type: 'tool_call'; id: string; title: string; kind: string; status: string; output?: string }
   | { type: 'error'; message: string }
 
+// A session config option exactly as the agent advertises it (model, effort, mode, …).
+// The app renders these and passes choices straight back; it never interprets them.
+
+interface AgentConfigOptionBase {
+  id: string
+  name: string
+  description?: string
+  category?: string
+}
+
+export interface AgentConfigSelectOption {
+  value: string
+  name: string
+  description?: string
+  group?: string
+}
+
+export type AgentConfigOption =
+  | (AgentConfigOptionBase & {
+      type: 'select'
+      current_value: string
+      options: AgentConfigSelectOption[]
+    })
+  | (AgentConfigOptionBase & { type: 'boolean'; current_value: boolean })
+  | (AgentConfigOptionBase & { type: 'unknown' })
+
 // Notifications (core → app)
 
 export interface ChatUpdate {
@@ -64,10 +90,17 @@ export interface AgentStatus {
   detail?: string
 }
 
+export interface AgentConfig {
+  task_id: string
+  agent: AgentId
+  options: AgentConfigOption[]
+}
+
 export type Notification =
   | { method: 'chat.update'; params: ChatUpdate }
   | { method: 'chat.done'; params: ChatDone }
   | { method: 'agent.status'; params: AgentStatus }
+  | { method: 'agent.config'; params: AgentConfig }
   | { method: string; params: unknown }
 
 // Requests (core → app)

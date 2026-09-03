@@ -1,4 +1,6 @@
-//! SQLite transcript store: Projects, Tasks, Messages, and per-(task, agent) cursors.
+//! SQLite transcript store: Projects, Tasks, Messages, and the per-(task, agent) runtime
+//! state that makes agent switching work: the transcript cursor, the native ACP session id,
+//! and the config values the user picked.
 
 use std::path::Path;
 use std::sync::Mutex;
@@ -6,6 +8,7 @@ use std::sync::Mutex;
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
@@ -78,6 +81,12 @@ CREATE INDEX IF NOT EXISTS messages_task ON messages(task_id);
 CREATE TABLE IF NOT EXISTS agent_cursors (
     task_id TEXT NOT NULL, agent TEXT NOT NULL, last_seen_message_index INTEGER NOT NULL,
     PRIMARY KEY (task_id, agent));
+CREATE TABLE IF NOT EXISTS agent_sessions (
+    task_id TEXT NOT NULL, agent TEXT NOT NULL, session_id TEXT NOT NULL,
+    PRIMARY KEY (task_id, agent));
+CREATE TABLE IF NOT EXISTS agent_config (
+    task_id TEXT NOT NULL, agent TEXT NOT NULL, config_id TEXT NOT NULL, value TEXT NOT NULL,
+    PRIMARY KEY (task_id, agent, config_id));
 ";
 
 pub struct Store {
@@ -98,14 +107,27 @@ impl Store {
     fn init(conn: Connection) -> Result<Self> {
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
         conn.execute_batch(SCHEMA)?;
-        Ok(Self {
+        let store = Self {
             conn: Mutex::new(conn),
-        })
+        };
+        store.reap_streaming()?;
+        Ok(store)
     }
 
     fn with<T>(&self, f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         Ok(f(&conn)?)
+    }
+
+    /// A Message still `streaming` when core starts belonged to a previous process; nothing
+    /// will ever finish it, so mark it cancelled rather than leave it live forever.
+    pub fn reap_streaming(&self) -> Result<usize> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE messages SET status = 'cancelled' WHERE status = 'streaming'",
+                [],
+            )
+        })
     }
 
     pub fn list_projects(&self) -> Result<Vec<Project>> {
@@ -301,6 +323,74 @@ impl Store {
         })?;
         Ok(())
     }
+
+    /// The native ACP session id last used for `(task, agent)`, if any.
+    pub fn session_id(&self, task_id: &str, agent: &str) -> Result<Option<String>> {
+        self.with(|c| {
+            c.query_row(
+                "SELECT session_id FROM agent_sessions WHERE task_id = ?1 AND agent = ?2",
+                [task_id, agent],
+                |r| r.get(0),
+            )
+            .optional()
+        })
+    }
+
+    /// Record the ACP session now serving `(task, agent)`. A `fresh` session has no memory
+    /// of the Chat, so the cursor is reset: the next prompt carries the whole transcript.
+    /// A resumed session keeps its cursor.
+    pub fn begin_session(
+        &self,
+        task_id: &str,
+        agent: &str,
+        session_id: &str,
+        fresh: bool,
+    ) -> Result<()> {
+        self.with(|c| {
+            c.execute(
+                "INSERT INTO agent_sessions (task_id, agent, session_id) VALUES (?1, ?2, ?3) \
+                 ON CONFLICT(task_id, agent) DO UPDATE SET session_id = excluded.session_id",
+                params![task_id, agent, session_id],
+            )
+        })?;
+        if fresh {
+            self.set_cursor(task_id, agent, -1)?;
+        }
+        Ok(())
+    }
+
+    /// Config values the user picked for `(task, agent)`, in the order they were first set.
+    pub fn config_values(&self, task_id: &str, agent: &str) -> Result<Vec<(String, Value)>> {
+        self.with(|c| {
+            c.prepare(
+                "SELECT config_id, value FROM agent_config WHERE task_id = ?1 AND agent = ?2 ORDER BY rowid",
+            )?
+            .query_map([task_id, agent], |r| {
+                let id: String = r.get(0)?;
+                let raw: String = r.get(1)?;
+                Ok((id, serde_json::from_str(&raw).unwrap_or(Value::Null)))
+            })?
+            .collect()
+        })
+    }
+
+    pub fn set_config_value(
+        &self,
+        task_id: &str,
+        agent: &str,
+        config_id: &str,
+        value: &Value,
+    ) -> Result<()> {
+        let raw = serde_json::to_string(value)?;
+        self.with(|c| {
+            c.execute(
+                "INSERT INTO agent_config (task_id, agent, config_id, value) VALUES (?1, ?2, ?3, ?4) \
+                 ON CONFLICT(task_id, agent, config_id) DO UPDATE SET value = excluded.value",
+                params![task_id, agent, config_id, raw],
+            )
+        })?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -358,6 +448,29 @@ mod tests {
     }
 
     #[test]
+    fn streaming_messages_are_reaped_on_open() {
+        let s = Store::in_memory().unwrap();
+        let p = s.create_project("demo", "/tmp/demo").unwrap();
+        let t = s.create_task(&p.id, "first").unwrap();
+        s.insert_message(&t.id, "user", Some("claude"), &text("hi"), "done")
+            .unwrap();
+        s.insert_message(
+            &t.id,
+            "assistant",
+            Some("claude"),
+            &text("par"),
+            "streaming",
+        )
+        .unwrap();
+        assert_eq!(s.reap_streaming().unwrap(), 1);
+        let history = s.list_messages(&t.id).unwrap();
+        assert_eq!(history[0].status, "done");
+        assert_eq!(history[1].status, "cancelled");
+        assert_eq!(history[1].parts, text("par"));
+        assert_eq!(s.reap_streaming().unwrap(), 0);
+    }
+
+    #[test]
     fn cursor_defaults_and_upserts() {
         let s = Store::in_memory().unwrap();
         assert_eq!(s.cursor("t", "claude").unwrap(), -1);
@@ -366,5 +479,51 @@ mod tests {
         s.set_cursor("t", "claude", 5).unwrap();
         assert_eq!(s.cursor("t", "claude").unwrap(), 5);
         assert_eq!(s.cursor("t", "codex").unwrap(), -1);
+    }
+
+    #[test]
+    fn fresh_session_resets_cursor_resumed_keeps_it() {
+        let s = Store::in_memory().unwrap();
+        assert!(s.session_id("t", "claude").unwrap().is_none());
+        s.set_cursor("t", "claude", 4).unwrap();
+
+        s.begin_session("t", "claude", "sess-1", true).unwrap();
+        assert_eq!(
+            s.session_id("t", "claude").unwrap().as_deref(),
+            Some("sess-1")
+        );
+        assert_eq!(s.cursor("t", "claude").unwrap(), -1);
+
+        s.set_cursor("t", "claude", 6).unwrap();
+        s.begin_session("t", "claude", "sess-1", false).unwrap();
+        assert_eq!(s.cursor("t", "claude").unwrap(), 6);
+
+        s.begin_session("t", "claude", "sess-2", true).unwrap();
+        assert_eq!(
+            s.session_id("t", "claude").unwrap().as_deref(),
+            Some("sess-2")
+        );
+        assert_eq!(s.cursor("t", "claude").unwrap(), -1);
+        assert!(s.session_id("t", "codex").unwrap().is_none());
+    }
+
+    #[test]
+    fn config_values_upsert_and_keep_first_set_order() {
+        let s = Store::in_memory().unwrap();
+        assert!(s.config_values("t", "codex").unwrap().is_empty());
+        s.set_config_value("t", "codex", "model", &Value::from("gpt-5.5"))
+            .unwrap();
+        s.set_config_value("t", "codex", "fast-mode", &Value::from(true))
+            .unwrap();
+        s.set_config_value("t", "codex", "model", &Value::from("gpt-5.4"))
+            .unwrap();
+        assert_eq!(
+            s.config_values("t", "codex").unwrap(),
+            vec![
+                ("model".to_string(), Value::from("gpt-5.4")),
+                ("fast-mode".to_string(), Value::from(true)),
+            ]
+        );
+        assert!(s.config_values("t", "claude").unwrap().is_empty());
     }
 }
