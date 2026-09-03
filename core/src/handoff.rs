@@ -3,20 +3,35 @@
 
 use crate::store::{Message, Part};
 
-/// Messages after `cursor` (the index of the last message the agent saw, -1 if none),
-/// excluding `exclude_id` (the user message that is the prompt itself).
-pub fn missed<'a>(transcript: &'a [Message], cursor: i64, exclude_id: &str) -> Vec<&'a Message> {
+/// Position of the user message that is the prompt itself; the transcript length if it
+/// is somehow missing (nothing is excluded then).
+fn prompt_index(transcript: &[Message], user_message_id: &str) -> usize {
+    transcript
+        .iter()
+        .position(|m| m.id == user_message_id)
+        .unwrap_or(transcript.len())
+}
+
+/// Messages the agent has not seen: those after `cursor` (the index of the last message it
+/// saw, -1 if none) and before the user message that is the prompt itself. The prompt and
+/// anything appended after it (the streaming placeholder for the reply) never count.
+pub fn missed<'a>(
+    transcript: &'a [Message],
+    cursor: i64,
+    user_message_id: &str,
+) -> Vec<&'a Message> {
+    let end = prompt_index(transcript, user_message_id);
     transcript
         .iter()
         .enumerate()
-        .filter(|(i, m)| *i as i64 > cursor && m.id != exclude_id)
+        .filter(|(i, _)| (*i as i64) > cursor && *i < end)
         .map(|(_, m)| m)
         .collect()
 }
 
-/// Cursor value that marks the whole transcript as seen.
-pub fn end_cursor(transcript: &[Message]) -> i64 {
-    transcript.len() as i64 - 1
+/// Cursor value once the agent has been given everything up to and including the prompt.
+pub fn seen_through(transcript: &[Message], user_message_id: &str) -> i64 {
+    prompt_index(transcript, user_message_id) as i64
 }
 
 pub fn render(missed: &[&Message]) -> String {
@@ -75,6 +90,14 @@ mod tests {
         }
     }
 
+    fn placeholder(id: &str, agent: &str) -> Message {
+        Message {
+            parts: vec![],
+            status: "streaming".into(),
+            ..msg(id, "assistant", Some(agent), "")
+        }
+    }
+
     #[test]
     fn fresh_agent_gets_whole_prior_transcript() {
         let transcript = vec![
@@ -88,7 +111,7 @@ mod tests {
             "<handoff>\nYou are continuing a task. Earlier turns were handled by another assistant.\n\
              Treat them as the conversation so far.\n\n[user] hello\n\n[assistant · codex] hi there\n\n</handoff>\n\ncontinue"
         );
-        assert_eq!(end_cursor(&transcript), 2);
+        assert_eq!(seen_through(&transcript, "u2"), 2);
     }
 
     #[test]
@@ -119,6 +142,43 @@ mod tests {
         assert!(prompt.contains("[assistant · codex] four"));
         assert!(!prompt.contains("one"));
         assert!(prompt.ends_with("</handoff>\n\nfive"));
+    }
+
+    #[test]
+    fn reply_placeholder_after_prompt_is_never_handed_off() {
+        // The prompt is built after the streaming placeholder for the reply exists.
+        let transcript = vec![
+            msg("u1", "user", Some("codex"), "one"),
+            msg("a1", "assistant", Some("codex"), "two"),
+            msg("u2", "user", Some("claude"), "three"),
+            placeholder("a2", "claude"),
+        ];
+        let ids: Vec<&str> = missed(&transcript, -1, "u2")
+            .iter()
+            .map(|m| m.id.as_str())
+            .collect();
+        assert_eq!(ids, ["u1", "a1"]);
+        let prompt = build_prompt(&transcript, -1, &transcript[2]);
+        assert!(prompt.ends_with("[assistant · codex] two\n\n</handoff>\n\nthree"));
+        // The agent has seen through the prompt, not the placeholder.
+        assert_eq!(seen_through(&transcript, "u2"), 2);
+    }
+
+    #[test]
+    fn cursor_reset_after_restart_replays_everything_once() {
+        // Before a restart the agent had seen index 1; the fresh session gets cursor -1
+        // (see Store::begin_session), so the whole earlier thread is replayed exactly once.
+        let transcript = vec![
+            msg("u1", "user", Some("claude"), "one"),
+            msg("a1", "assistant", Some("claude"), "two"),
+            msg("u2", "user", Some("claude"), "three"),
+            placeholder("a2", "claude"),
+        ];
+        assert_eq!(build_prompt(&transcript, 1, &transcript[2]), "three");
+        let replayed = build_prompt(&transcript, -1, &transcript[2]);
+        assert!(replayed.contains("[user] one"));
+        assert!(replayed.contains("[assistant · claude] two"));
+        assert!(replayed.ends_with("</handoff>\n\nthree"));
     }
 
     #[test]

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   Agent,
+  AgentConfig,
+  AgentConfigOption,
   AgentId,
   AgentStatus,
   ChatDone,
@@ -26,6 +28,11 @@ function basename(p: string): string {
   return parts[parts.length - 1] || p
 }
 
+/** Key for state kept per (task, agent) pair: agent status and session options. */
+function pairKey(taskId: string, agent: AgentId): string {
+  return `${taskId}/${agent}`
+}
+
 export function App() {
   const [agents, setAgents] = useState<Agent[]>([])
   const [projects, setProjects] = useState<Project[]>([])
@@ -33,7 +40,11 @@ export function App() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [taskId, setTaskId] = useState<string | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
-  const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null)
+  // The agent explicitly picked per task; otherwise the task's last-used agent applies.
+  const [agentChoice, setAgentChoice] = useState<Record<string, AgentId>>({})
+  const [statuses, setStatuses] = useState<Record<string, AgentStatus>>({})
+  const [configs, setConfigs] = useState<Record<string, AgentConfigOption[]>>({})
+  const [settingConfig, setSettingConfig] = useState<string | null>(null)
   const [permission, setPermission] = useState<PendingPermission | null>(null)
   const [coreExited, setCoreExited] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -108,7 +119,20 @@ export function App() {
         }
         case 'agent.status': {
           const s = n.params as AgentStatus
-          if (s.task_id === taskRef.current) setAgentStatus(s)
+          setStatuses((prev) => ({ ...prev, [pairKey(s.task_id, s.agent)]: s }))
+          if (s.state === 'exited') {
+            // Options belong to the session that just went away.
+            setConfigs((prev) => {
+              const next = { ...prev }
+              delete next[pairKey(s.task_id, s.agent)]
+              return next
+            })
+          }
+          return
+        }
+        case 'agent.config': {
+          const c = n.params as AgentConfig
+          setConfigs((prev) => ({ ...prev, [pairKey(c.task_id, c.agent)]: c.options }))
           return
         }
       }
@@ -130,18 +154,38 @@ export function App() {
     }
   }, [])
 
+  // The agent the next message goes to: the explicit pick for this task, else the agent
+  // that last served it, else the first one installed.
+  const available = agents.filter((a) => a.available)
+  const isAvailable = (id: AgentId | null | undefined): id is AgentId =>
+    !!id && available.some((a) => a.id === id)
+  const chosen = taskId ? agentChoice[taskId] : undefined
+  const lastUsed = [...messages].reverse().find((m) => isAvailable(m.agent))?.agent
+  const agent: AgentId | null = !taskId
+    ? null
+    : isAvailable(chosen)
+      ? chosen
+      : isAvailable(lastUsed)
+        ? lastUsed
+        : (available[0]?.id ?? null)
+
+  // Bring the agent's session up as soon as it is selected, so its options are known
+  // before the first prompt.
+  useEffect(() => {
+    if (!taskId || !agent) return
+    request('agent.connect', { task_id: taskId, agent }).catch(fail)
+  }, [taskId, agent, fail])
+
   const selectProject = useCallback((id: string) => {
     setProjectId(id)
     setTaskId(null)
     setTasks([])
     setMessages([])
-    setAgentStatus(null)
   }, [])
 
   const selectTask = useCallback((id: string) => {
     setTaskId(id)
     setMessages([])
-    setAgentStatus(null)
   }, [])
 
   const addProject = useCallback(async () => {
@@ -170,9 +214,16 @@ export function App() {
     [projectId, selectTask, fail],
   )
 
+  const chooseAgent = useCallback(
+    (id: AgentId) => {
+      if (taskId) setAgentChoice((prev) => ({ ...prev, [taskId]: id }))
+    },
+    [taskId],
+  )
+
   const send = useCallback(
-    async (agent: AgentId, text: string) => {
-      if (!taskId) return
+    async (text: string) => {
+      if (!taskId || !agent) return
       try {
         const r = await request<{ user_message_id: string; assistant_message_id: string }>(
           'chat.send',
@@ -204,13 +255,28 @@ export function App() {
         fail(err)
       }
     },
-    [taskId, fail],
+    [taskId, agent, fail],
   )
 
   const cancel = useCallback(() => {
     if (!taskId) return
     request('chat.cancel', { task_id: taskId }).catch(fail)
   }, [taskId, fail])
+
+  const setConfig = useCallback(
+    async (configId: string, value: string | boolean) => {
+      if (!taskId || !agent) return
+      setSettingConfig(configId)
+      try {
+        await request('agent.set_config', { task_id: taskId, agent, config_id: configId, value })
+      } catch (err) {
+        fail(err)
+      } finally {
+        setSettingConfig(null)
+      }
+    },
+    [taskId, agent, fail],
+  )
 
   const resolvePermission = useCallback(
     (optionId: string | null) => {
@@ -222,6 +288,9 @@ export function App() {
 
   const project = projects.find((p) => p.id === projectId) ?? null
   const task = tasks.find((t) => t.id === taskId) ?? null
+  const pair = taskId && agent ? pairKey(taskId, agent) : null
+  const status = pair ? (statuses[pair] ?? null) : null
+  const options = pair ? (configs[pair] ?? null) : null
 
   return (
     <div className="app">
@@ -242,6 +311,12 @@ export function App() {
         <Chat
           task={task}
           agents={agents}
+          agent={agent}
+          onAgentChange={chooseAgent}
+          options={options}
+          status={status}
+          settingConfig={settingConfig}
+          onSetConfig={setConfig}
           messages={messages}
           permission={permission}
           onSend={send}
@@ -259,8 +334,8 @@ export function App() {
         </div>
       )}
       <div className="statusline">
-        {agentStatus
-          ? `${agentStatus.agent}: ${agentStatus.state}${agentStatus.detail ? ` — ${agentStatus.detail}` : ''}`
+        {status
+          ? `${status.agent}: ${status.state}${status.detail ? ` — ${status.detail}` : ''}`
           : task
             ? 'idle'
             : ''}

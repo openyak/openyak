@@ -1,21 +1,27 @@
 //! ACP agent pool: one adapter process + session per (task, agent), driven lazily.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use agent_client_protocol::schema::v1::{
-    CancelNotification, ContentBlock, InitializeRequest, NewSessionRequest, PermissionOption,
-    PromptRequest, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
-    SelectedPermissionOutcome, SessionNotification, SessionUpdate, StopReason, TextContent,
-    ToolCall, ToolCallContent, ToolCallUpdate,
+    CancelNotification, ContentBlock, InitializeRequest, LoadSessionRequest, NewSessionRequest,
+    PermissionOption, PromptRequest, RequestPermissionOutcome, RequestPermissionRequest,
+    RequestPermissionResponse, SelectedPermissionOutcome, SessionConfigId, SessionConfigKind,
+    SessionConfigOption, SessionConfigOptionCategory, SessionConfigOptionValue,
+    SessionConfigSelectOption, SessionConfigSelectOptions, SessionConfigValueId, SessionId,
+    SessionModeId, SessionModeState, SessionNotification, SessionUpdate,
+    SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason, TextContent, ToolCall,
+    ToolCallContent, ToolCallUpdate,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{AcpAgent, Agent, Client, ConnectionTo};
 use serde::Serialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{info, warn};
 
+use crate::handoff;
 use crate::store::{new_id, Part};
 use crate::Ctx;
 
@@ -84,15 +90,25 @@ pub fn list() -> Vec<AgentInfo> {
         .collect()
 }
 
+/// A prompt to serve: the user Message to send and the assistant Message to stream into.
 pub struct Job {
-    pub message_id: String,
-    pub prompt: String,
+    pub user_message_id: String,
+    pub assistant_message_id: String,
+}
+
+enum Command {
+    Prompt(Job),
+    SetConfig {
+        config_id: String,
+        value: Value,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
 }
 
 struct Handle {
     generation: u64,
     task_id: String,
-    jobs: mpsc::UnboundedSender<Job>,
+    commands: mpsc::UnboundedSender<Command>,
     cancel: mpsc::UnboundedSender<()>,
 }
 
@@ -102,21 +118,28 @@ pub struct AgentPool {
     next_generation: Mutex<u64>,
 }
 
+/// How long a config change may take before the app is told the agent did not answer.
+const SET_CONFIG_TIMEOUT: Duration = Duration::from_secs(30);
+const SET_CONFIG_TIMED_OUT: &str = "agent did not answer in time";
+
 impl AgentPool {
-    /// Queue a prompt for `(task, agent)`, spawning the adapter on first use.
-    pub fn send(&self, ctx: &Arc<Ctx>, task_id: &str, agent: &str, cwd: &str, job: Job) {
+    /// The command channel for `(task, agent)`, spawning the adapter on first use or after
+    /// the previous one exited.
+    fn ensure(
+        &self,
+        ctx: &Arc<Ctx>,
+        task_id: &str,
+        agent: &str,
+        cwd: &str,
+    ) -> mpsc::UnboundedSender<Command> {
         let key = (task_id.to_string(), agent.to_string());
         let mut handles = self.handles.lock().unwrap_or_else(|e| e.into_inner());
-        let job = match handles.get(&key) {
-            Some(h) => match h.jobs.send(job) {
-                Ok(()) => return,
-                Err(mpsc::error::SendError(job)) => {
-                    handles.remove(&key);
-                    job
-                }
-            },
-            None => job,
-        };
+        if let Some(h) = handles.get(&key) {
+            if !h.commands.is_closed() {
+                return h.commands.clone();
+            }
+            handles.remove(&key);
+        }
         let generation = {
             let mut g = self
                 .next_generation
@@ -125,15 +148,14 @@ impl AgentPool {
             *g += 1;
             *g
         };
-        let (jobs_tx, jobs_rx) = mpsc::unbounded_channel();
+        let (commands_tx, commands_rx) = mpsc::unbounded_channel();
         let (cancel_tx, cancel_rx) = mpsc::unbounded_channel();
-        let _ = jobs_tx.send(job);
         handles.insert(
             key.clone(),
             Handle {
                 generation,
                 task_id: task_id.to_string(),
-                jobs: jobs_tx,
+                commands: commands_tx.clone(),
                 cancel: cancel_tx,
             },
         );
@@ -145,9 +167,10 @@ impl AgentPool {
             agent: agent.to_string(),
             cwd: cwd.to_string(),
             live: Arc::default(),
+            options: Arc::default(),
         };
         tokio::spawn(async move {
-            conn.run(jobs_rx, cancel_rx).await;
+            conn.run(commands_rx, cancel_rx).await;
             let ctx = conn.ctx.clone();
             let mut handles = ctx.agents.handles.lock().unwrap_or_else(|e| e.into_inner());
             if handles
@@ -157,6 +180,65 @@ impl AgentPool {
                 handles.remove(&key);
             }
         });
+        commands_tx
+    }
+
+    /// Start the adapter and session for `(task, agent)` unless already running, so the
+    /// agent's config options are known before the first prompt.
+    pub fn connect(&self, ctx: &Arc<Ctx>, task_id: &str, agent: &str, cwd: &str) {
+        let _ = self.ensure(ctx, task_id, agent, cwd);
+    }
+
+    /// Queue a prompt for `(task, agent)`.
+    pub fn send(&self, ctx: &Arc<Ctx>, task_id: &str, agent: &str, cwd: &str, job: Job) {
+        let job = match send_prompt(&self.ensure(ctx, task_id, agent, cwd), job) {
+            Ok(()) => return,
+            // The adapter exited between ensure() and here; once more with a fresh one.
+            Err(job) => job,
+        };
+        if let Err(job) = send_prompt(&self.ensure(ctx, task_id, agent, cwd), job) {
+            finish_message(
+                ctx,
+                task_id,
+                agent,
+                Live::new(job.assistant_message_id),
+                Err("agent exited".into()),
+            );
+        }
+    }
+
+    /// Change one session config option on the running adapter for `(task, agent)`.
+    pub async fn set_config(
+        &self,
+        task_id: &str,
+        agent: &str,
+        config_id: &str,
+        value: Value,
+    ) -> Result<(), String> {
+        let key = (task_id.to_string(), agent.to_string());
+        let commands = self
+            .handles
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&key)
+            .filter(|h| !h.commands.is_closed())
+            .map(|h| h.commands.clone());
+        let Some(commands) = commands else {
+            return Err("agent is not connected".into());
+        };
+        let (reply, answer) = oneshot::channel();
+        commands
+            .send(Command::SetConfig {
+                config_id: config_id.to_string(),
+                value,
+                reply,
+            })
+            .map_err(|_| "agent exited".to_string())?;
+        match tokio::time::timeout(SET_CONFIG_TIMEOUT, answer).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => Err("agent exited".into()),
+            Err(_) => Err(SET_CONFIG_TIMED_OUT.into()),
+        }
     }
 
     /// Cancel any in-flight prompt for the task, on every agent serving it.
@@ -168,12 +250,138 @@ impl AgentPool {
     }
 }
 
+fn send_prompt(commands: &mpsc::UnboundedSender<Command>, job: Job) -> Result<(), Job> {
+    match commands.send(Command::Prompt(job)) {
+        Ok(()) => Ok(()),
+        Err(mpsc::error::SendError(Command::Prompt(job))) => Err(job),
+        Err(_) => unreachable!("only prompts are sent here"),
+    }
+}
+
 /// The streaming assistant Message for the prompt currently in flight.
 struct Live {
     message_id: String,
     parts: Vec<Part>,
     tools: HashMap<String, usize>,
     cancelled: bool,
+}
+
+/// Id of the synthesized option for agents that only speak the older modes API.
+const MODE_OPTION_ID: &str = "mode";
+
+/// What the agent advertises for its session: config options (model, effort, mode…) and,
+/// for agents that only speak the older modes API, the mode list.
+#[derive(Default)]
+struct Options {
+    config: Vec<SessionConfigOption>,
+    modes: Option<SessionModeState>,
+}
+
+impl Options {
+    fn set(&mut self, config: Option<Vec<SessionConfigOption>>, modes: Option<SessionModeState>) {
+        self.config = config.unwrap_or_default();
+        self.modes = modes;
+    }
+
+    /// True when `config_id` must go through `session/set_mode`: the agent lists modes but
+    /// no config option for them.
+    fn is_mode_only(&self, config_id: &str) -> bool {
+        config_id == MODE_OPTION_ID
+            && self.modes.is_some()
+            && !self.config.iter().any(|c| &*c.id.0 == config_id)
+    }
+
+    fn set_mode(&mut self, mode_id: &SessionModeId) {
+        if let Some(m) = &mut self.modes {
+            m.current_mode_id = mode_id.clone();
+        }
+        for c in &mut self.config {
+            if matches!(c.category, Some(SessionConfigOptionCategory::Mode)) {
+                if let SessionConfigKind::Select(s) = &mut c.kind {
+                    s.current_value = SessionConfigValueId::new(mode_id.0.clone());
+                }
+            }
+        }
+    }
+
+    /// The options as the app sees them (`agent.config` in docs/core-protocol.md).
+    fn to_json(&self) -> Vec<Value> {
+        if !self.config.is_empty() {
+            return self.config.iter().map(config_option_json).collect();
+        }
+        let Some(m) = &self.modes else {
+            return vec![];
+        };
+        let options: Vec<Value> = m
+            .available_modes
+            .iter()
+            .map(|x| {
+                let mut v = json!({ "value": &*x.id.0, "name": x.name });
+                if let Some(d) = &x.description {
+                    v["description"] = json!(d);
+                }
+                v
+            })
+            .collect();
+        vec![json!({
+            "id": MODE_OPTION_ID,
+            "name": "Mode",
+            "category": "mode",
+            "type": "select",
+            "current_value": &*m.current_mode_id.0,
+            "options": options,
+        })]
+    }
+}
+
+fn config_option_json(o: &SessionConfigOption) -> Value {
+    let mut v = json!({ "id": &*o.id.0, "name": o.name });
+    if let Some(d) = &o.description {
+        v["description"] = json!(d);
+    }
+    if let Some(c) = &o.category {
+        v["category"] = json!(enum_str(c));
+    }
+    match &o.kind {
+        SessionConfigKind::Select(s) => {
+            v["type"] = json!("select");
+            v["current_value"] = json!(&*s.current_value.0);
+            let options: Vec<Value> = match &s.options {
+                SessionConfigSelectOptions::Ungrouped(list) => {
+                    list.iter().map(|x| select_option_json(x, None)).collect()
+                }
+                SessionConfigSelectOptions::Grouped(groups) => groups
+                    .iter()
+                    .flat_map(|g| {
+                        g.options
+                            .iter()
+                            .map(|x| select_option_json(x, Some(&g.name)))
+                    })
+                    .collect(),
+                _ => vec![],
+            };
+            v["options"] = json!(options);
+        }
+        SessionConfigKind::Boolean(b) => {
+            v["type"] = json!("boolean");
+            v["current_value"] = json!(b.current_value);
+        }
+        _ => {
+            v["type"] = json!("unknown");
+        }
+    }
+    v
+}
+
+fn select_option_json(o: &SessionConfigSelectOption, group: Option<&str>) -> Value {
+    let mut v = json!({ "value": &*o.value.0, "name": o.name });
+    if let Some(d) = &o.description {
+        v["description"] = json!(d);
+    }
+    if let Some(g) = group {
+        v["group"] = json!(g);
+    }
+    v
 }
 
 #[derive(Clone)]
@@ -183,7 +391,10 @@ struct Connection {
     agent: String,
     cwd: String,
     live: Arc<Mutex<Option<Live>>>,
+    options: Arc<Mutex<Options>>,
 }
+
+type AcpResult<T> = Result<T, agent_client_protocol::Error>;
 
 impl Connection {
     fn status(&self, state: &str, detail: Option<String>) {
@@ -196,8 +407,8 @@ impl Connection {
 
     async fn run(
         &self,
-        mut jobs_rx: mpsc::UnboundedReceiver<Job>,
-        mut cancel_rx: mpsc::UnboundedReceiver<()>,
+        mut commands: mpsc::UnboundedReceiver<Command>,
+        mut cancels: mpsc::UnboundedReceiver<()>,
     ) {
         let argv = command(spec(&self.agent).expect("agent validated by caller"));
         info!(agent = %self.agent, task = %self.task_id, command = ?argv, "starting agent");
@@ -206,8 +417,8 @@ impl Connection {
         let result = match AcpAgent::from_args(argv) {
             Ok(adapter) => {
                 let adapter = adapter.with_debug(|line, dir| tracing::debug!(?dir, "{line}"));
-                let jobs = &mut jobs_rx;
-                let cancels = &mut cancel_rx;
+                let commands = &mut commands;
+                let cancels = &mut cancels;
                 let updates = self.clone();
                 let perms = self.clone();
                 Client
@@ -227,7 +438,7 @@ impl Connection {
                         agent_client_protocol::on_receive_request!(),
                     )
                     .connect_with(adapter, async move |connection: ConnectionTo<Agent>| {
-                        self.serve(connection, jobs, cancels).await
+                        self.serve(connection, commands, cancels).await
                     })
                     .await
             }
@@ -243,9 +454,16 @@ impl Connection {
         if let Some(live) = self.live.lock().unwrap_or_else(|e| e.into_inner()).take() {
             self.finish(live, Err(reason.clone()));
         }
-        jobs_rx.close();
-        while let Ok(job) = jobs_rx.try_recv() {
-            self.finish(Live::new(job.message_id), Err(reason.clone()));
+        commands.close();
+        while let Ok(cmd) = commands.try_recv() {
+            match cmd {
+                Command::Prompt(job) => {
+                    self.finish(Live::new(job.assistant_message_id), Err(reason.clone()))
+                }
+                Command::SetConfig { reply, .. } => {
+                    let _ = reply.send(Err(reason.clone()));
+                }
+            }
         }
         self.status("exited", detail);
     }
@@ -253,114 +471,313 @@ impl Connection {
     async fn serve(
         &self,
         connection: ConnectionTo<Agent>,
-        jobs: &mut mpsc::UnboundedReceiver<Job>,
+        commands: &mut mpsc::UnboundedReceiver<Command>,
         cancels: &mut mpsc::UnboundedReceiver<()>,
-    ) -> Result<(), agent_client_protocol::Error> {
-        connection
+    ) -> AcpResult<()> {
+        let init = connection
             .send_request(InitializeRequest::new(ProtocolVersion::V1))
             .block_task()
             .await?;
-        let session_id = connection
-            .send_request(NewSessionRequest::new(self.cwd.clone()))
-            .block_task()
-            .await?
-            .session_id;
+        let session_id = self
+            .open_session(&connection, init.agent_capabilities.load_session)
+            .await?;
         info!(agent = %self.agent, task = %self.task_id, "session ready");
         self.status("ready", None);
 
-        while let Some(job) = jobs.recv().await {
-            while cancels.try_recv().is_ok() {}
-            *self.live.lock().unwrap_or_else(|e| e.into_inner()) = Some(Live::new(job.message_id));
-
-            let prompt = connection
-                .send_request(PromptRequest::new(
-                    session_id.clone(),
-                    vec![ContentBlock::Text(TextContent::new(job.prompt))],
-                ))
-                .block_task();
-            tokio::pin!(prompt);
-            let outcome = loop {
-                tokio::select! {
-                    r = &mut prompt => break r,
-                    Some(()) = cancels.recv() => {
-                        info!(agent = %self.agent, task = %self.task_id, "cancelling prompt");
-                        if let Some(l) = self.live.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
-                            l.cancelled = true;
-                        }
-                        connection.send_notification(CancelNotification::new(session_id.clone()))?;
+        // Prompts that arrived while another was in flight; served in order.
+        let mut queued: VecDeque<Job> = VecDeque::new();
+        loop {
+            let job = match queued.pop_front() {
+                Some(job) => job,
+                None => match commands.recv().await {
+                    None => return Ok(()),
+                    Some(Command::Prompt(job)) => job,
+                    Some(Command::SetConfig {
+                        config_id,
+                        value,
+                        reply,
+                    }) => {
+                        let _ = reply.send(
+                            self.apply_config(&connection, &session_id, &config_id, &value)
+                                .await,
+                        );
+                        continue;
                     }
-                }
+                },
             };
-            let Some(live) = self.live.lock().unwrap_or_else(|e| e.into_inner()).take() else {
-                continue;
-            };
-            match outcome {
+            self.prompt(
+                &connection,
+                &session_id,
+                job,
+                commands,
+                cancels,
+                &mut queued,
+            )
+            .await?;
+        }
+    }
+
+    /// Resume the session recorded for `(task, agent)` when the agent supports it, else
+    /// start a fresh one. Either way the agent's config options end up announced.
+    async fn open_session(
+        &self,
+        connection: &ConnectionTo<Agent>,
+        can_load: bool,
+    ) -> AcpResult<SessionId> {
+        let store = &self.ctx.store;
+        let saved = store
+            .session_id(&self.task_id, &self.agent)
+            .unwrap_or_else(|e| {
+                warn!("read session id: {e:#}");
+                None
+            });
+        if let (true, Some(saved)) = (can_load, saved) {
+            let load = LoadSessionRequest::new(SessionId::new(saved.clone()), self.cwd.clone());
+            match connection.send_request(load).block_task().await {
                 Ok(resp) => {
-                    let cancelled = live.cancelled || resp.stop_reason == StopReason::Cancelled;
-                    self.finish(live, Ok(cancelled));
+                    info!(agent = %self.agent, task = %self.task_id, "resumed session");
+                    self.lock_options().set(resp.config_options, resp.modes);
+                    if let Err(e) = store.begin_session(&self.task_id, &self.agent, &saved, false) {
+                        warn!("record session: {e:#}");
+                    }
+                    // A resumed session brings its thread back, but not necessarily the
+                    // options that were set on the previous process (Codex reports its
+                    // defaults again), so the user's choices are re-applied here too.
+                    let session_id = SessionId::new(saved);
+                    self.reapply_config(connection, &session_id).await;
+                    self.emit_config();
+                    return Ok(session_id);
                 }
-                Err(e) => {
-                    let text = error_text(&e);
-                    self.finish(live, Err(text));
-                    return Err(e);
-                }
+                Err(e) => warn!(
+                    agent = %self.agent, task = %self.task_id,
+                    "session/load failed, starting fresh: {}", error_text(&e)
+                ),
             }
         }
+        let resp = connection
+            .send_request(NewSessionRequest::new(self.cwd.clone()))
+            .block_task()
+            .await?;
+        let session_id = resp.session_id.clone();
+        // A fresh session has no memory of the Chat: reset the cursor so the next prompt
+        // carries the whole thread as a handoff.
+        if let Err(e) = store.begin_session(&self.task_id, &self.agent, &session_id.0, true) {
+            warn!("record session: {e:#}");
+        }
+        self.lock_options().set(resp.config_options, resp.modes);
+        self.reapply_config(connection, &session_id).await;
+        self.emit_config();
+        Ok(session_id)
+    }
+
+    /// Re-apply the values the user picked earlier for this `(task, agent)` to a fresh
+    /// session. Anything the agent no longer accepts is logged and skipped.
+    async fn reapply_config(&self, connection: &ConnectionTo<Agent>, session_id: &SessionId) {
+        let values = match self.ctx.store.config_values(&self.task_id, &self.agent) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!("read config values: {e:#}");
+                return;
+            }
+        };
+        for (config_id, value) in values {
+            if let Err(e) = self
+                .apply_config(connection, session_id, &config_id, &value)
+                .await
+            {
+                warn!(agent = %self.agent, task = %self.task_id, config_id, "re-apply config: {e}");
+            }
+        }
+    }
+
+    /// Set one config option (or mode) on the session, remember the choice, and announce
+    /// the agent's updated options.
+    async fn apply_config(
+        &self,
+        connection: &ConnectionTo<Agent>,
+        session_id: &SessionId,
+        config_id: &str,
+        value: &Value,
+    ) -> Result<(), String> {
+        let mode_only = self.lock_options().is_mode_only(config_id);
+        let request = async {
+            if mode_only {
+                let Some(mode) = value.as_str() else {
+                    return Err("mode must be a string".to_string());
+                };
+                let mode = SessionModeId::new(mode);
+                connection
+                    .send_request(SetSessionModeRequest::new(session_id.clone(), mode.clone()))
+                    .block_task()
+                    .await
+                    .map_err(|e| error_text(&e))?;
+                self.lock_options().set_mode(&mode);
+            } else {
+                let acp_value = match value {
+                    Value::Bool(b) => SessionConfigOptionValue::Boolean { value: *b },
+                    Value::String(s) => SessionConfigOptionValue::ValueId {
+                        value: SessionConfigValueId::new(s.as_str()),
+                    },
+                    _ => return Err("value must be a string or a boolean".to_string()),
+                };
+                let resp = connection
+                    .send_request(SetSessionConfigOptionRequest::new(
+                        session_id.clone(),
+                        SessionConfigId::new(config_id),
+                        acp_value,
+                    ))
+                    .block_task()
+                    .await
+                    .map_err(|e| error_text(&e))?;
+                self.lock_options().config = resp.config_options;
+            }
+            Ok(())
+        };
+        tokio::time::timeout(SET_CONFIG_TIMEOUT, request)
+            .await
+            .unwrap_or_else(|_| Err(SET_CONFIG_TIMED_OUT.to_string()))?;
+        if let Err(e) =
+            self.ctx
+                .store
+                .set_config_value(&self.task_id, &self.agent, config_id, value)
+        {
+            warn!("persist config value: {e:#}");
+        }
+        self.emit_config();
         Ok(())
     }
 
-    /// Persist the assistant Message, advance the cursor past it, and emit `chat.done`.
-    /// `outcome` is `Ok(cancelled)` or `Err(error text)`.
-    fn finish(&self, mut live: Live, outcome: Result<bool, String>) {
-        let (status, error) = match outcome {
-            Ok(false) => ("done", None),
-            Ok(true) => ("cancelled", None),
+    /// Send one prompt and stream its reply, serving cancels and config changes meanwhile.
+    async fn prompt(
+        &self,
+        connection: &ConnectionTo<Agent>,
+        session_id: &SessionId,
+        job: Job,
+        commands: &mut mpsc::UnboundedReceiver<Command>,
+        cancels: &mut mpsc::UnboundedReceiver<()>,
+        queued: &mut VecDeque<Job>,
+    ) -> AcpResult<()> {
+        while cancels.try_recv().is_ok() {}
+        let text = match self.build_prompt(&job) {
+            Ok(text) => text,
             Err(e) => {
-                let index = live.parts.len();
-                live.parts.push(Part::Error { message: e.clone() });
-                self.emit(&live.message_id, index, &live.parts[index]);
-                ("error", Some(e))
+                self.finish(Live::new(job.assistant_message_id), Err(e));
+                return Ok(());
             }
         };
-        let store = &self.ctx.store;
-        if let Err(e) = store.finish_message(&live.message_id, &live.parts, status) {
-            warn!("persist assistant message: {e:#}");
-        }
-        match store.list_messages(&self.task_id) {
-            Ok(transcript) => {
-                if let Some(index) = transcript.iter().position(|m| m.id == live.message_id) {
-                    let seen = store.cursor(&self.task_id, &self.agent).unwrap_or(-1);
-                    if index as i64 > seen {
-                        if let Err(e) = store.set_cursor(&self.task_id, &self.agent, index as i64) {
-                            warn!("advance cursor: {e:#}");
-                        }
+        *self.live.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some(Live::new(job.assistant_message_id));
+
+        let request = connection
+            .send_request(PromptRequest::new(
+                session_id.clone(),
+                vec![ContentBlock::Text(TextContent::new(text))],
+            ))
+            .block_task();
+        tokio::pin!(request);
+        let outcome = loop {
+            tokio::select! {
+                r = &mut request => break r,
+                Some(()) = cancels.recv() => {
+                    info!(agent = %self.agent, task = %self.task_id, "cancelling prompt");
+                    if let Some(l) = self.live.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+                        l.cancelled = true;
                     }
+                    connection.send_notification(CancelNotification::new(session_id.clone()))?;
                 }
+                Some(cmd) = commands.recv() => match cmd {
+                    Command::Prompt(next) => queued.push_back(next),
+                    Command::SetConfig { config_id, value, reply } => {
+                        let _ = reply.send(
+                            self.apply_config(connection, session_id, &config_id, &value).await,
+                        );
+                    }
+                },
             }
-            Err(e) => warn!("reload transcript: {e:#}"),
+        };
+        let Some(live) = self.live.lock().unwrap_or_else(|e| e.into_inner()).take() else {
+            return Ok(());
+        };
+        match outcome {
+            Ok(resp) => {
+                let cancelled = live.cancelled || resp.stop_reason == StopReason::Cancelled;
+                self.finish(live, Ok(cancelled));
+                Ok(())
+            }
+            Err(e) => {
+                self.finish(live, Err(error_text(&e)));
+                Err(e)
+            }
         }
-        let mut params =
-            json!({ "task_id": self.task_id, "message_id": live.message_id, "status": status });
-        if let Some(e) = error {
-            params["error"] = json!(e);
-        }
-        self.ctx.out.notify("chat.done", params);
     }
 
-    fn emit(&self, message_id: &str, index: usize, part: &Part) {
+    /// The prompt text for a Job: handoff of what this agent has not seen, then the user's
+    /// message. Assembled here rather than at `chat.send` so it reflects the session the
+    /// prompt actually goes to (a fresh session has cursor -1 and gets the whole thread).
+    fn build_prompt(&self, job: &Job) -> Result<String, String> {
+        let store = &self.ctx.store;
+        let transcript = store
+            .list_messages(&self.task_id)
+            .map_err(|e| format!("{e:#}"))?;
+        let user = transcript
+            .iter()
+            .find(|m| m.id == job.user_message_id)
+            .ok_or_else(|| "user message not found".to_string())?;
+        let cursor = store
+            .cursor(&self.task_id, &self.agent)
+            .map_err(|e| format!("{e:#}"))?;
+        let text = handoff::build_prompt(&transcript, cursor, user);
+        store
+            .set_cursor(
+                &self.task_id,
+                &self.agent,
+                handoff::seen_through(&transcript, &user.id),
+            )
+            .map_err(|e| format!("{e:#}"))?;
+        Ok(text)
+    }
+
+    fn lock_options(&self) -> std::sync::MutexGuard<'_, Options> {
+        self.options.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn emit_config(&self) {
+        let options = self.lock_options().to_json();
         self.ctx.out.notify(
-            "chat.update",
-            json!({ "task_id": self.task_id, "message_id": message_id, "part_index": index, "part": part }),
+            "agent.config",
+            json!({ "task_id": self.task_id, "agent": self.agent, "options": options }),
         );
     }
 
+    fn finish(&self, live: Live, outcome: Result<bool, String>) {
+        finish_message(&self.ctx, &self.task_id, &self.agent, live, outcome);
+    }
+
     fn on_update(&self, update: SessionUpdate) {
-        let mut guard = self.live.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(live) = guard.as_mut() else {
-            return;
-        };
-        if let Some(index) = live.apply(update) {
-            self.emit(&live.message_id, index, &live.parts[index]);
+        match update {
+            SessionUpdate::ConfigOptionUpdate(u) => {
+                self.lock_options().config = u.config_options;
+                self.emit_config();
+            }
+            SessionUpdate::CurrentModeUpdate(u) => {
+                self.lock_options().set_mode(&u.current_mode_id);
+                self.emit_config();
+            }
+            update => {
+                let mut guard = self.live.lock().unwrap_or_else(|e| e.into_inner());
+                let Some(live) = guard.as_mut() else {
+                    return;
+                };
+                if let Some(index) = live.apply(update) {
+                    emit_part(
+                        &self.ctx,
+                        &self.task_id,
+                        &live.message_id,
+                        index,
+                        &live.parts[index],
+                    );
+                }
+            }
         }
     }
 
@@ -409,13 +826,63 @@ impl Connection {
     }
 }
 
-fn option_json(o: &PermissionOption) -> serde_json::Value {
+fn emit_part(ctx: &Ctx, task_id: &str, message_id: &str, index: usize, part: &Part) {
+    ctx.out.notify(
+        "chat.update",
+        json!({ "task_id": task_id, "message_id": message_id, "part_index": index, "part": part }),
+    );
+}
+
+/// Persist the assistant Message, advance the agent's cursor past it, and emit `chat.done`.
+/// `outcome` is `Ok(cancelled)` or `Err(error text)`.
+fn finish_message(
+    ctx: &Ctx,
+    task_id: &str,
+    agent: &str,
+    mut live: Live,
+    outcome: Result<bool, String>,
+) {
+    let (status, error) = match outcome {
+        Ok(false) => ("done", None),
+        Ok(true) => ("cancelled", None),
+        Err(e) => {
+            let index = live.parts.len();
+            live.parts.push(Part::Error { message: e.clone() });
+            emit_part(ctx, task_id, &live.message_id, index, &live.parts[index]);
+            ("error", Some(e))
+        }
+    };
+    let store = &ctx.store;
+    if let Err(e) = store.finish_message(&live.message_id, &live.parts, status) {
+        warn!("persist assistant message: {e:#}");
+    }
+    match store.list_messages(task_id) {
+        Ok(transcript) => {
+            if let Some(index) = transcript.iter().position(|m| m.id == live.message_id) {
+                let seen = store.cursor(task_id, agent).unwrap_or(-1);
+                if index as i64 > seen {
+                    if let Err(e) = store.set_cursor(task_id, agent, index as i64) {
+                        warn!("advance cursor: {e:#}");
+                    }
+                }
+            }
+        }
+        Err(e) => warn!("reload transcript: {e:#}"),
+    }
+    let mut params = json!({ "task_id": task_id, "message_id": live.message_id, "status": status });
+    if let Some(e) = error {
+        params["error"] = json!(e);
+    }
+    ctx.out.notify("chat.done", params);
+}
+
+fn option_json(o: &PermissionOption) -> Value {
     json!({ "id": o.option_id.0, "label": o.name, "kind": enum_str(&o.kind) })
 }
 
 fn enum_str<T: Serialize>(v: &T) -> String {
     match serde_json::to_value(v) {
-        Ok(serde_json::Value::String(s)) => s,
+        Ok(Value::String(s)) => s,
         Ok(other) => other.to_string(),
         Err(_) => String::new(),
     }
@@ -565,7 +1032,8 @@ impl Live {
 mod tests {
     use super::*;
     use agent_client_protocol::schema::v1::{
-        ContentChunk, ToolCallStatus, ToolCallUpdateFields, ToolKind,
+        ContentChunk, SessionConfigBoolean, SessionConfigSelect, SessionMode, ToolCallStatus,
+        ToolCallUpdateFields, ToolKind,
     };
 
     fn chunk(s: &str) -> ContentChunk {
@@ -623,6 +1091,130 @@ mod tests {
                 status: "completed".into(),
                 output: Some("a\nb".into()),
             }
+        );
+    }
+
+    fn model_option() -> SessionConfigOption {
+        SessionConfigOption::new(
+            "model",
+            "Model",
+            SessionConfigKind::Select(SessionConfigSelect::new(
+                "sonnet",
+                SessionConfigSelectOptions::Ungrouped(vec![
+                    SessionConfigSelectOption::new("opus", "Opus").description("Big"),
+                    SessionConfigSelectOption::new("sonnet", "Sonnet"),
+                ]),
+            )),
+        )
+        .category(SessionConfigOptionCategory::Model)
+    }
+
+    fn mode_option(current: &str) -> SessionConfigOption {
+        SessionConfigOption::new(
+            "mode",
+            "Mode",
+            SessionConfigKind::Select(SessionConfigSelect::new(
+                SessionConfigValueId::new(current),
+                SessionConfigSelectOptions::Ungrouped(vec![
+                    SessionConfigSelectOption::new("default", "Manual"),
+                    SessionConfigSelectOption::new("plan", "Plan"),
+                ]),
+            )),
+        )
+        .category(SessionConfigOptionCategory::Mode)
+    }
+
+    #[test]
+    fn config_options_render_for_the_app() {
+        let mut options = Options::default();
+        options.set(
+            Some(vec![
+                model_option(),
+                SessionConfigOption::new(
+                    "fast",
+                    "Fast mode",
+                    SessionConfigKind::Boolean(SessionConfigBoolean::new(false)),
+                )
+                .category(SessionConfigOptionCategory::ModelConfig),
+            ]),
+            None,
+        );
+        let json = options.to_json();
+        assert_eq!(
+            json,
+            vec![
+                json!({
+                    "id": "model", "name": "Model", "category": "model", "type": "select",
+                    "current_value": "sonnet",
+                    "options": [
+                        { "value": "opus", "name": "Opus", "description": "Big" },
+                        { "value": "sonnet", "name": "Sonnet" },
+                    ],
+                }),
+                json!({
+                    "id": "fast", "name": "Fast mode", "category": "model_config",
+                    "type": "boolean", "current_value": false,
+                }),
+            ]
+        );
+        assert!(!options.is_mode_only("mode"));
+    }
+
+    #[test]
+    fn modes_only_agent_gets_a_synthesized_mode_option() {
+        let mut options = Options::default();
+        let modes = SessionModeState::new(
+            "default",
+            vec![
+                SessionMode::new("default", "Manual").description("Ask first"),
+                SessionMode::new("plan", "Plan"),
+            ],
+        );
+        options.set(None, Some(modes));
+        assert!(options.is_mode_only("mode"));
+        assert!(!options.is_mode_only("model"));
+        assert_eq!(
+            options.to_json(),
+            vec![json!({
+                "id": "mode", "name": "Mode", "category": "mode", "type": "select",
+                "current_value": "default",
+                "options": [
+                    { "value": "default", "name": "Manual", "description": "Ask first" },
+                    { "value": "plan", "name": "Plan" },
+                ],
+            })]
+        );
+        options.set_mode(&SessionModeId::new("plan"));
+        assert_eq!(options.to_json()[0]["current_value"], "plan");
+    }
+
+    #[test]
+    fn mode_update_reaches_the_mode_config_option() {
+        let mut options = Options::default();
+        options.set(
+            Some(vec![model_option(), mode_option("default")]),
+            Some(SessionModeState::new(
+                "default",
+                vec![
+                    SessionMode::new("default", "Manual"),
+                    SessionMode::new("plan", "Plan"),
+                ],
+            )),
+        );
+        // Config options win over the modes list, and the mode option is set through
+        // `session/set_config_option` like any other.
+        assert!(!options.is_mode_only("mode"));
+        options.set_mode(&SessionModeId::new("plan"));
+        let json = options.to_json();
+        assert_eq!(json.len(), 2);
+        assert_eq!(json[0]["current_value"], "sonnet");
+        assert_eq!(json[1]["current_value"], "plan");
+        assert_eq!(
+            options
+                .modes
+                .as_ref()
+                .map(|m| m.current_mode_id.0.to_string()),
+            Some("plan".to_string())
         );
     }
 }

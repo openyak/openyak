@@ -102,6 +102,11 @@ button.linkish:hover {
   border-bottom: 1px solid var(--border);
   min-height: 38px;
 }
+.column-header button,
+.column-header select {
+  flex: none;
+  white-space: nowrap;
+}
 .column-header h2 {
   margin: 0;
   font-size: 12px;
@@ -112,6 +117,47 @@ button.linkish:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+select {
+  font: inherit;
+  color: inherit;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 6px;
+  max-width: 220px;
+}
+select:disabled {
+  opacity: 0.5;
+}
+.agent-select {
+  font-weight: 600;
+}
+
+/* Provider-specific controls, rendered from what the agent advertises. */
+.chat-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  min-height: 34px;
+  padding: 5px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  font-size: 12px;
+  color: var(--muted);
+}
+.control {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.control input[type='checkbox'] {
+  margin: 0;
+}
+.control-hint {
+  color: var(--muted);
 }
 
 .list {
@@ -313,56 +359,56 @@ pre {
 .composer {
   border-top: 1px solid var(--border);
   background: var(--panel);
-  padding: 8px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  padding: 10px 14px 12px;
 }
-.composer textarea {
-  width: 100%;
-  resize: vertical;
-  min-height: 60px;
-  padding: 6px 8px;
+.composer-box {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px 8px 8px 12px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 12px;
   background: var(--bg);
 }
-.composer textarea:focus {
-  outline: none;
+.composer-box:focus-within {
   border-color: var(--accent);
 }
-.composer-row {
+.composer-box textarea {
+  flex: 1;
+  min-height: 22px;
+  max-height: 200px;
+  padding: 3px 0;
+  border: none;
+  background: transparent;
+  resize: none;
+  field-sizing: content;
+}
+.composer-box textarea:focus {
+  outline: none;
+}
+.send {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 15px;
+  line-height: 1;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  justify-content: center;
 }
-.composer-actions {
-  display: flex;
-  gap: 6px;
+.send:disabled {
+  background: var(--border);
+  color: var(--muted);
+  opacity: 1;
 }
-
-.segmented {
-  display: inline-flex;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  overflow: hidden;
-}
-.segmented button {
-  border: none;
-  border-radius: 0;
-  border-right: 1px solid var(--border);
-  padding: 3px 10px;
-}
-.segmented button:last-child {
-  border-right: none;
-}
-.segmented button.on {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-.segmented .empty {
-  padding: 3px 10px;
+.send.stop {
+  background: var(--text);
+  font-size: 11px;
 }
 
 .banner {

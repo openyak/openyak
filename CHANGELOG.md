@@ -20,3 +20,14 @@ its full changelog.
 
 ### Added
 - Agent switching within one Task, with transcript handoff so the thread stays coherent.
+- Agent session options (model, reasoning effort, permission mode, …) shown in the Chat
+  header exactly as the agent advertises them over ACP, and passed back untouched.
+  Choices are remembered per Task and agent and re-applied to fresh sessions.
+- Agent sessions are resumed across restarts (ACP `session/load`) when the agent
+  supports it; otherwise the fresh session gets the whole thread as a handoff.
+
+### Fixed
+- After a restart, or when an adapter was re-spawned, an agent could be prompted as if it
+  had already seen the Chat, so it answered with no context. The handoff is now built for
+  the session the prompt actually goes to.
+- A reply left `streaming` by a previous core process is marked cancelled on startup.

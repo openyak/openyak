@@ -37,8 +37,9 @@ v2 是 alpha：能跑，还不精致，形态会变。已可用：
 - Chat 由 `claude`（通过 `@agentclientprotocol/claude-agent-acp`）或 `codex`（通过 `@agentclientprotocol/codex-acp`）服务，逐条消息可选
 - 流式文本、思考、工具调用与权限确认
 - agent 交接：任务内切换 agent 并保留上下文
+- agent 自己的会话选项（模型、推理强度、权限模式……）显示在 Chat 顶栏，与 agent 暴露的完全一致，按 Task 记住
 
-尚未：agent 内部的模型选择、安装包、Grok 等更多 agent、Linux / Windows 验证。
+尚未：安装包、Grok 等更多 agent、Linux / Windows 验证。
 
 ## 运行
 
