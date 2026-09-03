@@ -550,30 +550,6 @@ body.sidebar-resize-active * {
   outline: none;
   background: var(--bg-hover);
 }
-.nav-rename {
-  width: 100%;
-  padding: 3px 6px;
-}
-.nav-task-row .nav-rename {
-  padding-left: 32px;
-}
-.nav-rename input {
-  width: 100%;
-  height: 30px;
-  padding: 0 8px;
-  border: 1px solid var(--border-strong);
-  border-radius: 7px;
-  outline: 0;
-  background: var(--bg-elevated);
-  color: var(--text);
-  font: inherit;
-  font-size: 14px;
-  user-select: text;
-}
-.nav-rename input:focus {
-  border-color: color-mix(in srgb, var(--text) 32%, transparent);
-}
-
 .section-head {
   display: flex;
   align-items: center;
@@ -623,9 +599,263 @@ body.sidebar-resize-active * {
   background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 
+.editor-backdrop {
+  position: fixed;
+  z-index: 120;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.46);
+  backdrop-filter: blur(2px);
+  animation: confirm-fade-in 0.12s ease-out;
+}
+.editor-modal {
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--bg-elevated);
+  box-shadow: 0 24px 72px rgba(0, 0, 0, 0.44);
+  animation: confirm-dialog-in 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.project-editor {
+  width: min(520px, calc(100vw - 20px));
+}
+.editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 34px;
+}
+.editor-header h2 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+}
+.editor-close {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  margin-right: -4px;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  place-items: center;
+}
+.editor-close:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.chat-rename {
+  width: min(420px, calc(100vw - 20px));
+}
+.chat-rename-description {
+  margin: 8px 0 12px;
+  color: var(--text-tertiary);
+  font-size: 16px;
+  line-height: 1.4;
+}
+.chat-rename-input {
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  outline: 0;
+  background: color-mix(in srgb, var(--bg) 36%, var(--bg-elevated));
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  user-select: text;
+}
+.chat-rename-input:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 1px var(--blue);
+}
+.project-editor-name {
+  display: flex;
+  height: 40px;
+  margin-top: 16px;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg) 36%, var(--bg-elevated));
+}
+.project-editor-name:focus-within {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 1px var(--blue);
+}
+.project-editor-name-icon {
+  display: grid;
+  flex: 0 0 40px;
+  border-right: 1px solid var(--border);
+  color: var(--text-secondary);
+  place-items: center;
+}
+.project-editor-name input {
+  min-width: 0;
+  flex: 1;
+  padding: 0 10px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  user-select: text;
+}
+.project-editor-name input:disabled {
+  opacity: 0.6;
+}
+.project-editor-section-title {
+  margin: 14px 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.project-editor-sources {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.project-editor-source,
+.project-editor-add-folder {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  height: 48px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 13px;
+  text-align: left;
+}
+.project-editor-source {
+  color: var(--text);
+}
+.project-editor-source > .icon,
+.project-editor-add-icon {
+  flex: none;
+  color: var(--text-secondary);
+}
+.project-editor-source > span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-editor-remove-folder {
+  display: grid;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin-right: -7px;
+  border-radius: 7px;
+  color: var(--text-tertiary);
+  place-items: center;
+}
+.project-editor-remove-folder:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.project-editor-add-folder {
+  border-top: 1px solid var(--border);
+}
+.project-editor-add-folder:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+.project-editor-add-icon {
+  position: relative;
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+}
+.project-editor-add-icon .icon:last-child {
+  position: absolute;
+  right: -3px;
+  bottom: -2px;
+  padding: 1px;
+  border-radius: 50%;
+  background: var(--bg-elevated);
+}
+.project-editor-add-folder:hover .project-editor-add-icon .icon:last-child {
+  background: color-mix(in srgb, var(--bg-hover) 100%, var(--bg-elevated));
+}
+.editor-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 20px;
+}
+.project-editor-remove,
+.editor-cancel,
+.editor-save {
+  min-height: 34px;
+  padding: 0 16px;
+  border-radius: 10px;
+  font-weight: 500;
+}
+.project-editor-remove {
+  background: color-mix(in srgb, var(--danger) 13%, transparent);
+  color: var(--danger);
+}
+.project-editor-remove:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 19%, transparent);
+}
+.editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.editor-cancel {
+  color: var(--text-secondary);
+}
+.editor-cancel:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.editor-save {
+  min-width: 67px;
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+.editor-save:hover:not(:disabled) {
+  opacity: 0.9;
+}
+.editor-modal button:disabled {
+  opacity: 0.48;
+}
+.chat-rename-footer {
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+.chat-rename-cancel {
+  min-width: 82px;
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+}
+.chat-rename .editor-save {
+  min-width: 67px;
+}
+
+@media (max-width: 560px) {
+  .project-editor-footer {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+  .project-editor .editor-actions {
+    justify-content: flex-end;
+  }
+  .project-editor-remove {
+    align-self: flex-start;
+  }
+}
+
 .confirm-backdrop {
   position: fixed;
-  z-index: 100;
+  z-index: 130;
   inset: 0;
   display: flex;
   align-items: center;

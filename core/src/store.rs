@@ -262,6 +262,17 @@ impl Store {
         self.get_project(id)
     }
 
+    /// Update the editable Project fields; None if it does not exist.
+    pub fn update_project(&self, id: &str, name: &str, path: &str) -> Result<Option<Project>> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE projects SET name = ?1, path = ?2 WHERE id = ?3",
+                params![name, path, id],
+            )
+        })?;
+        self.get_project(id)
+    }
+
     /// Delete a Project, all of its Tasks and Chats, and their agent state.
     pub fn delete_project(&self, id: &str) -> Result<bool> {
         self.with(|c| {
@@ -637,6 +648,17 @@ mod tests {
         assert_eq!(renamed.name, "renamed");
         assert_eq!(renamed.path, p.path);
         assert!(s.rename_project("missing", "x").unwrap().is_none());
+
+        let updated = s
+            .update_project(&p.id, "moved", "/tmp/moved")
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.name, "moved");
+        assert_eq!(updated.path, "/tmp/moved");
+        assert!(s
+            .update_project("missing", "x", "/tmp/x")
+            .unwrap()
+            .is_none());
 
         assert!(s.delete_project(&p.id).unwrap());
         assert!(!s.delete_project(&p.id).unwrap());

@@ -93,6 +93,12 @@ struct ProjectRename {
     name: String,
 }
 #[derive(Deserialize)]
+struct ProjectUpdate {
+    project_id: String,
+    name: String,
+    path: String,
+}
+#[derive(Deserialize)]
 struct TaskCreate {
     project_id: Option<String>,
     title: String,
@@ -189,6 +195,23 @@ async fn handle(ctx: &Arc<Ctx>, method: &str, params: Value) -> Result<Value, Rp
             let project = store
                 .rename_project(&p.project_id, &p.name)?
                 .ok_or_else(|| RpcError::invalid_params("unknown project_id"))?;
+            json!(project)
+        }
+        "project.update" => {
+            let p: ProjectUpdate = parse(params)?;
+            let previous = store
+                .get_project(&p.project_id)?
+                .ok_or_else(|| RpcError::invalid_params("unknown project_id"))?;
+            let project = store
+                .update_project(&p.project_id, &p.name, &p.path)?
+                .ok_or_else(|| RpcError::invalid_params("unknown project_id"))?;
+            if previous.path != p.path {
+                // Existing sessions keep their original working directory. Stop them so
+                // the next connect starts cleanly inside the updated source folder.
+                for task in store.list_tasks(Some(&p.project_id))? {
+                    ctx.agents.drop_task(&task.id);
+                }
+            }
             json!(project)
         }
         "project.delete" => {

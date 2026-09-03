@@ -14,6 +14,7 @@ import type { Project, Task } from '../../shared/protocol'
 import { ContextMenu, Menu, type MenuEntry } from './Menu'
 import {
   IconChat,
+  IconClose,
   IconEdit,
   IconDesktop,
   IconFolder,
@@ -26,8 +27,9 @@ import {
 } from './icons'
 
 type SortMode = 'recent' | 'name'
-type Editing = { type: 'project' | 'task'; id: string; original: string; value: string }
+type ChatRenameEditor = { id: string; original: string; name: string; saving: boolean }
 type Confirming = { type: 'project' | 'task'; id: string; name: string }
+type ProjectEditor = { project: Project; name: string; path: string; saving: boolean }
 type ItemContextMenu = {
   type: 'project' | 'task'
   id: string
@@ -105,6 +107,11 @@ function compactPath(value: string) {
     .replace(/^[A-Za-z]:\\Users\\[^\\]+(?=\\|$)/, '~')
 }
 
+function folderName(value: string) {
+  const parts = value.replace(/[\\/]+$/, '').split(/[\\/]/)
+  return parts[parts.length - 1] || value
+}
+
 interface Props {
   open: boolean
   onToggle: () => void
@@ -119,7 +126,7 @@ interface Props {
   onNewChat: () => void
   onSelectTask: (id: string) => void
   onAddProject: () => void
-  onRenameProject: (id: string, name: string) => Promise<void>
+  onUpdateProject: (id: string, name: string, path: string) => Promise<void>
   onDeleteProject: (id: string) => Promise<void>
   onRenameTask: (id: string, title: string) => Promise<void>
   onDeleteTask: (id: string) => Promise<void>
@@ -137,14 +144,15 @@ export function Sidebar({
   onNewChat,
   onSelectTask,
   onAddProject,
-  onRenameProject,
+  onUpdateProject,
   onDeleteProject,
   onRenameTask,
   onDeleteTask,
 }: Props) {
   const [sort, setSort] = useState<SortMode>(readSort)
   const [collapsedProjects, setCollapsedProjects] = useState(readCollapsedProjects)
-  const [editing, setEditing] = useState<Editing | null>(null)
+  const [chatRename, setChatRename] = useState<ChatRenameEditor | null>(null)
+  const [projectEditor, setProjectEditor] = useState<ProjectEditor | null>(null)
   const [confirming, setConfirming] = useState<Confirming | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth)
@@ -275,13 +283,16 @@ export function Sidebar({
   )
 
   useEffect(() => {
-    if (!confirming) return
+    if (!confirming && !projectEditor && !chatRename) return
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !deleting) setConfirming(null)
+      if (event.key !== 'Escape') return
+      if (confirming && !deleting) setConfirming(null)
+      else if (projectEditor && !projectEditor.saving) setProjectEditor(null)
+      else if (chatRename && !chatRename.saving) setChatRename(null)
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [confirming, deleting])
+  }, [chatRename, confirming, deleting, projectEditor])
 
   useEffect(() => {
     const dismiss = () => hideSidebarPreview()
@@ -347,14 +358,23 @@ export function Sidebar({
       )
   const projectlessTasks = orderedTasks(PROJECTLESS_TASKS)
 
-  const startEdit = (type: Editing['type'], id: string, original: string) =>
-    setEditing({ type, id, original, value: original })
-
   const closeItemContextMenu = useCallback(() => setItemContextMenu(null), [])
+
+  const openChatRename = (id: string, original: string) => {
+    hideSidebarPreview()
+    closeItemContextMenu()
+    setChatRename({ id, original, name: original, saving: false })
+  }
+
+  const openProjectEditor = (project: Project) => {
+    hideSidebarPreview()
+    closeItemContextMenu()
+    setProjectEditor({ project, name: project.name, path: project.path, saving: false })
+  }
 
   const openItemContextMenu = (
     event: ReactMouseEvent<HTMLElement>,
-    type: Editing['type'],
+    type: ItemContextMenu['type'],
     id: string,
     original: string,
   ) => {
@@ -374,7 +394,7 @@ export function Sidebar({
 
   const openKeyboardItemMenu = (
     event: ReactKeyboardEvent<HTMLElement>,
-    type: Editing['type'],
+    type: ItemContextMenu['type'],
     id: string,
     original: string,
   ) => {
@@ -393,26 +413,19 @@ export function Sidebar({
     })
   }
 
-  const commitEdit = (event?: FormEvent) => {
-    event?.preventDefault()
-    if (!editing) return
-    const current = editing
-    const value = current.value.trim()
-    setEditing(null)
-    if (!value || value === current.original) return
-    const rename =
-      current.type === 'project'
-        ? onRenameProject(current.id, value)
-        : onRenameTask(current.id, value)
-    void rename.catch(() => {})
-  }
-
-  const itemEntries = (type: Editing['type'], id: string, name: string): MenuEntry[] => [
+  const itemEntries = (type: ItemContextMenu['type'], id: string, name: string): MenuEntry[] => [
     {
       id: 'rename',
-      label: 'Rename',
+      label: type === 'project' ? 'Edit' : 'Rename',
       icon: <IconEdit size={14} />,
-      onSelect: () => startEdit(type, id, name),
+      onSelect: () => {
+        if (type === 'project') {
+          const project = projects.find((candidate) => candidate.id === id)
+          if (project) openProjectEditor(project)
+        } else {
+          openChatRename(id, name)
+        }
+      },
     },
     { separator: true },
     {
@@ -430,6 +443,9 @@ export function Sidebar({
     try {
       if (confirming.type === 'project') await onDeleteProject(confirming.id)
       else await onDeleteTask(confirming.id)
+      if (confirming.type === 'project' && projectEditor?.project.id === confirming.id) {
+        setProjectEditor(null)
+      }
       setConfirming(null)
     } catch {
       // The app-level error toast carries the failure; keep the dialog open for retry.
@@ -438,23 +454,56 @@ export function Sidebar({
     }
   }
 
-  const renameField = (item: Editing) => (
-    <form className="nav-rename" onSubmit={commitEdit}>
-      <input
-        autoFocus
-        value={item.value}
-        aria-label={item.type === 'project' ? 'Project name' : 'Chat name'}
-        onChange={(event) => setEditing({ ...item, value: event.target.value })}
-        onBlur={() => commitEdit()}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') {
-            event.preventDefault()
-            setEditing(null)
-          }
-        }}
-      />
-    </form>
-  )
+  const closeProjectEditor = () => {
+    if (!projectEditor?.saving) setProjectEditor(null)
+  }
+
+  const closeChatRename = () => {
+    if (!chatRename?.saving) setChatRename(null)
+  }
+
+  const saveChatRename = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!chatRename || chatRename.saving) return
+    const name = chatRename.name.trim()
+    if (!name) return
+    if (name === chatRename.original) {
+      setChatRename(null)
+      return
+    }
+    setChatRename((current) => (current ? { ...current, saving: true } : current))
+    try {
+      await onRenameTask(chatRename.id, name)
+      setChatRename(null)
+    } catch {
+      setChatRename((current) => (current ? { ...current, saving: false } : current))
+    }
+  }
+
+  const chooseProjectFolder = async () => {
+    if (!projectEditor || projectEditor.saving) return
+    const path = await window.openyak.pickDirectory()
+    if (path) setProjectEditor((current) => (current ? { ...current, path } : current))
+  }
+
+  const saveProject = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!projectEditor || projectEditor.saving) return
+    const name = projectEditor.name.trim()
+    const path = projectEditor.path.trim()
+    if (!name || !path) return
+    if (name === projectEditor.project.name && path === projectEditor.project.path) {
+      setProjectEditor(null)
+      return
+    }
+    setProjectEditor((current) => (current ? { ...current, saving: true } : current))
+    try {
+      await onUpdateProject(projectEditor.project.id, name, path)
+      setProjectEditor(null)
+    } catch {
+      setProjectEditor((current) => (current ? { ...current, saving: false } : current))
+    }
+  }
 
   return (
     <aside
@@ -502,59 +551,53 @@ export function Sidebar({
                     openItemContextMenu(event, 'task', task.id, task.title)
                   }
                 >
-                  {editing?.type === 'task' && editing.id === task.id ? (
-                    renameField(editing)
-                  ) : (
-                    <button
-                      type="button"
-                      className={`nav-item${task.id === selectedTaskId ? ' selected' : ''}`}
-                      data-tooltip-ignore="true"
-                      onClick={() => {
-                        hideSidebarPreview()
-                        onSelectTask(task.id)
-                      }}
-                      onMouseEnter={(event) =>
-                        showSidebarPreview(
-                          event.currentTarget,
-                          { kind: 'task', task, project: null },
-                          360,
-                          76,
-                        )
-                      }
-                      onMouseLeave={hideSidebarPreview}
-                      onFocus={(event) =>
-                        showSidebarPreview(
-                          event.currentTarget,
-                          { kind: 'task', task, project: null },
-                          0,
-                          76,
-                        )
-                      }
-                      onBlur={hideSidebarPreview}
-                      onKeyDown={(event) =>
-                        openKeyboardItemMenu(event, 'task', task.id, task.title)
-                      }
-                      aria-describedby={
-                        sidebarPreview?.kind === 'task' && sidebarPreview.task.id === task.id
-                          ? 'sidebar-task-preview'
-                          : undefined
-                      }
+                  <button
+                    type="button"
+                    className={`nav-item${task.id === selectedTaskId ? ' selected' : ''}`}
+                    data-tooltip-ignore="true"
+                    onClick={() => {
+                      hideSidebarPreview()
+                      onSelectTask(task.id)
+                    }}
+                    onMouseEnter={(event) =>
+                      showSidebarPreview(
+                        event.currentTarget,
+                        { kind: 'task', task, project: null },
+                        360,
+                        76,
+                      )
+                    }
+                    onMouseLeave={hideSidebarPreview}
+                    onFocus={(event) =>
+                      showSidebarPreview(
+                        event.currentTarget,
+                        { kind: 'task', task, project: null },
+                        0,
+                        76,
+                      )
+                    }
+                    onBlur={hideSidebarPreview}
+                    onKeyDown={(event) =>
+                      openKeyboardItemMenu(event, 'task', task.id, task.title)
+                    }
+                    aria-describedby={
+                      sidebarPreview?.kind === 'task' && sidebarPreview.task.id === task.id
+                        ? 'sidebar-task-preview'
+                        : undefined
+                    }
+                  >
+                    <span className="nav-label">{task.title}</span>
+                  </button>
+                  {workingTaskIds.has(task.id) && (
+                    <span
+                      className="nav-working"
+                      role="status"
+                      aria-label={`${task.title} is working`}
                     >
-                      <span className="nav-label">{task.title}</span>
-                    </button>
+                      <span className="nav-working-spinner" />
+                    </span>
                   )}
-                  {workingTaskIds.has(task.id) &&
-                    !(editing?.type === 'task' && editing.id === task.id) && (
-                      <span
-                        className="nav-working"
-                        role="status"
-                        aria-label={`${task.title} is working`}
-                      >
-                        <span className="nav-working-spinner" />
-                      </span>
-                    )}
-                  {!(editing?.type === 'task' && editing.id === task.id) && (
-                    <Menu
+                  <Menu
                       plain
                       side="bottom"
                       align="end"
@@ -571,7 +614,6 @@ export function Sidebar({
                         closeItemContextMenu()
                       }}
                     />
-                  )}
                 </div>
               ))}
             </>
@@ -627,61 +669,55 @@ export function Sidebar({
                   openItemContextMenu(event, 'project', project.id, project.name)
                 }
               >
-                {editing?.type === 'project' && editing.id === project.id ? (
-                  renameField(editing)
-                ) : (
-                  <button
-                    type="button"
-                    className={`nav-item${draft && draftProjectId === project.id ? ' selected' : ''}`}
-                    data-tooltip-ignore="true"
-                    aria-expanded={!collapsedProjects.has(project.id)}
-                    aria-controls={`project-tasks-${project.id}${
-                      sidebarPreview?.kind === 'project' &&
-                      sidebarPreview.project.id === project.id
-                        ? ' sidebar-project-preview'
-                        : ''
-                    }`}
-                    onClick={() => toggleProject(project.id)}
-                    onMouseEnter={(event) => {
-                      const tasks = orderedTasks(project.id)
-                      showSidebarPreview(
-                        event.currentTarget,
-                        {
-                          kind: 'project',
-                          project,
-                          taskCount: tasks.length,
-                          activeCount: tasks.filter((task) => workingTaskIds.has(task.id)).length,
-                        },
-                        360,
-                        142,
-                      )
-                    }}
-                    onMouseLeave={() => schedulePreviewHide(120)}
-                    onFocus={(event) => {
-                      const tasks = orderedTasks(project.id)
-                      showSidebarPreview(
-                        event.currentTarget,
-                        {
-                          kind: 'project',
-                          project,
-                          taskCount: tasks.length,
-                          activeCount: tasks.filter((task) => workingTaskIds.has(task.id)).length,
-                        },
-                        0,
-                        142,
-                      )
-                    }}
-                    onBlur={() => schedulePreviewHide(120)}
-                    onKeyDown={(event) =>
-                      openKeyboardItemMenu(event, 'project', project.id, project.name)
-                    }
-                  >
-                    <IconFolder size={16} />
-                    <span className="nav-label">{project.name}</span>
-                  </button>
-                )}
-                {!(editing?.type === 'project' && editing.id === project.id) && (
-                  <Menu
+                <button
+                  type="button"
+                  className={`nav-item${draft && draftProjectId === project.id ? ' selected' : ''}`}
+                  data-tooltip-ignore="true"
+                  aria-expanded={!collapsedProjects.has(project.id)}
+                  aria-controls={`project-tasks-${project.id}${
+                    sidebarPreview?.kind === 'project' && sidebarPreview.project.id === project.id
+                      ? ' sidebar-project-preview'
+                      : ''
+                  }`}
+                  onClick={() => toggleProject(project.id)}
+                  onMouseEnter={(event) => {
+                    const tasks = orderedTasks(project.id)
+                    showSidebarPreview(
+                      event.currentTarget,
+                      {
+                        kind: 'project',
+                        project,
+                        taskCount: tasks.length,
+                        activeCount: tasks.filter((task) => workingTaskIds.has(task.id)).length,
+                      },
+                      360,
+                      142,
+                    )
+                  }}
+                  onMouseLeave={() => schedulePreviewHide(120)}
+                  onFocus={(event) => {
+                    const tasks = orderedTasks(project.id)
+                    showSidebarPreview(
+                      event.currentTarget,
+                      {
+                        kind: 'project',
+                        project,
+                        taskCount: tasks.length,
+                        activeCount: tasks.filter((task) => workingTaskIds.has(task.id)).length,
+                      },
+                      0,
+                      142,
+                    )
+                  }}
+                  onBlur={() => schedulePreviewHide(120)}
+                  onKeyDown={(event) =>
+                    openKeyboardItemMenu(event, 'project', project.id, project.name)
+                  }
+                >
+                  <IconFolder size={16} />
+                  <span className="nav-label">{project.name}</span>
+                </button>
+                <Menu
                     plain
                     side="bottom"
                     align="end"
@@ -698,7 +734,6 @@ export function Sidebar({
                       closeItemContextMenu()
                     }}
                   />
-                )}
               </div>
 
               <div id={`project-tasks-${project.id}`}>
@@ -711,59 +746,53 @@ export function Sidebar({
                         openItemContextMenu(event, 'task', task.id, task.title)
                       }
                     >
-                      {editing?.type === 'task' && editing.id === task.id ? (
-                        renameField(editing)
-                      ) : (
-                        <button
-                          type="button"
-                          className={`nav-item nav-task${task.id === selectedTaskId ? ' selected' : ''}`}
-                          data-tooltip-ignore="true"
-                          onClick={() => {
-                            hideSidebarPreview()
-                            onSelectTask(task.id)
-                          }}
-                          onMouseEnter={(event) =>
-                            showSidebarPreview(
-                              event.currentTarget,
-                              { kind: 'task', task, project },
-                              360,
-                              76,
-                            )
-                          }
-                          onMouseLeave={hideSidebarPreview}
-                          onFocus={(event) =>
-                            showSidebarPreview(
-                              event.currentTarget,
-                              { kind: 'task', task, project },
-                              0,
-                              76,
-                            )
-                          }
-                          onBlur={hideSidebarPreview}
-                          onKeyDown={(event) =>
-                            openKeyboardItemMenu(event, 'task', task.id, task.title)
-                          }
-                          aria-describedby={
-                            sidebarPreview?.kind === 'task' && sidebarPreview.task.id === task.id
-                              ? 'sidebar-task-preview'
-                              : undefined
-                          }
+                      <button
+                        type="button"
+                        className={`nav-item nav-task${task.id === selectedTaskId ? ' selected' : ''}`}
+                        data-tooltip-ignore="true"
+                        onClick={() => {
+                          hideSidebarPreview()
+                          onSelectTask(task.id)
+                        }}
+                        onMouseEnter={(event) =>
+                          showSidebarPreview(
+                            event.currentTarget,
+                            { kind: 'task', task, project },
+                            360,
+                            76,
+                          )
+                        }
+                        onMouseLeave={hideSidebarPreview}
+                        onFocus={(event) =>
+                          showSidebarPreview(
+                            event.currentTarget,
+                            { kind: 'task', task, project },
+                            0,
+                            76,
+                          )
+                        }
+                        onBlur={hideSidebarPreview}
+                        onKeyDown={(event) =>
+                          openKeyboardItemMenu(event, 'task', task.id, task.title)
+                        }
+                        aria-describedby={
+                          sidebarPreview?.kind === 'task' && sidebarPreview.task.id === task.id
+                            ? 'sidebar-task-preview'
+                            : undefined
+                        }
+                      >
+                        <span className="nav-label">{task.title}</span>
+                      </button>
+                      {workingTaskIds.has(task.id) && (
+                        <span
+                          className="nav-working"
+                          role="status"
+                          aria-label={`${task.title} is working`}
                         >
-                          <span className="nav-label">{task.title}</span>
-                        </button>
+                          <span className="nav-working-spinner" />
+                        </span>
                       )}
-                      {workingTaskIds.has(task.id) &&
-                        !(editing?.type === 'task' && editing.id === task.id) && (
-                          <span
-                            className="nav-working"
-                            role="status"
-                            aria-label={`${task.title} is working`}
-                          >
-                            <span className="nav-working-spinner" />
-                          </span>
-                        )}
-                      {!(editing?.type === 'task' && editing.id === task.id) && (
-                        <Menu
+                      <Menu
                           plain
                           side="bottom"
                           align="end"
@@ -780,7 +809,6 @@ export function Sidebar({
                             closeItemContextMenu()
                           }}
                         />
-                      )}
                     </div>
                   ))}
               </div>
@@ -862,15 +890,204 @@ export function Sidebar({
               <button
                 type="button"
                 className="nav-project-preview-edit"
-                onClick={() => {
-                  const project = sidebarPreview.project
-                  hideSidebarPreview()
-                  startEdit('project', project.id, project.name)
-                }}
+                data-tooltip-ignore="true"
+                onClick={() => openProjectEditor(sidebarPreview.project)}
               >
                 <IconSettings size={17} />
                 <span>Edit project</span>
               </button>
+            </div>,
+            document.body,
+          )}
+
+        {chatRename &&
+          createPortal(
+            <div className="editor-backdrop" role="presentation" onMouseDown={closeChatRename}>
+              <form
+                className="editor-modal chat-rename"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="chat-rename-title"
+                aria-describedby="chat-rename-description"
+                onSubmit={(event) => void saveChatRename(event)}
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                <header className="editor-header">
+                  <h2 id="chat-rename-title">Rename chat</h2>
+                  <button
+                    type="button"
+                    className="editor-close"
+                    aria-label="Close rename chat"
+                    disabled={chatRename.saving}
+                    onClick={closeChatRename}
+                  >
+                    <IconClose size={17} />
+                  </button>
+                </header>
+                <p id="chat-rename-description" className="chat-rename-description">
+                  Keep it short and recognizable
+                </p>
+                <input
+                  autoFocus
+                  className="chat-rename-input"
+                  value={chatRename.name}
+                  aria-label="Chat name"
+                  disabled={chatRename.saving}
+                  onFocus={(event) => event.currentTarget.select()}
+                  onChange={(event) =>
+                    setChatRename((current) =>
+                      current ? { ...current, name: event.target.value } : current,
+                    )
+                  }
+                />
+                <footer className="editor-footer chat-rename-footer">
+                  <div className="editor-actions">
+                    <button
+                      type="button"
+                      className="editor-cancel chat-rename-cancel"
+                      data-tooltip-ignore="true"
+                      disabled={chatRename.saving}
+                      onClick={closeChatRename}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="editor-save"
+                      data-tooltip-ignore="true"
+                      disabled={chatRename.saving || !chatRename.name.trim()}
+                    >
+                      {chatRename.saving ? 'Saving…' : 'Save'}
+                    </button>
+                  </div>
+                </footer>
+              </form>
+            </div>,
+            document.body,
+          )}
+
+        {projectEditor &&
+          createPortal(
+            <div
+              className="editor-backdrop"
+              role="presentation"
+              onMouseDown={closeProjectEditor}
+            >
+              <form
+                className="editor-modal project-editor"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="project-editor-title"
+                onSubmit={(event) => void saveProject(event)}
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                <header className="editor-header">
+                  <h2 id="project-editor-title">Edit project</h2>
+                  <button
+                    type="button"
+                    className="editor-close"
+                    aria-label="Close project editor"
+                    disabled={projectEditor.saving}
+                    onClick={closeProjectEditor}
+                  >
+                    <IconClose size={17} />
+                  </button>
+                </header>
+
+                <label className="project-editor-name">
+                  <span className="project-editor-name-icon">
+                    <IconFolder size={17} />
+                  </span>
+                  <input
+                    autoFocus
+                    value={projectEditor.name}
+                    aria-label="Project name"
+                    disabled={projectEditor.saving}
+                    onChange={(event) =>
+                      setProjectEditor((current) =>
+                        current ? { ...current, name: event.target.value } : current,
+                      )
+                    }
+                  />
+                </label>
+
+                <div className="project-editor-section-title">Source folder</div>
+                <div className="project-editor-sources">
+                  {projectEditor.path && (
+                    <div className="project-editor-source" title={projectEditor.path}>
+                      <IconFolder size={17} />
+                      <span>{folderName(projectEditor.path)}</span>
+                      <button
+                        type="button"
+                        className="project-editor-remove-folder"
+                        aria-label="Remove source folder"
+                        disabled={projectEditor.saving}
+                        onClick={() =>
+                          setProjectEditor((current) =>
+                            current ? { ...current, path: '' } : current,
+                          )
+                        }
+                      >
+                        <IconClose size={14} />
+                      </button>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    className="project-editor-add-folder"
+                    data-tooltip-ignore="true"
+                    disabled={projectEditor.saving}
+                    onClick={() => void chooseProjectFolder()}
+                  >
+                    <span className="project-editor-add-icon" aria-hidden="true">
+                      <IconFolder size={17} />
+                      <IconPlus size={10} />
+                    </span>
+                    <span>Add folder</span>
+                  </button>
+                </div>
+
+                <footer className="editor-footer project-editor-footer">
+                  <button
+                    type="button"
+                    className="project-editor-remove"
+                    data-tooltip-ignore="true"
+                    disabled={projectEditor.saving}
+                    onClick={() =>
+                      setConfirming({
+                        type: 'project',
+                        id: projectEditor.project.id,
+                        name: projectEditor.name.trim() || projectEditor.project.name,
+                      })
+                    }
+                  >
+                    Remove local project
+                  </button>
+                  <div className="editor-actions">
+                    <button
+                      type="button"
+                      className="editor-cancel"
+                      data-tooltip-ignore="true"
+                      disabled={projectEditor.saving}
+                      onClick={closeProjectEditor}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="editor-save"
+                      data-tooltip-ignore="true"
+                      disabled={
+                        projectEditor.saving ||
+                        !projectEditor.name.trim() ||
+                        !projectEditor.path.trim()
+                      }
+                    >
+                      {projectEditor.saving ? 'Saving…' : 'Save'}
+                    </button>
+                  </div>
+                </footer>
+              </form>
             </div>,
             document.body,
           )}

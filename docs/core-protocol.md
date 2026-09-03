@@ -63,6 +63,7 @@ it only for the mode pill's icon and colour.
 | `project.list`       | `{}`                                                   | `Project[]`        |
 | `project.create`     | `{ name: string, path: string }`                       | `Project`          |
 | `project.rename`     | `{ project_id, name }`                                 | `Project`          |
+| `project.update`     | `{ project_id, name, path }`                           | `Project` — updates editable fields; changing the path restarts that project's agent sessions |
 | `project.delete`     | `{ project_id }`                                       | `{}` — removes the Project and all of its Chats and agent sessions |
 | `task.list`          | `{ project_id: string \| null }`                        | `Task[]` (most recently updated first) |
 | `task.create`        | `{ project_id: string \| null, title }`                 | `Task`             |

@@ -394,12 +394,12 @@ export function App() {
     }
   }, [dropIfDraft, openDraft, fail])
 
-  const renameProject = useCallback(
-    async (id: string, name: string) => {
+  const updateProject = useCallback(
+    async (id: string, name: string, path: string) => {
       try {
         setError(null)
-        const renamed = await request<Project>('project.rename', { project_id: id, name })
-        setProjects((prev) => prev.map((project) => (project.id === id ? renamed : project)))
+        const updated = await request<Project>('project.update', { project_id: id, name, path })
+        setProjects((prev) => prev.map((project) => (project.id === id ? updated : project)))
       } catch (err) {
         fail(err)
         throw err
@@ -865,7 +865,7 @@ export function App() {
         onNewChat={newChat}
         onSelectTask={selectTask}
         onAddProject={addProject}
-        onRenameProject={renameProject}
+        onUpdateProject={updateProject}
         onDeleteProject={deleteProject}
         onRenameTask={renameTask}
         onDeleteTask={deleteTask}
