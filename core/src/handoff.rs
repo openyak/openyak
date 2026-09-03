@@ -58,6 +58,8 @@ fn render_parts(parts: &[Part]) -> String {
             Part::Thought { .. } => None,
             Part::ToolCall { title, .. } => Some(format!("[tool: {title}]")),
             Part::Error { message } => Some(format!("[error: {message}]")),
+            Part::Image { .. } => Some("[image attached]".to_string()),
+            Part::File { path, name } => Some(format!("[attached: {name} ({path})]")),
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -179,6 +181,24 @@ mod tests {
         assert!(replayed.contains("[user] one"));
         assert!(replayed.contains("[assistant · claude] two"));
         assert!(replayed.ends_with("</handoff>\n\nthree"));
+    }
+
+    #[test]
+    fn attachments_are_named_in_the_handoff() {
+        let mut m = msg("u1", "user", Some("codex"), "look at this");
+        m.parts.push(Part::Image {
+            mime_type: "image/png".into(),
+            data: "AAAA".into(),
+        });
+        m.parts.push(Part::File {
+            path: "/tmp/demo/notes.md".into(),
+            name: "notes.md".into(),
+        });
+        let rendered = render(&[&m]);
+        assert!(rendered.contains(
+            "[user] look at this\n[image attached]\n[attached: notes.md (/tmp/demo/notes.md)]"
+        ));
+        assert!(!rendered.contains("AAAA"));
     }
 
     #[test]

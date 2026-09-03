@@ -18,7 +18,8 @@ type AgentId = "claude" | "codex";          // more later
 
 interface Agent   { id: AgentId; name: string; available: boolean; command: string }
 interface Project { id: string; name: string; path: string; created_at: string }
-interface Task    { id: string; project_id: string; title: string; created_at: string }
+interface Task    { id: string; project_id: string; title: string; created_at: string; updated_at: string;
+                    message_count: number }   // 0 = a chat that has not started
 interface Message {
   id: string; task_id: string; role: "user" | "assistant";
   agent: AgentId | null;                   // which agent produced/received it
@@ -28,21 +29,31 @@ type Part =
   | { type: "text"; text: string }
   | { type: "thought"; text: string }
   | { type: "tool_call"; id: string; title: string; kind: string; status: string; output?: string }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | { type: "image"; mime_type: string; data: string }   // attachment on a user message, base64
+  | { type: "file"; path: string; name: string };        // attachment on a user message, by path
+
+// What the app attaches to a message. Images become ACP image blocks; files and folders
+// become `file://` resource links the agent can open itself.
+type Attachment =
+  | { type: "image"; mime_type: string; data: string }
+  | { type: "file"; path: string };
 
 // A session config option exactly as the agent advertises it over ACP (model, effort,
 // mode, …). Core passes these through; it does not interpret them.
 type AgentConfigOption =
   | { id: string; name: string; description?: string; category?: string;
       type: "select"; current_value: string;
-      options: { value: string; name: string; description?: string; group?: string }[] }
+      options: { value: string; name: string; description?: string; group?: string; kind?: string }[] }
   | { id: string; name: string; description?: string; category?: string;
       type: "boolean"; current_value: boolean }
   | { id: string; name: string; description?: string; category?: string; type: "unknown" };
 ```
 
 `category` is the ACP category when given: `mode`, `model`, `model_config`,
-`thought_level`, or an agent-specific string.
+`thought_level`, or an agent-specific string. `kind` on a select option is the hint some
+agents attach to modes (`standard`, `auto_review`, `full_access`, `plan`); the app uses
+it only for the mode pill's icon and colour.
 
 ## Requests (app → core)
 
@@ -51,20 +62,26 @@ type AgentConfigOption =
 | `agent.list`         | `{}`                                                   | `Agent[]`          |
 | `project.list`       | `{}`                                                   | `Project[]`        |
 | `project.create`     | `{ name: string, path: string }`                       | `Project`          |
-| `task.list`          | `{ project_id }`                                       | `Task[]`           |
+| `task.list`          | `{ project_id }`                                       | `Task[]` (most recently updated first) |
 | `task.create`        | `{ project_id, title }`                                | `Task`             |
+| `task.rename`        | `{ task_id, title }`                                   | `Task`             |
+| `task.delete`        | `{ task_id }`                                          | `{}` — removes the Chat and the task's agent sessions |
 | `chat.history`       | `{ task_id }`                                          | `Message[]`        |
-| `chat.send`          | `{ task_id, agent: AgentId, text }`                    | `{ user_message_id, assistant_message_id }` |
+| `chat.send`          | `{ task_id, agent: AgentId, text, attachments?: Attachment[] }` | `{ user_message_id, assistant_message_id }` |
 | `chat.cancel`        | `{ task_id }`                                          | `{}`               |
 | `agent.connect`      | `{ task_id, agent: AgentId }`                          | `{}`               |
 | `agent.set_config`   | `{ task_id, agent: AgentId, config_id: string, value: string \| boolean }` | `{}` |
 | `permission.respond` | `{ request_id, option_id: string \| null }`            | `{}`               |
 
-`chat.send` returns immediately; the assistant reply streams via notifications.
+`chat.send` returns immediately; the assistant reply streams via notifications. A message
+needs text or at least one attachment. Attachments are stored as `image` / `file` Parts of
+the user message and sent to the agent as ACP content blocks after the text.
 
 `agent.connect` starts the agent's adapter and session for the Task if they are not
 running, so that `agent.config` arrives before the first prompt. It returns as soon as
-the start is scheduled; readiness comes through `agent.status`.
+the start is scheduled; readiness comes through `agent.status`. If the pair is already
+running, core re-sends `agent.status` and `agent.config` so a freshly loaded app still
+learns the session's options.
 
 `agent.set_config` forwards one option change to the running agent session
 (ACP `session/set_config_option`, or `session/set_mode` for agents that only list
@@ -86,6 +103,11 @@ whenever it has to start a fresh session for that pair.
 | method               | params | result |
 |----------------------|--------|--------|
 | `permission.request` | `{ request_id, task_id, agent, title, options: { id, label, kind }[] }` | `{ option_id: string \| null }` (`null` = cancel) |
+
+Tasks with no messages are drafts: the app creates one when a new chat starts (so the
+agents' sessions and options exist before the first message), renames it on the first
+message, and deletes it when the user leaves it unsent. Core purges leftover empty tasks
+on startup.
 
 ## Handoff semantics
 

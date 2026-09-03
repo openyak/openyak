@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { CoreClient, CoreError } from './core-client'
@@ -46,14 +46,20 @@ function startCore(): CoreClient {
   return client
 }
 
+// Window chrome matches the renderer's theme so there is no flash on launch and the
+// title-bar area (macOS traffic lights sit over the sidebar) blends in.
+const windowBackground = () => (nativeTheme.shouldUseDarkColors ? '#171717' : '#f9f9f9')
+
 function createWindow(): void {
   win = new BrowserWindow({
-    width: 1280,
-    height: 820,
-    minWidth: 900,
-    minHeight: 560,
+    width: 1200,
+    height: 800,
+    minWidth: 760,
+    minHeight: 520,
     title: 'OpenYak',
-    backgroundColor: '#fafafa',
+    backgroundColor: windowBackground(),
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    trafficLightPosition: { x: 16, y: 18 },
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -84,6 +90,10 @@ function createWindow(): void {
   }
 }
 
+nativeTheme.on('updated', () => {
+  win?.setBackgroundColor(windowBackground())
+})
+
 ipcMain.handle('core:request', async (_e, method: string, params: unknown) => {
   if (!core) throw new Error('core is not running')
   try {
@@ -99,6 +109,14 @@ ipcMain.handle('dialog:pick-directory', async () => {
   const opts: Electron.OpenDialogOptions = { properties: ['openDirectory', 'createDirectory'] }
   const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
   return r.canceled || r.filePaths.length === 0 ? null : r.filePaths[0]
+})
+
+ipcMain.handle('dialog:pick-files', async () => {
+  const opts: Electron.OpenDialogOptions = {
+    properties: ['openFile', 'openDirectory', 'multiSelections'],
+  }
+  const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+  return r.canceled ? [] : r.filePaths
 })
 
 app.whenReady().then(() => {
