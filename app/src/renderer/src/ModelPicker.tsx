@@ -4,6 +4,8 @@ import { useDismiss } from './Menu'
 import { IconBolt, IconCheck, IconChevronDown, IconChevronRight } from './icons'
 
 type SelectOption = Extract<AgentConfigOption, { type: 'select' }>
+type BooleanOption = Extract<AgentConfigOption, { type: 'boolean' }>
+type FastOption = SelectOption | BooleanOption
 
 interface Props {
   agents: Agent[]
@@ -16,11 +18,19 @@ interface Props {
   hasChat: boolean
   busy: boolean
   onAgentChange: (id: AgentId) => void
-  onSetConfig: (agent: AgentId, configId: string, value: string) => void
+  onSetConfig: (agent: AgentId, configId: string, value: string | boolean) => void
 }
 
 function findSelect(options: AgentConfigOption[] | null | undefined, category: string) {
   return options?.find((o): o is SelectOption => o.type === 'select' && o.category === category)
+}
+
+function isFastOption(option: AgentConfigOption): option is FastOption {
+  return (
+    (option.type === 'select' || option.type === 'boolean') &&
+    option.category === 'model_config' &&
+    /fast/i.test(`${option.id} ${option.name}`)
+  )
 }
 
 /** Model names the way the vendors' own apps show them: "GPT-5.6-Sol" → "5.6 Sol". */
@@ -62,6 +72,18 @@ export function ModelPicker({
   const options = optionsByAgent[agent] ?? null
   const model = findSelect(options, 'model')
   const effort = findSelect(options, 'thought_level')
+  const fast = options?.find(isFastOption)
+  const fastOn = fast?.type === 'select' ? fast.options.find((option) => option.value === 'on') : null
+  const fastOff =
+    fast?.type === 'select' ? fast.options.find((option) => option.value === 'off') : null
+  const fastEnabled =
+    fast?.type === 'boolean'
+      ? fast.current_value
+      : fast?.type === 'select' && fastOn
+        ? fast.current_value === fastOn.value
+        : false
+  const canToggleFast =
+    fast?.type === 'boolean' || (fast?.type === 'select' && !!fastOn && !!fastOff)
   const effortIndex = effort
     ? Math.max(
         0,
@@ -83,22 +105,22 @@ export function ModelPicker({
     <div className="menu" ref={ref}>
       <button
         type="button"
+        data-tooltip="Choose model and effort"
         className={`pill pill-model${open ? ' pill-open' : ''}`}
         aria-haspopup="dialog"
         aria-expanded={open}
         disabled={busy}
-        title={[
-          model && `${model.name}: ${current(model)?.description ?? current(model)?.name ?? ''}`,
-          effort && `${effort.name}: ${current(effort)?.description ?? current(effort)?.name ?? ''}`,
-        ]
-          .filter(Boolean)
-          .join('\n')}
+        aria-label={`Model and effort: ${model ? currentName(model) : agentName(agent)}${effort ? `, ${currentName(effort)}` : ''}${fast ? `, fast mode ${fastEnabled ? 'on' : 'off'}` : ''}`}
         onClick={() => {
           setView('main')
           setOpen((o) => !o)
         }}
       >
-        <IconBolt size={15} className="pill-bolt" />
+        <IconBolt
+          size={15}
+          className={`pill-bolt${fastEnabled ? ' is-fast' : ''}`}
+          aria-hidden="true"
+        />
         <span className="pill-label">{title}</span>
         <IconChevronDown size={12} className="pill-chevron" />
       </button>
@@ -107,18 +129,45 @@ export function ModelPicker({
         <div className={`popover popover-top popover-end mp mp-${view}`} role="dialog">
           {view === 'main' ? (
             <>
-              <button
-                type="button"
-                className="mp-head"
-                onClick={() => setView('models')}
-                title="Change model or agent"
-              >
-                <IconBolt size={18} className="mp-bolt" />
-                <span className="mp-title">
-                  {title}
+              <div className={`mp-head${fast ? ' has-fast' : ''}`}>
+                {fast && (
+                  <span className="mp-fast-wrap">
+                    <button
+                      type="button"
+                      data-tooltip-ignore="true"
+                      className={`mp-fast${fastEnabled ? ' is-on' : ''}`}
+                      disabled={busy || !canToggleFast}
+                      aria-pressed={fastEnabled}
+                      aria-label={fastEnabled ? 'Turn off fast mode' : 'Turn on fast mode'}
+                      onClick={() => {
+                        if (!canToggleFast) return
+                        const value =
+                          fast.type === 'boolean'
+                            ? !fast.current_value
+                            : fastEnabled
+                              ? fastOff!.value
+                              : fastOn!.value
+                        onSetConfig(agent, fast.id, value)
+                      }}
+                    >
+                      <IconBolt size={17} />
+                    </button>
+                    <span className="mp-fast-tooltip" role="tooltip">
+                      <strong>{fast.name}</strong>
+                      <span>{fast.description ?? 'Faster responses with higher usage'}</span>
+                    </span>
+                  </span>
+                )}
+                <button
+                  type="button"
+                  className="mp-model-link"
+                  onClick={() => setView('models')}
+                  title="Change model or agent"
+                >
+                  <span className="mp-title">{title}</span>
                   <IconChevronRight size={15} className="mp-caret" />
-                </span>
-              </button>
+                </button>
+              </div>
               {effort && effort.options.length > 1 ? (
                 <EffortSlider
                   count={effort.options.length}
@@ -139,7 +188,7 @@ export function ModelPicker({
               )}
             </>
           ) : (
-            <div className="mp-models">
+            <div className="mp-model-list">
               {ordered.map((a) => {
                 const opts = optionsByAgent[a.id]
                 const m = findSelect(opts, 'model')
@@ -232,15 +281,20 @@ function ModelItem({
   )
 }
 
-// Fixed positions (as fractions of the filled width) so the sparkle rides with the fill.
+// Deterministic particles keep the energy field alive without reflow or random flicker.
 const SPARKS = [
-  { x: 0.1, y: 0.62, d: 0 },
-  { x: 0.2, y: 0.3, d: 1.1 },
-  { x: 0.34, y: 0.7, d: 0.4 },
-  { x: 0.47, y: 0.38, d: 1.7 },
-  { x: 0.61, y: 0.66, d: 0.8 },
-  { x: 0.72, y: 0.3, d: 1.4 },
-  { x: 0.86, y: 0.58, d: 0.2 },
+  { x: 0.07, y: 0.68, size: 2, dx: 5, dy: -3, delay: -0.4, duration: 2.8 },
+  { x: 0.14, y: 0.29, size: 3, dx: -3, dy: 4, delay: -1.9, duration: 3.5 },
+  { x: 0.22, y: 0.52, size: 2, dx: 6, dy: 2, delay: -2.6, duration: 4.1 },
+  { x: 0.31, y: 0.72, size: 2, dx: -5, dy: -4, delay: -1.1, duration: 3.1 },
+  { x: 0.4, y: 0.34, size: 2, dx: 4, dy: 4, delay: -3.2, duration: 4.4 },
+  { x: 0.49, y: 0.59, size: 3, dx: -4, dy: -3, delay: -0.8, duration: 3.7 },
+  { x: 0.58, y: 0.25, size: 2, dx: 5, dy: 3, delay: -2.2, duration: 3.3 },
+  { x: 0.66, y: 0.7, size: 2, dx: -6, dy: -2, delay: -1.5, duration: 4.2 },
+  { x: 0.74, y: 0.42, size: 3, dx: 4, dy: -4, delay: -3.5, duration: 3.8 },
+  { x: 0.82, y: 0.65, size: 2, dx: -3, dy: 3, delay: -0.2, duration: 3 },
+  { x: 0.89, y: 0.28, size: 2, dx: 5, dy: 4, delay: -2.9, duration: 4.5 },
+  { x: 0.95, y: 0.53, size: 3, dx: -4, dy: -3, delay: -1.7, duration: 3.4 },
 ]
 
 function EffortSlider({
@@ -272,7 +326,17 @@ function EffortSlider({
             <span
               key={i}
               className="slider-spark"
-              style={{ left: `${s.x * 100}%`, top: `${s.y * 100}%`, animationDelay: `${s.d}s` }}
+              style={
+                {
+                  left: `${s.x * 100}%`,
+                  top: `${s.y * 100}%`,
+                  '--spark-size': `${s.size}px`,
+                  '--spark-x': `${s.dx}px`,
+                  '--spark-y': `${s.dy}px`,
+                  animationDelay: `${s.delay}s`,
+                  animationDuration: `${s.duration}s`,
+                } as React.CSSProperties
+              }
             />
           ))}
         </div>

@@ -84,6 +84,11 @@ struct ProjectCreate {
     path: String,
 }
 #[derive(Deserialize)]
+struct ProjectRename {
+    project_id: String,
+    name: String,
+}
+#[derive(Deserialize)]
 struct TaskCreate {
     project_id: String,
     title: String,
@@ -131,6 +136,21 @@ struct ChatSend {
     attachments: Vec<Attachment>,
 }
 #[derive(Deserialize)]
+struct ChatEdit {
+    task_id: String,
+    message_id: String,
+    agent: String,
+    text: String,
+    #[serde(default)]
+    attachments: Vec<Attachment>,
+}
+#[derive(Deserialize)]
+struct ChatRetry {
+    task_id: String,
+    message_id: String,
+    agent: String,
+}
+#[derive(Deserialize)]
 struct AgentSetConfig {
     task_id: String,
     agent: String,
@@ -159,6 +179,24 @@ async fn handle(ctx: &Arc<Ctx>, method: &str, params: Value) -> Result<Value, Rp
         "project.create" => {
             let p: ProjectCreate = parse(params)?;
             json!(store.create_project(&p.name, &p.path)?)
+        }
+        "project.rename" => {
+            let p: ProjectRename = parse(params)?;
+            let project = store
+                .rename_project(&p.project_id, &p.name)?
+                .ok_or_else(|| RpcError::invalid_params("unknown project_id"))?;
+            json!(project)
+        }
+        "project.delete" => {
+            let p: ProjectId = parse(params)?;
+            // Sessions serving any Chat in this Project go with it.
+            for task in store.list_tasks(&p.project_id)? {
+                ctx.agents.drop_task(&task.id);
+            }
+            if !store.delete_project(&p.project_id)? {
+                return Err(RpcError::invalid_params("unknown project_id"));
+            }
+            json!({})
         }
         "task.list" => {
             let p: ProjectId = parse(params)?;
@@ -194,6 +232,14 @@ async fn handle(ctx: &Arc<Ctx>, method: &str, params: Value) -> Result<Value, Rp
         "chat.send" => {
             let p: ChatSend = parse(params)?;
             chat_send(ctx, p).await?
+        }
+        "chat.edit" => {
+            let p: ChatEdit = parse(params)?;
+            chat_edit(ctx, p).await?
+        }
+        "chat.retry" => {
+            let p: ChatRetry = parse(params)?;
+            chat_retry(ctx, p).await?
         }
         "chat.cancel" => {
             let p: TaskId = parse(params)?;
@@ -252,14 +298,7 @@ async fn chat_send(ctx: &Arc<Ctx>, p: ChatSend) -> Result<Value, RpcError> {
     let store = &ctx.store;
     let (task, project) = locate(ctx, &p.task_id, &p.agent)?;
 
-    let mut parts = Vec::with_capacity(1 + p.attachments.len());
-    if !p.text.trim().is_empty() {
-        parts.push(Part::Text { text: p.text });
-    }
-    parts.extend(p.attachments.into_iter().map(Attachment::into_part));
-    if parts.is_empty() {
-        return Err(RpcError::invalid_params("empty message"));
-    }
+    let parts = message_parts(p.text, p.attachments)?;
     let user = store.insert_message(&task.id, "user", Some(&p.agent), &parts, "done")?;
     let assistant =
         store.insert_message(&task.id, "assistant", Some(&p.agent), &[], "streaming")?;
@@ -276,4 +315,106 @@ async fn chat_send(ctx: &Arc<Ctx>, p: ChatSend) -> Result<Value, RpcError> {
         },
     );
     Ok(json!({ "user_message_id": user.id, "assistant_message_id": assistant.id }))
+}
+
+/// Edit a user turn by rewinding the transcript to that point and replaying it. The
+/// filesystem is deliberately left alone; this is Claude Code's "restore conversation"
+/// behavior, not a source-control rollback.
+async fn chat_edit(ctx: &Arc<Ctx>, p: ChatEdit) -> Result<Value, RpcError> {
+    let store = &ctx.store;
+    let (task, project) = locate(ctx, &p.task_id, &p.agent)?;
+    let transcript = replayable_transcript(store.list_messages(&task.id)?)?;
+    let target = transcript
+        .iter()
+        .find(|m| m.id == p.message_id)
+        .ok_or_else(|| RpcError::invalid_params("unknown message_id"))?;
+    if target.role != "user" {
+        return Err(RpcError::invalid_params(
+            "chat.edit requires a user message",
+        ));
+    }
+    let parts = message_parts(p.text, p.attachments)?;
+
+    ctx.agents.drop_task(&task.id);
+    if !store.truncate_messages_from(&task.id, &target.id)? {
+        return Err(RpcError::invalid_params("unknown message_id"));
+    }
+    let user = store.insert_message(&task.id, "user", Some(&p.agent), &parts, "done")?;
+    let assistant =
+        store.insert_message(&task.id, "assistant", Some(&p.agent), &[], "streaming")?;
+    ctx.agents.send(
+        ctx,
+        &task.id,
+        &p.agent,
+        &project.path,
+        Job {
+            user_message_id: user.id.clone(),
+            assistant_message_id: assistant.id.clone(),
+        },
+    );
+    Ok(json!({ "user_message_id": user.id, "assistant_message_id": assistant.id }))
+}
+
+/// Retry a terminal assistant turn without duplicating the user prompt above it.
+async fn chat_retry(ctx: &Arc<Ctx>, p: ChatRetry) -> Result<Value, RpcError> {
+    let store = &ctx.store;
+    let (task, project) = locate(ctx, &p.task_id, &p.agent)?;
+    let transcript = replayable_transcript(store.list_messages(&task.id)?)?;
+    let index = transcript
+        .iter()
+        .position(|m| m.id == p.message_id)
+        .ok_or_else(|| RpcError::invalid_params("unknown message_id"))?;
+    let target = &transcript[index];
+    if target.role != "assistant" {
+        return Err(RpcError::invalid_params(
+            "chat.retry requires an assistant message",
+        ));
+    }
+    let user = index
+        .checked_sub(1)
+        .and_then(|i| transcript.get(i))
+        .filter(|m| m.role == "user")
+        .ok_or_else(|| RpcError::invalid_params("assistant message has no user prompt"))?;
+    let user_message_id = user.id.clone();
+
+    ctx.agents.drop_task(&task.id);
+    if !store.truncate_messages_from(&task.id, &target.id)? {
+        return Err(RpcError::invalid_params("unknown message_id"));
+    }
+    let assistant =
+        store.insert_message(&task.id, "assistant", Some(&p.agent), &[], "streaming")?;
+    ctx.agents.send(
+        ctx,
+        &task.id,
+        &p.agent,
+        &project.path,
+        Job {
+            user_message_id,
+            assistant_message_id: assistant.id.clone(),
+        },
+    );
+    Ok(json!({ "assistant_message_id": assistant.id }))
+}
+
+fn message_parts(text: String, attachments: Vec<Attachment>) -> Result<Vec<Part>, RpcError> {
+    let mut parts = Vec::with_capacity(1 + attachments.len());
+    if !text.trim().is_empty() {
+        parts.push(Part::Text { text });
+    }
+    parts.extend(attachments.into_iter().map(Attachment::into_part));
+    if parts.is_empty() {
+        return Err(RpcError::invalid_params("empty message"));
+    }
+    Ok(parts)
+}
+
+fn replayable_transcript(
+    messages: Vec<crate::store::Message>,
+) -> Result<Vec<crate::store::Message>, RpcError> {
+    if messages.iter().any(|m| m.status == "streaming") {
+        return Err(RpcError::failed(
+            "stop the current response before replaying a turn",
+        ));
+    }
+    Ok(messages)
 }
