@@ -24,6 +24,10 @@ pub struct Task {
     pub project_id: String,
     pub title: String,
     pub created_at: String,
+    /// Last time a Message was added or finished; what the app sorts Tasks by.
+    pub updated_at: String,
+    /// Messages in the Chat. Zero means a chat that has not started (a draft).
+    pub message_count: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -45,6 +49,16 @@ pub enum Part {
     },
     Error {
         message: String,
+    },
+    /// An image attached to a user Message, base64-encoded.
+    Image {
+        mime_type: String,
+        data: String,
+    },
+    /// A file or folder attached to a user Message, by path.
+    File {
+        path: String,
+        name: String,
     },
 }
 
@@ -72,7 +86,7 @@ CREATE TABLE IF NOT EXISTS projects (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS tasks (
     id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
-    title TEXT NOT NULL, created_at TEXT NOT NULL);
+    title TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS messages (
     id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id),
     role TEXT NOT NULL, agent TEXT, parts TEXT NOT NULL, status TEXT NOT NULL,
@@ -93,6 +107,22 @@ pub struct Store {
     conn: Mutex<Connection>,
 }
 
+/// Bring a database created by an earlier core up to the current schema.
+fn migrate(conn: &Connection) -> Result<()> {
+    let has_updated_at = conn
+        .prepare("PRAGMA table_info(tasks)")?
+        .query_map([], |r| r.get::<_, String>(1))?
+        .filter_map(Result::ok)
+        .any(|name| name == "updated_at");
+    if !has_updated_at {
+        conn.execute_batch(
+            "ALTER TABLE tasks ADD COLUMN updated_at TEXT NOT NULL DEFAULT '';
+             UPDATE tasks SET updated_at = created_at WHERE updated_at = '';",
+        )?;
+    }
+    Ok(())
+}
+
 impl Store {
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path).with_context(|| format!("open {}", path.display()))?;
@@ -107,10 +137,12 @@ impl Store {
     fn init(conn: Connection) -> Result<Self> {
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
         conn.execute_batch(SCHEMA)?;
+        migrate(&conn)?;
         let store = Self {
             conn: Mutex::new(conn),
         };
         store.reap_streaming()?;
+        store.purge_empty_tasks()?;
         Ok(store)
     }
 
@@ -127,6 +159,22 @@ impl Store {
                 "UPDATE messages SET status = 'cancelled' WHERE status = 'streaming'",
                 [],
             )
+        })
+    }
+
+    /// Tasks that never got a message belong to a previous run's unsent new chat; drop
+    /// them (and their agent state) so they do not pile up.
+    pub fn purge_empty_tasks(&self) -> Result<usize> {
+        self.with(|c| {
+            const EMPTY: &str =
+                "SELECT id FROM tasks WHERE id NOT IN (SELECT task_id FROM messages)";
+            for table in ["agent_cursors", "agent_sessions", "agent_config"] {
+                c.execute(
+                    &format!("DELETE FROM {table} WHERE task_id IN ({EMPTY})"),
+                    [],
+                )?;
+            }
+            c.execute(&format!("DELETE FROM tasks WHERE id IN ({EMPTY})"), [])
         })
     }
 
@@ -179,10 +227,13 @@ impl Store {
         })
     }
 
+    /// Tasks of a Project, most recently updated first.
     pub fn list_tasks(&self, project_id: &str) -> Result<Vec<Task>> {
         self.with(|c| {
             c.prepare(
-                "SELECT id, project_id, title, created_at FROM tasks WHERE project_id = ?1 ORDER BY rowid",
+                "SELECT id, project_id, title, created_at, updated_at, \
+                 (SELECT COUNT(*) FROM messages m WHERE m.task_id = t.id) \
+                 FROM tasks t WHERE project_id = ?1 ORDER BY updated_at DESC, rowid DESC",
             )?
             .query_map([project_id], |r| {
                 Ok(Task {
@@ -190,6 +241,8 @@ impl Store {
                     project_id: r.get(1)?,
                     title: r.get(2)?,
                     created_at: r.get(3)?,
+                    updated_at: r.get(4)?,
+                    message_count: r.get(5)?,
                 })
             })?
             .collect()
@@ -197,16 +250,20 @@ impl Store {
     }
 
     pub fn create_task(&self, project_id: &str, title: &str) -> Result<Task> {
+        let created_at = now();
         let t = Task {
             id: new_id(),
             project_id: project_id.to_string(),
             title: title.to_string(),
-            created_at: now(),
+            updated_at: created_at.clone(),
+            created_at,
+            message_count: 0,
         };
         self.with(|c| {
             c.execute(
-                "INSERT INTO tasks (id, project_id, title, created_at) VALUES (?1, ?2, ?3, ?4)",
-                params![t.id, t.project_id, t.title, t.created_at],
+                "INSERT INTO tasks (id, project_id, title, created_at, updated_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![t.id, t.project_id, t.title, t.created_at, t.updated_at],
             )
         })?;
         Ok(t)
@@ -215,7 +272,9 @@ impl Store {
     pub fn get_task(&self, id: &str) -> Result<Option<Task>> {
         self.with(|c| {
             c.query_row(
-                "SELECT id, project_id, title, created_at FROM tasks WHERE id = ?1",
+                "SELECT id, project_id, title, created_at, updated_at, \
+                 (SELECT COUNT(*) FROM messages m WHERE m.task_id = t.id) \
+                 FROM tasks t WHERE id = ?1",
                 [id],
                 |r| {
                     Ok(Task {
@@ -223,10 +282,38 @@ impl Store {
                         project_id: r.get(1)?,
                         title: r.get(2)?,
                         created_at: r.get(3)?,
+                        updated_at: r.get(4)?,
+                        message_count: r.get(5)?,
                     })
                 },
             )
             .optional()
+        })
+    }
+
+    /// Retitle a Task; None if it does not exist. Does not count as activity.
+    pub fn rename_task(&self, id: &str, title: &str) -> Result<Option<Task>> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE tasks SET title = ?1 WHERE id = ?2",
+                params![title, id],
+            )
+        })?;
+        self.get_task(id)
+    }
+
+    /// Delete a Task with its Chat and agent state; false if it did not exist.
+    pub fn delete_task(&self, id: &str) -> Result<bool> {
+        self.with(|c| {
+            for table in [
+                "agent_cursors",
+                "agent_sessions",
+                "agent_config",
+                "messages",
+            ] {
+                c.execute(&format!("DELETE FROM {table} WHERE task_id = ?1"), [id])?;
+            }
+            Ok(c.execute("DELETE FROM tasks WHERE id = ?1", [id])? > 0)
         })
     }
 
@@ -284,6 +371,10 @@ impl Store {
                     m.status,
                     m.created_at
                 ],
+            )?;
+            c.execute(
+                "UPDATE tasks SET updated_at = ?1 WHERE id = ?2",
+                params![m.created_at, m.task_id],
             )
         })?;
         Ok(m)
@@ -295,6 +386,11 @@ impl Store {
             c.execute(
                 "UPDATE messages SET parts = ?1, status = ?2 WHERE id = ?3",
                 params![parts_json, status, id],
+            )?;
+            c.execute(
+                "UPDATE tasks SET updated_at = ?1 \
+                 WHERE id = (SELECT task_id FROM messages WHERE id = ?2)",
+                params![now(), id],
             )
         })?;
         Ok(())
@@ -409,7 +505,114 @@ mod tests {
         assert_eq!(s.get_project(&p.id).unwrap().unwrap().path, "/tmp/demo");
         let t = s.create_task(&p.id, "first").unwrap();
         assert_eq!(s.list_tasks(&p.id).unwrap()[0].id, t.id);
+        assert_eq!(t.updated_at, t.created_at);
+        assert_eq!(t.message_count, 0);
         assert!(s.get_task("missing").unwrap().is_none());
+    }
+
+    #[test]
+    fn tasks_count_messages_and_can_be_renamed_and_deleted() {
+        let s = Store::in_memory().unwrap();
+        let p = s.create_project("demo", "/tmp/demo").unwrap();
+        let t = s.create_task(&p.id, "New chat").unwrap();
+        s.insert_message(&t.id, "user", Some("codex"), &text("hi"), "done")
+            .unwrap();
+        s.insert_message(&t.id, "assistant", Some("codex"), &[], "streaming")
+            .unwrap();
+        assert_eq!(s.get_task(&t.id).unwrap().unwrap().message_count, 2);
+        assert_eq!(s.list_tasks(&p.id).unwrap()[0].message_count, 2);
+
+        let renamed = s.rename_task(&t.id, "say hi").unwrap().unwrap();
+        assert_eq!(renamed.title, "say hi");
+        assert!(renamed.updated_at >= t.updated_at);
+        assert!(s.rename_task("missing", "x").unwrap().is_none());
+
+        s.set_cursor(&t.id, "codex", 1).unwrap();
+        s.begin_session(&t.id, "codex", "sess", true).unwrap();
+        s.set_config_value(&t.id, "codex", "model", &Value::from("m"))
+            .unwrap();
+        assert!(s.delete_task(&t.id).unwrap());
+        assert!(!s.delete_task(&t.id).unwrap());
+        assert!(s.get_task(&t.id).unwrap().is_none());
+        assert!(s.list_messages(&t.id).unwrap().is_empty());
+        assert_eq!(s.cursor(&t.id, "codex").unwrap(), -1);
+        assert!(s.session_id(&t.id, "codex").unwrap().is_none());
+        assert!(s.config_values(&t.id, "codex").unwrap().is_empty());
+    }
+
+    #[test]
+    fn empty_tasks_are_purged_on_open() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL, created_at TEXT NOT NULL);
+             CREATE TABLE tasks (id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), title TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT '');
+             CREATE TABLE messages (id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), role TEXT NOT NULL, agent TEXT, parts TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL);
+             CREATE TABLE agent_sessions (task_id TEXT NOT NULL, agent TEXT NOT NULL, session_id TEXT NOT NULL, PRIMARY KEY (task_id, agent));
+             INSERT INTO projects VALUES ('p', 'demo', '/tmp/demo', '2026-01-01T00:00:00.000Z');
+             INSERT INTO tasks VALUES ('kept', 'p', 'kept', '2026-01-02T00:00:00.000Z', '2026-01-02T00:00:00.000Z');
+             INSERT INTO tasks VALUES ('empty', 'p', 'New chat', '2026-01-03T00:00:00.000Z', '2026-01-03T00:00:00.000Z');
+             INSERT INTO messages VALUES ('m', 'kept', 'user', 'codex', '[]', 'done', '2026-01-02T00:00:01.000Z');
+             INSERT INTO agent_sessions VALUES ('empty', 'codex', 'sess');",
+        )
+        .unwrap();
+        let s = Store::init(conn).unwrap();
+        let ids: Vec<String> = s
+            .list_tasks("p")
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(ids, ["kept"]);
+        assert!(s.session_id("empty", "codex").unwrap().is_none());
+    }
+
+    #[test]
+    fn tasks_list_most_recently_updated_first() {
+        let s = Store::in_memory().unwrap();
+        let p = s.create_project("demo", "/tmp/demo").unwrap();
+        let a = s.create_task(&p.id, "a").unwrap();
+        let b = s.create_task(&p.id, "b").unwrap();
+        // Newest first when nothing has happened yet.
+        let ids: Vec<String> = s
+            .list_tasks(&p.id)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(ids, [b.id.clone(), a.id.clone()]);
+        // A message in `a` makes it the most recent, and the change is visible on the Task.
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        s.insert_message(&a.id, "user", Some("codex"), &text("hi"), "done")
+            .unwrap();
+        let listed = s.list_tasks(&p.id).unwrap();
+        assert_eq!(listed[0].id, a.id);
+        assert!(listed[0].updated_at > listed[0].created_at);
+        // Finishing a reply bumps it too.
+        let reply = s
+            .insert_message(&b.id, "assistant", Some("codex"), &[], "streaming")
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        s.finish_message(&reply.id, &text("done"), "done").unwrap();
+        assert_eq!(s.list_tasks(&p.id).unwrap()[0].id, b.id);
+    }
+
+    #[test]
+    fn old_databases_gain_updated_at() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL, created_at TEXT NOT NULL);
+             CREATE TABLE tasks (id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), title TEXT NOT NULL, created_at TEXT NOT NULL);
+             CREATE TABLE messages (id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), role TEXT NOT NULL, agent TEXT, parts TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL);
+             INSERT INTO projects VALUES ('p', 'demo', '/tmp/demo', '2026-01-01T00:00:00.000Z');
+             INSERT INTO tasks VALUES ('t', 'p', 'old', '2026-01-02T00:00:00.000Z');
+             INSERT INTO messages VALUES ('m', 't', 'user', 'codex', '[]', 'done', '2026-01-02T00:00:01.000Z');",
+        )
+        .unwrap();
+        let s = Store::init(conn).unwrap();
+        let t = s.get_task("t").unwrap().unwrap();
+        assert_eq!(t.updated_at, "2026-01-02T00:00:00.000Z");
+        assert_eq!(t.message_count, 1);
+        assert_eq!(s.list_tasks("p").unwrap().len(), 1);
     }
 
     #[test]

@@ -89,15 +89,46 @@ struct TaskCreate {
     title: String,
 }
 #[derive(Deserialize)]
+struct TaskRename {
+    task_id: String,
+    title: String,
+}
+#[derive(Deserialize)]
 struct TaskAgent {
     task_id: String,
     agent: String,
 }
+/// What the app attaches to a message: images travel inline, files and folders by path.
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum Attachment {
+    Image { mime_type: String, data: String },
+    File { path: String },
+}
+
+impl Attachment {
+    fn into_part(self) -> Part {
+        match self {
+            Attachment::Image { mime_type, data } => Part::Image { mime_type, data },
+            Attachment::File { path } => {
+                let name = std::path::Path::new(&path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or_else(|| path.clone());
+                Part::File { path, name }
+            }
+        }
+    }
+}
+
 #[derive(Deserialize)]
 struct ChatSend {
     task_id: String,
     agent: String,
     text: String,
+    #[serde(default)]
+    attachments: Vec<Attachment>,
 }
 #[derive(Deserialize)]
 struct AgentSetConfig {
@@ -139,6 +170,22 @@ async fn handle(ctx: &Arc<Ctx>, method: &str, params: Value) -> Result<Value, Rp
                 return Err(RpcError::invalid_params("unknown project_id"));
             }
             json!(store.create_task(&p.project_id, &p.title)?)
+        }
+        "task.rename" => {
+            let p: TaskRename = parse(params)?;
+            let task = store
+                .rename_task(&p.task_id, &p.title)?
+                .ok_or_else(|| RpcError::invalid_params("unknown task_id"))?;
+            json!(task)
+        }
+        "task.delete" => {
+            let p: TaskId = parse(params)?;
+            // Sessions serving the task go with it; their adapters exit.
+            ctx.agents.drop_task(&p.task_id);
+            if !store.delete_task(&p.task_id)? {
+                return Err(RpcError::invalid_params("unknown task_id"));
+            }
+            json!({})
         }
         "chat.history" => {
             let p: TaskId = parse(params)?;
@@ -205,13 +252,15 @@ async fn chat_send(ctx: &Arc<Ctx>, p: ChatSend) -> Result<Value, RpcError> {
     let store = &ctx.store;
     let (task, project) = locate(ctx, &p.task_id, &p.agent)?;
 
-    let user = store.insert_message(
-        &task.id,
-        "user",
-        Some(&p.agent),
-        &[Part::Text { text: p.text }],
-        "done",
-    )?;
+    let mut parts = Vec::with_capacity(1 + p.attachments.len());
+    if !p.text.trim().is_empty() {
+        parts.push(Part::Text { text: p.text });
+    }
+    parts.extend(p.attachments.into_iter().map(Attachment::into_part));
+    if parts.is_empty() {
+        return Err(RpcError::invalid_params("empty message"));
+    }
+    let user = store.insert_message(&task.id, "user", Some(&p.agent), &parts, "done")?;
     let assistant =
         store.insert_message(&task.id, "assistant", Some(&p.agent), &[], "streaming")?;
     // The prompt text (handoff + message) is assembled by the agent connection once it

@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type {
   CoreExit,
   Notification,
@@ -40,6 +40,20 @@ const api: OpenYakApi = {
 
   pickDirectory(): Promise<string | null> {
     return ipcRenderer.invoke('dialog:pick-directory') as Promise<string | null>
+  },
+
+  pickFiles(): Promise<string[]> {
+    return ipcRenderer.invoke('dialog:pick-files') as Promise<string[]>
+  },
+
+  // Sandboxed renderers do not see File.path; the preload resolves dropped or pasted
+  // files to their on-disk path so the agent can be pointed at them.
+  pathForFile(file: File): string {
+    try {
+      return webUtils.getPathForFile(file)
+    } catch {
+      return ''
+    }
   },
 }
 

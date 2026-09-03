@@ -5,14 +5,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use agent_client_protocol::schema::v1::{
-    CancelNotification, ContentBlock, InitializeRequest, LoadSessionRequest, NewSessionRequest,
-    PermissionOption, PromptRequest, RequestPermissionOutcome, RequestPermissionRequest,
-    RequestPermissionResponse, SelectedPermissionOutcome, SessionConfigId, SessionConfigKind,
-    SessionConfigOption, SessionConfigOptionCategory, SessionConfigOptionValue,
-    SessionConfigSelectOption, SessionConfigSelectOptions, SessionConfigValueId, SessionId,
-    SessionModeId, SessionModeState, SessionNotification, SessionUpdate,
-    SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason, TextContent, ToolCall,
-    ToolCallContent, ToolCallUpdate,
+    CancelNotification, ContentBlock, ImageContent, InitializeRequest, LoadSessionRequest,
+    NewSessionRequest, PermissionOption, PromptRequest, RequestPermissionOutcome,
+    RequestPermissionRequest, RequestPermissionResponse, ResourceLink, SelectedPermissionOutcome,
+    SessionConfigId, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
+    SessionConfigOptionValue, SessionConfigSelectOption, SessionConfigSelectOptions,
+    SessionConfigValueId, SessionId, SessionModeId, SessionModeState, SessionNotification,
+    SessionUpdate, SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason, TextContent,
+    ToolCall, ToolCallContent, ToolCallUpdate,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{AcpAgent, Agent, Client, ConnectionTo};
@@ -103,6 +103,9 @@ enum Command {
         value: Value,
         reply: oneshot::Sender<Result<(), String>>,
     },
+    /// Re-send `agent.status` and `agent.config` for a session that is already up, so a
+    /// renderer that (re)loaded after the session started still learns its options.
+    Announce,
 }
 
 struct Handle {
@@ -124,19 +127,19 @@ const SET_CONFIG_TIMED_OUT: &str = "agent did not answer in time";
 
 impl AgentPool {
     /// The command channel for `(task, agent)`, spawning the adapter on first use or after
-    /// the previous one exited.
+    /// the previous one exited. The flag says whether this call spawned it.
     fn ensure(
         &self,
         ctx: &Arc<Ctx>,
         task_id: &str,
         agent: &str,
         cwd: &str,
-    ) -> mpsc::UnboundedSender<Command> {
+    ) -> (mpsc::UnboundedSender<Command>, bool) {
         let key = (task_id.to_string(), agent.to_string());
         let mut handles = self.handles.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(h) = handles.get(&key) {
             if !h.commands.is_closed() {
-                return h.commands.clone();
+                return (h.commands.clone(), false);
             }
             handles.remove(&key);
         }
@@ -180,23 +183,27 @@ impl AgentPool {
                 handles.remove(&key);
             }
         });
-        commands_tx
+        (commands_tx, true)
     }
 
     /// Start the adapter and session for `(task, agent)` unless already running, so the
-    /// agent's config options are known before the first prompt.
+    /// agent's config options are known before the first prompt. A running session is
+    /// asked to announce its status and options again.
     pub fn connect(&self, ctx: &Arc<Ctx>, task_id: &str, agent: &str, cwd: &str) {
-        let _ = self.ensure(ctx, task_id, agent, cwd);
+        let (commands, spawned) = self.ensure(ctx, task_id, agent, cwd);
+        if !spawned {
+            let _ = commands.send(Command::Announce);
+        }
     }
 
     /// Queue a prompt for `(task, agent)`.
     pub fn send(&self, ctx: &Arc<Ctx>, task_id: &str, agent: &str, cwd: &str, job: Job) {
-        let job = match send_prompt(&self.ensure(ctx, task_id, agent, cwd), job) {
+        let job = match send_prompt(&self.ensure(ctx, task_id, agent, cwd).0, job) {
             Ok(()) => return,
             // The adapter exited between ensure() and here; once more with a fresh one.
             Err(job) => job,
         };
-        if let Err(job) = send_prompt(&self.ensure(ctx, task_id, agent, cwd), job) {
+        if let Err(job) = send_prompt(&self.ensure(ctx, task_id, agent, cwd).0, job) {
             finish_message(
                 ctx,
                 task_id,
@@ -239,6 +246,16 @@ impl AgentPool {
             Ok(Err(_)) => Err("agent exited".into()),
             Err(_) => Err(SET_CONFIG_TIMED_OUT.into()),
         }
+    }
+
+    /// Forget every connection serving the task. Dropping the handles closes their
+    /// command channels, so each connection finishes what is in flight and exits.
+    pub fn drop_task(&self, task_id: &str) {
+        let mut handles = self.handles.lock().unwrap_or_else(|e| e.into_inner());
+        for h in handles.values().filter(|h| h.task_id == task_id) {
+            let _ = h.cancel.send(());
+        }
+        handles.retain(|_, h| h.task_id != task_id);
     }
 
     /// Cancel any in-flight prompt for the task, on every agent serving it.
@@ -381,6 +398,16 @@ fn select_option_json(o: &SessionConfigSelectOption, group: Option<&str>) -> Val
     if let Some(g) = group {
         v["group"] = json!(g);
     }
+    // Agents tag modes with a kind (standard, auto_review, full_access, plan, …) in
+    // `_meta`; the app uses it only for the icon and colour of the mode pill.
+    if let Some(kind) = o
+        .meta
+        .as_ref()
+        .and_then(|m| m.get("kind"))
+        .and_then(Value::as_str)
+    {
+        v["kind"] = json!(kind);
+    }
     v
 }
 
@@ -463,6 +490,7 @@ impl Connection {
                 Command::SetConfig { reply, .. } => {
                     let _ = reply.send(Err(reason.clone()));
                 }
+                Command::Announce => {}
             }
         }
         self.status("exited", detail);
@@ -501,6 +529,11 @@ impl Connection {
                             self.apply_config(&connection, &session_id, &config_id, &value)
                                 .await,
                         );
+                        continue;
+                    }
+                    Some(Command::Announce) => {
+                        self.status("ready", None);
+                        self.emit_config();
                         continue;
                     }
                 },
@@ -658,8 +691,8 @@ impl Connection {
         queued: &mut VecDeque<Job>,
     ) -> AcpResult<()> {
         while cancels.try_recv().is_ok() {}
-        let text = match self.build_prompt(&job) {
-            Ok(text) => text,
+        let blocks = match self.build_prompt(&job) {
+            Ok(blocks) => blocks,
             Err(e) => {
                 self.finish(Live::new(job.assistant_message_id), Err(e));
                 return Ok(());
@@ -669,10 +702,7 @@ impl Connection {
             Some(Live::new(job.assistant_message_id));
 
         let request = connection
-            .send_request(PromptRequest::new(
-                session_id.clone(),
-                vec![ContentBlock::Text(TextContent::new(text))],
-            ))
+            .send_request(PromptRequest::new(session_id.clone(), blocks))
             .block_task();
         tokio::pin!(request);
         let outcome = loop {
@@ -691,6 +721,10 @@ impl Connection {
                         let _ = reply.send(
                             self.apply_config(connection, session_id, &config_id, &value).await,
                         );
+                    }
+                    Command::Announce => {
+                        self.status("ready", None);
+                        self.emit_config();
                     }
                 },
             }
@@ -714,7 +748,7 @@ impl Connection {
     /// The prompt text for a Job: handoff of what this agent has not seen, then the user's
     /// message. Assembled here rather than at `chat.send` so it reflects the session the
     /// prompt actually goes to (a fresh session has cursor -1 and gets the whole thread).
-    fn build_prompt(&self, job: &Job) -> Result<String, String> {
+    fn build_prompt(&self, job: &Job) -> Result<Vec<ContentBlock>, String> {
         let store = &self.ctx.store;
         let transcript = store
             .list_messages(&self.task_id)
@@ -734,7 +768,7 @@ impl Connection {
                 handoff::seen_through(&transcript, &user.id),
             )
             .map_err(|e| format!("{e:#}"))?;
-        Ok(text)
+        Ok(content_blocks(text, &user.parts))
     }
 
     fn lock_options(&self) -> std::sync::MutexGuard<'_, Options> {
@@ -823,6 +857,38 @@ impl Connection {
                 warn!("permission response: {}", error_text(&e));
             }
         });
+    }
+}
+
+/// The ACP content for a prompt: the text (handoff + message) first, then the user's
+/// attachments as image blocks and `file://` resource links.
+fn content_blocks(text: String, parts: &[Part]) -> Vec<ContentBlock> {
+    let mut blocks = vec![ContentBlock::Text(TextContent::new(text))];
+    for part in parts {
+        match part {
+            Part::Image { mime_type, data } => {
+                blocks.push(ContentBlock::Image(ImageContent::new(
+                    data.clone(),
+                    mime_type.clone(),
+                )));
+            }
+            Part::File { path, name } => {
+                blocks.push(ContentBlock::ResourceLink(ResourceLink::new(
+                    name.clone(),
+                    file_uri(path),
+                )));
+            }
+            _ => {}
+        }
+    }
+    blocks
+}
+
+fn file_uri(path: &str) -> String {
+    if path.starts_with('/') {
+        format!("file://{path}")
+    } else {
+        format!("file:///{}", path.replace('\\', "/"))
     }
 }
 
@@ -1092,6 +1158,45 @@ mod tests {
                 output: Some("a\nb".into()),
             }
         );
+    }
+
+    #[test]
+    fn attachments_become_image_and_resource_link_blocks() {
+        let parts = vec![
+            Part::Text { text: "see".into() },
+            Part::Image {
+                mime_type: "image/png".into(),
+                data: "QUJD".into(),
+            },
+            Part::File {
+                path: "/tmp/demo/notes.md".into(),
+                name: "notes.md".into(),
+            },
+        ];
+        let blocks = content_blocks("prompt text".into(), &parts);
+        assert_eq!(blocks.len(), 3);
+        assert!(matches!(&blocks[0], ContentBlock::Text(t) if t.text == "prompt text"));
+        assert!(matches!(
+            &blocks[1],
+            ContentBlock::Image(i) if i.data == "QUJD" && i.mime_type == "image/png"
+        ));
+        assert!(matches!(
+            &blocks[2],
+            ContentBlock::ResourceLink(r) if r.name == "notes.md" && r.uri == "file:///tmp/demo/notes.md"
+        ));
+        assert_eq!(file_uri("C:\\work\\a.txt"), "file:///C:/work/a.txt");
+    }
+
+    #[test]
+    fn mode_kind_from_meta_reaches_the_app() {
+        let mut meta = serde_json::Map::new();
+        meta.insert("kind".into(), json!("full_access"));
+        let o = SessionConfigSelectOption::new("agent-full-access", "Full access").meta(meta);
+        let v = select_option_json(&o, None);
+        assert_eq!(v["kind"], "full_access");
+        assert_eq!(v["value"], "agent-full-access");
+        let plain = select_option_json(&SessionConfigSelectOption::new("x", "X"), None);
+        assert!(plain.get("kind").is_none());
     }
 
     fn model_option() -> SessionConfigOption {

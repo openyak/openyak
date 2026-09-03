@@ -12,6 +12,22 @@ its full changelog.
 ## [Unreleased] — 2.0.0-alpha
 
 ### Changed
+- The app is rebuilt around the chat: a collapsible sidebar with projects and their
+  chats (most recent first), a single thread with rendered markdown, user bubbles, and
+  compact tool rows, and a composer whose pills are the agent, its permission mode,
+  model, and effort. Light and dark follow the system. A new chat is created from its
+  first message; the sidebar time shows the task's last activity. A new chat is a real
+  task from the moment its project is chosen, so the agents' sessions and options are
+  live before anything is sent; it is named by its first message and deleted if left
+  unsent.
+- Attachments: paste or drop images and files into the composer, or pick files and
+  folders from the "+" menu. Images reach the agent as ACP image blocks, files and folders
+  as `file://` links it opens itself.
+- Model, effort, and agent share one picker: a card with the current model and an
+  animated slider whose stops are the effort levels the agent offers; the model list
+  groups every installed agent's models, so picking a model from another agent is how
+  you switch agents. The permission-mode pill takes its icon and colour from the kind
+  the agent tags the mode with.
 - OpenYak is now a Project → Task → Chat workbench that drives installed coding agents
   (Claude Code, Codex) through the Agent Client Protocol. It no longer ships its own
   agent runtime, tools, providers, Computer Use, office pipeline, plugins, or remote access.

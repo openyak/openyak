@@ -21,6 +21,10 @@ export interface Task {
   project_id: string
   title: string
   created_at: string
+  /** Last time a message was added or finished; task lists are sorted by it. */
+  updated_at: string
+  /** Messages in the chat; 0 is a new chat that has not started. */
+  message_count: number
 }
 
 export type MessageStatus = 'streaming' | 'done' | 'error' | 'cancelled'
@@ -40,6 +44,14 @@ export type Part =
   | { type: 'thought'; text: string }
   | { type: 'tool_call'; id: string; title: string; kind: string; status: string; output?: string }
   | { type: 'error'; message: string }
+  // Attachments on a user message. Images travel as base64; files by path.
+  | { type: 'image'; mime_type: string; data: string }
+  | { type: 'file'; path: string; name: string }
+
+/** What the app attaches to a message; becomes image/file Parts and ACP content blocks. */
+export type Attachment =
+  | { type: 'image'; mime_type: string; data: string }
+  | { type: 'file'; path: string }
 
 // A session config option exactly as the agent advertises it (model, effort, mode, …).
 // The app renders these and passes choices straight back; it never interprets them.
@@ -56,6 +68,8 @@ export interface AgentConfigSelectOption {
   name: string
   description?: string
   group?: string
+  /** Agent-provided hint for modes: standard, auto_review, full_access, plan, … */
+  kind?: string
 }
 
 export type AgentConfigOption =
@@ -136,6 +150,10 @@ export interface OpenYakApi {
   onPermissionRequest(cb: (req: PermissionRequest) => Promise<PermissionResponse | null>): () => void
   onCoreExited(cb: (exit: CoreExit) => void): () => void
   pickDirectory(): Promise<string | null>
+  /** Files and/or folders chosen in the OS dialog; empty when cancelled. */
+  pickFiles(): Promise<string[]>
+  /** On-disk path of a dropped or pasted File, or '' when it has none (clipboard images). */
+  pathForFile(file: File): string
 }
 
 declare global {
