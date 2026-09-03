@@ -3,7 +3,7 @@
   "version": "2.0.0-alpha.0",
   "private": true,
   "license": "Apache-2.0",
-  "description": "OpenYak — Project → Task → Chat, served by the coding agents you already have",
+  "description": "OpenYak — One chat. Every agent. A universal interface for AI agents running on your computer",
   "workspaces": [
     "app"
   ],

@@ -1,7 +1,8 @@
 # OpenYak Context
 
-OpenYak is a desktop workbench for driving coding agents: Project → Task → Chat. This
-file is the canonical glossary. Use these terms exactly; avoid the listed aliases.
+OpenYak is one chat served by the AI agents on your computer, organized as
+Project → Task → Chat. This file is the canonical glossary. Use these terms exactly;
+avoid the listed aliases.
 
 **Project**: A directory on disk that agents run in. _Avoid_: workspace, repo, folder.
 

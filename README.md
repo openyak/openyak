@@ -7,10 +7,10 @@
   <img src="https://img.shields.io/badge/status-v2%20alpha-orange?style=flat-square" alt="Status: v2 alpha" />
 </p>
 
-<h3 align="center">Project → Task → Chat. Served by the coding agents you already have.</h3>
+<h3 align="center">One chat. Every agent.</h3>
 
 <p align="center">
-  One workbench for Claude Code, Codex, and whatever comes next. Switch agents mid-task without losing the thread.
+  A universal interface for AI agents running on your computer.
 </p>
 
 ---
@@ -23,32 +23,45 @@
 
 ## The idea
 
-Claude Code, Codex, Gemini CLI, and the rest are converging on the same UI and the same
-job. Each one wants to be your whole workbench. OpenYak takes the other side of that bet:
+**You shouldn't have to choose an AI app. Just say what you want done.**
 
-- **You already have the agents.** OpenYak does not ship a model runtime, tools, or
-  provider keys. It drives the CLIs you installed and logged into, through the open
-  [Agent Client Protocol](https://agentclientprotocol.com).
-- **Tasks, not vendors.** Work is organized as Project → Task → Chat. The agent is a
-  choice you make per message, not a product you commit to.
-- **Switch without losing the thread.** OpenYak keeps the canonical transcript. When you
-  hand a task from Codex to Claude Code, the new agent gets exactly the turns it missed.
-- **One thing, done well.** No plugins, no browser automation, no document pipeline.
-  Anything an agent can do itself is the agent's job.
+Claude Code, Codex, Gemini, and whatever ships next month each want to be the app you
+live in. OpenYak treats them as what they are becoming: **runtime providers**. Each one
+brings its own model, tools, permissions, and login. What none of them gives you is the
+layer above: one conversation that belongs to you, that any of them can pick up, and
+that does not end when you change your mind about who should do the work.
+
+That is the whole product. Not an aggregator of AI apps, but the place where the AI app
+stops mattering.
+
+- **The chat is yours.** OpenYak keeps the transcript. Agents come and go; the thread
+  does not.
+- **Agents are runtimes.** OpenYak ships no model, no tools, no keys, and no permission
+  engine. It drives the agents you already installed and logged into, through the open
+  [Agent Client Protocol](https://agentclientprotocol.com), and shows their options and
+  their permission prompts exactly as they expose them.
+- **Switching is free.** Hand a task from Codex to Claude Code mid-thread. The new agent
+  gets the turns it missed and continues. No copy-paste, no new chat, no terminal.
+- **Where this goes.** Today you pick the agent per message. The direction is that you
+  stop noticing which one did the work, the way you never think about which CPU core your
+  browser used.
 
 ## Status
 
 v2 is an alpha. It runs, it is not yet polished, and the shape will change. What works:
 
-- Projects (a directory), Tasks inside a project, one Chat per task
+- One persistent chat per task, kept by OpenYak, not by any agent. Tasks live inside a
+  Project (a directory on disk that the agents run in).
 - Chat served by `claude` (via `@agentclientprotocol/claude-agent-acp`) or `codex`
   (via `@agentclientprotocol/codex-acp`), selectable per message
 - Streaming text, thoughts, tool calls, and permission prompts from the agent
-- Agent handoff: switch agents inside a task and keep the context
+- Agent handoff: switch agents inside a task and keep the context, including across
+  restarts
 - The agent's own session options (model, reasoning effort, permission mode, …) in the
   chat header, exactly as the agent exposes them, remembered per task
 
-Not yet: packaged installers, Grok and other agents, Linux and Windows testing.
+Not yet: packaged installers; more agents (Gemini CLI, Grok, anything else that speaks
+ACP); picking the agent for you; Linux and Windows testing.
 
 ## Run it
 
@@ -68,7 +81,7 @@ npm run dev
 ## How it is built
 
 ```
-app/    Electron + React     — Projects, Tasks, Chat UI. Talks only to core.
+app/    Electron + React     — the chat, plus Projects and Tasks around it. Talks only to core.
 core/   Rust (openyak-core)  — SQLite transcript store + ACP client that spawns agents.
 docs/   architecture.md, core-protocol.md
 ```
@@ -79,8 +92,8 @@ for the app ⇄ core contract.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). The fastest way to help right now is to use it on a
-real task with both agents and file what breaks.
+See [CONTRIBUTING.md](CONTRIBUTING.md). The fastest way to help right now is to use it for
+something real, switch agents in the middle, and file what breaks.
 
 ## License
 
