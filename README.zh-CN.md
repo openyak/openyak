@@ -5,10 +5,10 @@
   <img src="https://img.shields.io/badge/status-v2%20alpha-orange?style=flat-square" alt="Status: v2 alpha" />
 </p>
 
-<h3 align="center">Project → Task → Chat。由你已经装好的 coding agent 来服务。</h3>
+<h3 align="center">One chat. Every agent.</h3>
 
 <p align="center">
-  一个工作台，同时驱动 Claude Code、Codex 以及后来者。任务中途切换 agent，上下文不断。
+  跑在你电脑上的所有 AI agent，一个统一的入口。
 </p>
 
 ---
@@ -17,29 +17,39 @@
 > v1（自带 runtime、Computer Use、办公文档流程的本地优先桌面 agent）完整保留在
 > [`legacy/v1`](https://github.com/openyak/openyak/tree/legacy/v1) 分支和
 > [v1.5.0 release](https://github.com/openyak/openyak/releases/tag/v1.5.0)。
+> 原因见[公告](https://github.com/openyak/openyak/discussions/190)。
 
 ## 想法
 
-Claude Code、Codex、Gemini CLI 都在做同一套 UI、同一件事，每一个都想成为你唯一的工作台。
-OpenYak 押另一边：
+**你不该被迫在 AI 应用之间做选择。只要说你想做什么。**
 
-- **agent 你已经有了。** OpenYak 不自带模型运行时、工具或 API key，而是通过开放的
-  [Agent Client Protocol](https://agentclientprotocol.com) 驱动你已安装并登录的 CLI。
-- **以任务为中心，而不是以厂商为中心。** 工作组织为 Project → Task → Chat，agent 是每条消息的选择，不是一次性的绑定。
-- **切换不丢上下文。** OpenYak 持有规范的对话记录。把任务从 Codex 交给 Claude Code 时，新 agent 只会拿到它错过的那几轮。
-- **只做一件事。** 没有插件、浏览器自动化、文档管线。agent 自己能做的事，就交给 agent。
+Claude Code、Codex、Gemini，以及下个月还会冒出来的那些，每一个都想成为你常驻的那个应用。
+OpenYak 把它们当作它们正在变成的东西：**runtime provider**。每一个都自带模型、工具、权限和登录。
+它们都没有给你的，是上面那一层：一段属于你自己的对话，谁都可以接着做，
+你中途换人也不用重来。
+
+这就是整个产品。不是把 AI 应用聚合起来，而是让 AI 应用本身不再重要。
+
+- **对话是你的。** 对话记录由 OpenYak 持有。agent 来来去去，线不断。
+- **agent 是 runtime。** OpenYak 不带模型、不带工具、不存 key、不做权限引擎。它通过开放的
+  [Agent Client Protocol](https://agentclientprotocol.com) 驱动你已经装好并登录的 agent，
+  它们的选项和权限确认原样呈现。
+- **切换零成本。** 一件事做到一半从 Codex 交给 Claude Code，新 agent 拿到它错过的那几轮接着做。
+  不用复制粘贴，不用新开对话，不用碰终端。
+- **往哪走。** 现在每条消息由你选 agent。方向是你不再注意到这件事是谁做的，
+  就像你从来不会去想浏览器这次用的是 CPU 的哪个核。
 
 ## 状态
 
 v2 是 alpha：能跑，还不精致，形态会变。已可用：
 
-- Project（一个目录）、Project 下的 Task、每个 Task 一个 Chat
+- 每个 Task 一段持久的 Chat，由 OpenYak 持有，不依赖任何 agent。Task 归属于 Project（agent 运行的目录）
 - Chat 由 `claude`（通过 `@agentclientprotocol/claude-agent-acp`）或 `codex`（通过 `@agentclientprotocol/codex-acp`）服务，逐条消息可选
 - 流式文本、思考、工具调用与权限确认
-- agent 交接：任务内切换 agent 并保留上下文
+- agent 交接：任务内切换 agent 并保留上下文，重启后也在
 - agent 自己的会话选项（模型、推理强度、权限模式……）显示在 Chat 顶栏，与 agent 暴露的完全一致，按 Task 记住
 
-尚未：安装包、Grok 等更多 agent、Linux / Windows 验证。
+尚未：安装包；更多 agent（Gemini CLI、Grok，以及任何会说 ACP 的）；替你选 agent；Linux / Windows 验证。
 
 ## 运行
 
@@ -56,7 +66,7 @@ npm run dev
 ## 结构
 
 ```
-app/    Electron + React     — Project / Task / Chat 界面，只和 core 通信
+app/    Electron + React     — Chat，以及围绕它的 Project / Task。只和 core 通信
 core/   Rust (openyak-core)  — SQLite 对话存储 + 拉起 agent 的 ACP 客户端
 docs/   architecture.md, core-protocol.md
 ```

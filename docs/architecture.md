@@ -1,10 +1,10 @@
 # OpenYak v2 architecture
 
 OpenYak v2 is a desktop workbench with one job: **Project → Task → Chat**, where the
-Chat is served by whichever coding agent you pick, and you can switch agents mid-task
+Chat is served by whichever agent you pick, and you can switch agents mid-task
 without losing the thread.
 
-It does not implement an agent loop, tools, or model calls. It drives the coding agents
+It does not implement an agent loop, tools, or model calls. It drives the agents
 you already have installed (Claude Code, Codex, more later) through the
 [Agent Client Protocol (ACP)](https://agentclientprotocol.com).
 
