@@ -1,6 +1,7 @@
 // Types copied from docs/core-protocol.md. Keep in sync with core.
 
 export type AgentId = 'claude' | 'codex'
+export type ThemePreference = 'system' | 'light' | 'dark'
 
 export interface Agent {
   id: AgentId
@@ -40,12 +41,22 @@ export interface Message {
   parts: Part[]
   created_at: string
   status: MessageStatus
+  /** Wall-clock response time for assistant messages; absent on user and legacy messages. */
+  duration_ms?: number | null
 }
 
 export type Part =
   | { type: 'text'; text: string }
   | { type: 'thought'; text: string }
-  | { type: 'tool_call'; id: string; title: string; kind: string; status: string; output?: string }
+  | {
+      type: 'tool_call'
+      id: string
+      title: string
+      kind: string
+      status: string
+      output?: string
+      _meta?: Record<string, unknown>
+    }
   | { type: 'error'; message: string }
   // Attachments on a user message. Images travel as base64; files by path.
   | { type: 'image'; mime_type: string; data: string }
@@ -100,6 +111,7 @@ export interface ChatDone {
   task_id: string
   message_id: string
   status: 'done' | 'error' | 'cancelled'
+  duration_ms?: number
   error?: string
 }
 
@@ -158,6 +170,10 @@ export interface OpenYakApi {
   pickDirectory(): Promise<string | null>
   /** Files and/or folders chosen in the OS dialog; empty when cancelled. */
   pickFiles(): Promise<string[]>
+  /** Open a trusted HTTPS setup page in the user's default browser. */
+  openExternal(url: string): Promise<void>
+  /** Apply the user's theme to Electron chrome and the renderer. */
+  setTheme(theme: ThemePreference): Promise<void>
   /** On-disk path of a dropped or pasted File, or '' when it has none (clipboard images). */
   pathForFile(file: File): string
 }

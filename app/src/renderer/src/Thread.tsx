@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import type { Agent, Attachment, Message, PermissionRequest } from '../../shared/protocol'
 import type { PendingPermission } from './App'
 import { MessageItem } from './Message'
@@ -82,6 +90,7 @@ export function Thread({
   const innerRef = useRef<HTMLDivElement>(null)
   // Follow new content unless the user has scrolled up to read.
   const stick = useRef(true)
+  const positioned = useRef(false)
   const previousCount = useRef(0)
   const [showJump, setShowJump] = useState(false)
   const [showMinimap, setShowMinimap] = useState(false)
@@ -137,9 +146,10 @@ export function Thread({
     setActiveTurnId((current) => (current === active ? current : active))
   }, [turns])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
+    const firstContent = !positioned.current && messages.length > 0
     const addedMessage = messages.length > previousCount.current
     const newest = messages[messages.length - 1]
     // Sending a message is an explicit return to the live edge. Token updates only
@@ -148,7 +158,13 @@ export function Thread({
       const userBeforeIt = messages[messages.length - 2]
       if (userBeforeIt?.role === 'user') stick.current = true
     }
-    if (stick.current) el.scrollTop = el.scrollHeight
+    if (stick.current) {
+      el.scrollTo({
+        top: el.scrollHeight,
+        behavior: firstContent ? 'auto' : 'smooth',
+      })
+    }
+    if (messages.length > 0) positioned.current = true
     previousCount.current = messages.length
     const frame = requestAnimationFrame(updateMinimap)
     return () => cancelAnimationFrame(frame)

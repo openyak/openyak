@@ -14,6 +14,7 @@ import type { Project, Task } from '../../shared/protocol'
 import { ContextMenu, Menu, type MenuEntry } from './Menu'
 import {
   IconChat,
+  IconChevronRight,
   IconClose,
   IconEdit,
   IconDesktop,
@@ -115,6 +116,9 @@ function folderName(value: string) {
 interface Props {
   open: boolean
   onToggle: () => void
+  settingsOpen: boolean
+  onOpenSettings: () => void
+  onBackToApp: () => void
   projects: Project[]
   tasksByProject: Record<string, Task[]>
   workingTaskIds: ReadonlySet<string>
@@ -135,6 +139,9 @@ interface Props {
 export function Sidebar({
   open,
   onToggle,
+  settingsOpen,
+  onOpenSettings,
+  onBackToApp,
   projects,
   tasksByProject,
   workingTaskIds,
@@ -736,9 +743,14 @@ export function Sidebar({
                   />
               </div>
 
-              <div id={`project-tasks-${project.id}`}>
-                {!collapsedProjects.has(project.id) &&
-                  orderedTasks(project.id).map((task) => (
+              <div
+                id={`project-tasks-${project.id}`}
+                className="project-tasks-shell"
+                aria-hidden={collapsedProjects.has(project.id)}
+                inert={collapsedProjects.has(project.id) ? true : undefined}
+              >
+                <div className="project-tasks-inner">
+                  {orderedTasks(project.id).map((task) => (
                     <div
                       key={task.id}
                       className={`nav-row nav-task-row${workingTaskIds.has(task.id) ? ' is-working' : ''}`}
@@ -811,6 +823,7 @@ export function Sidebar({
                         />
                     </div>
                   ))}
+                </div>
               </div>
             </div>
           ))}
@@ -818,6 +831,26 @@ export function Sidebar({
           {projects.length === 0 && (
             <p className="sidebar-hint">Projects are optional. Add one to give agents a folder.</p>
           )}
+        </div>
+
+        <div className="sidebar-footer">
+          <button
+            type="button"
+            className={`nav-item${settingsOpen ? ' sidebar-back-to-app' : ''}`}
+            data-tooltip-ignore="true"
+            onClick={() => {
+              hideSidebarPreview()
+              if (settingsOpen) onBackToApp()
+              else onOpenSettings()
+            }}
+          >
+            {settingsOpen ? (
+              <IconChevronRight size={16} className="sidebar-back-icon" />
+            ) : (
+              <IconSettings size={16} />
+            )}
+            <span className="nav-label">{settingsOpen ? 'Back to app' : 'Settings'}</span>
+          </button>
         </div>
 
         {itemContextMenu && (

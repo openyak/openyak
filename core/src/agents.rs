@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use agent_client_protocol::schema::v1::{
     CancelNotification, ContentBlock, ImageContent, InitializeRequest, LoadSessionRequest,
@@ -297,6 +297,18 @@ impl AgentPool {
         handles.retain(|_, h| h.task_id != task_id);
     }
 
+    /// Forget every connection for one provider. This is used when the user disables a
+    /// local provider in Settings, so no adapter process remains active in OpenYak.
+    pub fn drop_agent(&self, agent: &str) {
+        let mut handles = self.handles.lock().unwrap_or_else(|e| e.into_inner());
+        for ((_, handle_agent), handle) in handles.iter() {
+            if handle_agent == agent {
+                let _ = handle.cancel.send(());
+            }
+        }
+        handles.retain(|(_, handle_agent), _| handle_agent != agent);
+    }
+
     /// Cancel any in-flight prompt for the task, on every agent serving it.
     pub fn cancel(&self, task_id: &str) {
         let handles = self.handles.lock().unwrap_or_else(|e| e.into_inner());
@@ -320,6 +332,7 @@ struct Live {
     parts: Vec<Part>,
     tools: HashMap<String, usize>,
     cancelled: bool,
+    started_at: Instant,
 }
 
 /// Id of the synthesized option for agents that only speak the older modes API.
@@ -1020,6 +1033,7 @@ fn finish_message(
     mut live: Live,
     outcome: Result<bool, String>,
 ) {
+    let duration_ms = live.started_at.elapsed().as_millis().min(i64::MAX as u128) as i64;
     let (status, error) = match outcome {
         Ok(false) => ("done", None),
         Ok(true) => ("cancelled", None),
@@ -1031,7 +1045,7 @@ fn finish_message(
         }
     };
     let store = &ctx.store;
-    if let Err(e) = store.finish_message(&live.message_id, &live.parts, status) {
+    if let Err(e) = store.finish_message(&live.message_id, &live.parts, status, duration_ms) {
         warn!("persist assistant message: {e:#}");
     }
     match store.list_messages(task_id) {
@@ -1047,7 +1061,12 @@ fn finish_message(
         }
         Err(e) => warn!("reload transcript: {e:#}"),
     }
-    let mut params = json!({ "task_id": task_id, "message_id": live.message_id, "status": status });
+    let mut params = json!({
+        "task_id": task_id,
+        "message_id": live.message_id,
+        "status": status,
+        "duration_ms": duration_ms
+    });
     if let Some(e) = error {
         params["error"] = json!(e);
     }
@@ -1126,6 +1145,7 @@ impl Live {
             parts: Vec::new(),
             tools: HashMap::new(),
             cancelled: false,
+            started_at: Instant::now(),
         }
     }
 
@@ -1172,6 +1192,7 @@ impl Live {
             kind: enum_str(&tc.kind),
             status: enum_str(&tc.status),
             output: tool_output(&tc.content),
+            meta: tc.meta,
         };
         match self.tools.get(&id) {
             Some(&i) => {
@@ -1198,6 +1219,7 @@ impl Live {
                     kind: "other".into(),
                     status: "pending".into(),
                     output: None,
+                    meta: u.meta.clone(),
                 });
                 let i = self.parts.len() - 1;
                 self.tools.insert(id, i);
@@ -1209,9 +1231,13 @@ impl Live {
             kind,
             status,
             output,
+            meta,
             ..
         } = &mut self.parts[index]
         {
+            if u.meta.is_some() {
+                *meta = u.meta;
+            }
             let f = u.fields;
             if let Some(t) = f.title {
                 *title = t;
@@ -1240,6 +1266,47 @@ mod tests {
 
     fn chunk(s: &str) -> ContentChunk {
         ContentChunk::new(ContentBlock::Text(TextContent::new(s)))
+    }
+
+    #[test]
+    fn disabling_a_provider_drops_only_its_sessions() {
+        let pool = AgentPool::default();
+        let (codex_commands, codex_commands_rx) = mpsc::unbounded_channel();
+        let (codex_cancel, mut codex_cancel_rx) = mpsc::unbounded_channel();
+        let (claude_commands, claude_commands_rx) = mpsc::unbounded_channel();
+        let (claude_cancel, mut claude_cancel_rx) = mpsc::unbounded_channel();
+        {
+            let mut handles = pool.handles.lock().unwrap();
+            handles.insert(
+                ("task-a".into(), "codex".into()),
+                Handle {
+                    generation: 1,
+                    task_id: "task-a".into(),
+                    commands: codex_commands,
+                    cancel: codex_cancel,
+                },
+            );
+            handles.insert(
+                ("task-b".into(), "claude".into()),
+                Handle {
+                    generation: 2,
+                    task_id: "task-b".into(),
+                    commands: claude_commands,
+                    cancel: claude_cancel,
+                },
+            );
+        }
+
+        pool.drop_agent("codex");
+
+        let handles = pool.handles.lock().unwrap();
+        assert!(!handles.contains_key(&("task-a".into(), "codex".into())));
+        assert!(handles.contains_key(&("task-b".into(), "claude".into())));
+        drop(handles);
+        assert_eq!(codex_cancel_rx.try_recv(), Ok(()));
+        assert!(codex_commands_rx.is_closed());
+        assert!(claude_cancel_rx.try_recv().is_err());
+        assert!(!claude_commands_rx.is_closed());
     }
 
     #[test]
@@ -1273,7 +1340,12 @@ mod tests {
     fn tool_calls_update_in_place() {
         let mut live = Live::new("m".into());
         live.apply(SessionUpdate::AgentMessageChunk(chunk("x")));
-        let tc = ToolCall::new("tc1", "ls").kind(ToolKind::Execute);
+        let tc = ToolCall::new("tc1", "ls").kind(ToolKind::Execute).meta(
+            agent_client_protocol::schema::v1::Meta::from_iter([(
+                "contextCompaction".into(),
+                serde_json::json!({ "phase": "start" }),
+            )]),
+        );
         assert_eq!(live.apply(SessionUpdate::ToolCall(tc)), Some(1));
         let upd = ToolCallUpdate::new(
             "tc1",
@@ -1282,7 +1354,11 @@ mod tests {
                 .content(vec![ToolCallContent::from(ContentBlock::Text(
                     TextContent::new("a\nb"),
                 ))]),
-        );
+        )
+        .meta(agent_client_protocol::schema::v1::Meta::from_iter([(
+            "contextCompaction".into(),
+            serde_json::json!({ "phase": "complete" }),
+        )]));
         assert_eq!(live.apply(SessionUpdate::ToolCallUpdate(upd)), Some(1));
         assert_eq!(
             live.parts[1],
@@ -1292,6 +1368,10 @@ mod tests {
                 kind: "execute".into(),
                 status: "completed".into(),
                 output: Some("a\nb".into()),
+                meta: Some(serde_json::Map::from_iter([(
+                    "contextCompaction".into(),
+                    serde_json::json!({ "phase": "complete" }),
+                )])),
             }
         );
     }

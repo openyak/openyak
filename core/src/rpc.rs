@@ -113,6 +113,10 @@ struct TaskAgent {
     task_id: String,
     agent: String,
 }
+#[derive(Deserialize)]
+struct AgentId {
+    agent: String,
+}
 /// What the app attaches to a message: images travel inline, files and folders by path.
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -279,6 +283,17 @@ async fn handle(ctx: &Arc<Ctx>, method: &str, params: Value) -> Result<Value, Rp
             let p: TaskAgent = parse(params)?;
             let (task, cwd) = locate(ctx, &p.task_id, &p.agent)?;
             ctx.agents.connect(ctx, &task.id, &p.agent, &cwd);
+            json!({})
+        }
+        "agent.disconnect" => {
+            let p: AgentId = parse(params)?;
+            if !agents::is_known(&p.agent) {
+                return Err(RpcError::invalid_params(format!(
+                    "unknown agent: {}",
+                    p.agent
+                )));
+            }
+            ctx.agents.drop_agent(&p.agent);
             json!({})
         }
         "agent.set_config" => {

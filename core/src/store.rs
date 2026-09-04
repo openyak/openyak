@@ -46,6 +46,8 @@ pub enum Part {
         status: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         output: Option<String>,
+        #[serde(rename = "_meta", default, skip_serializing_if = "Option::is_none")]
+        meta: Option<serde_json::Map<String, serde_json::Value>>,
     },
     Error {
         message: String,
@@ -71,6 +73,8 @@ pub struct Message {
     pub parts: Vec<Part>,
     pub created_at: String,
     pub status: String,
+    /// Wall-clock time spent producing an assistant response. Null for user and legacy messages.
+    pub duration_ms: Option<i64>,
 }
 
 pub fn new_id() -> String {
@@ -90,7 +94,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE TABLE IF NOT EXISTS messages (
     id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id),
     role TEXT NOT NULL, agent TEXT, parts TEXT NOT NULL, status TEXT NOT NULL,
-    created_at TEXT NOT NULL);
+    created_at TEXT NOT NULL, duration_ms INTEGER);
 CREATE INDEX IF NOT EXISTS messages_task ON messages(task_id);
 CREATE TABLE IF NOT EXISTS agent_cursors (
     task_id TEXT NOT NULL, agent TEXT NOT NULL, last_seen_message_index INTEGER NOT NULL,
@@ -143,6 +147,15 @@ fn migrate(conn: &Connection) -> Result<()> {
              COMMIT;
              PRAGMA foreign_keys=ON;",
         )?;
+    }
+
+    let has_duration_ms = conn
+        .prepare("PRAGMA table_info(messages)")?
+        .query_map([], |r| r.get::<_, String>(1))?
+        .filter_map(Result::ok)
+        .any(|name| name == "duration_ms");
+    if !has_duration_ms {
+        conn.execute_batch("ALTER TABLE messages ADD COLUMN duration_ms INTEGER;")?;
     }
     Ok(())
 }
@@ -388,7 +401,7 @@ impl Store {
     pub fn list_messages(&self, task_id: &str) -> Result<Vec<Message>> {
         self.with(|c| {
             c.prepare(
-                "SELECT id, task_id, role, agent, parts, status, created_at FROM messages \
+                "SELECT id, task_id, role, agent, parts, status, created_at, duration_ms FROM messages \
                  WHERE task_id = ?1 ORDER BY rowid",
             )?
             .query_map([task_id], |r| {
@@ -401,6 +414,7 @@ impl Store {
                     parts: serde_json::from_str(&parts).unwrap_or_default(),
                     status: r.get(5)?,
                     created_at: r.get(6)?,
+                    duration_ms: r.get(7)?,
                 })
             })?
             .collect()
@@ -423,12 +437,13 @@ impl Store {
             parts: parts.to_vec(),
             created_at: now(),
             status: status.to_string(),
+            duration_ms: None,
         };
         let parts_json = serde_json::to_string(&m.parts)?;
         self.with(|c| {
             c.execute(
-                "INSERT INTO messages (id, task_id, role, agent, parts, status, created_at) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO messages (id, task_id, role, agent, parts, status, created_at, duration_ms) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     m.id,
                     m.task_id,
@@ -436,7 +451,8 @@ impl Store {
                     m.agent,
                     parts_json,
                     m.status,
-                    m.created_at
+                    m.created_at,
+                    m.duration_ms
                 ],
             )?;
             c.execute(
@@ -447,12 +463,18 @@ impl Store {
         Ok(m)
     }
 
-    pub fn finish_message(&self, id: &str, parts: &[Part], status: &str) -> Result<()> {
+    pub fn finish_message(
+        &self,
+        id: &str,
+        parts: &[Part],
+        status: &str,
+        duration_ms: i64,
+    ) -> Result<()> {
         let parts_json = serde_json::to_string(parts)?;
         self.with(|c| {
             c.execute(
-                "UPDATE messages SET parts = ?1, status = ?2 WHERE id = ?3",
-                params![parts_json, status, id],
+                "UPDATE messages SET parts = ?1, status = ?2, duration_ms = ?3 WHERE id = ?4",
+                params![parts_json, status, duration_ms, id],
             )?;
             c.execute(
                 "UPDATE tasks SET updated_at = ?1 \
@@ -750,8 +772,10 @@ mod tests {
             .insert_message(&b.id, "assistant", Some("codex"), &[], "streaming")
             .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(2));
-        s.finish_message(&reply.id, &text("done"), "done").unwrap();
+        s.finish_message(&reply.id, &text("done"), "done", 1_234)
+            .unwrap();
         assert_eq!(s.list_tasks(Some(&p.id)).unwrap()[0].id, b.id);
+        assert_eq!(s.list_messages(&b.id).unwrap()[0].duration_ms, Some(1_234));
     }
 
     #[test]
@@ -770,6 +794,7 @@ mod tests {
         let t = s.get_task("t").unwrap().unwrap();
         assert_eq!(t.updated_at, "2026-01-02T00:00:00.000Z");
         assert_eq!(t.message_count, 1);
+        assert_eq!(s.list_messages("t").unwrap()[0].duration_ms, None);
         assert_eq!(s.list_tasks(Some("p")).unwrap().len(), 1);
 
         let projectless = s.create_task(None, "no project").unwrap();
@@ -797,20 +822,26 @@ mod tests {
                 kind: "execute".into(),
                 status: "completed".into(),
                 output: Some("a b".into()),
+                meta: Some(serde_json::Map::from_iter([(
+                    "contextCompaction".into(),
+                    serde_json::json!({}),
+                )])),
             },
             Part::Text {
                 text: "hello".into(),
             },
         ];
-        s.finish_message(&a.id, &parts, "done").unwrap();
+        s.finish_message(&a.id, &parts, "done", 61_000).unwrap();
         let history = s.list_messages(&t.id).unwrap();
         assert_eq!(history.len(), 2);
         assert_eq!(history[0].id, u.id);
         assert_eq!(history[1].parts, parts);
         assert_eq!(history[1].status, "done");
+        assert_eq!(history[1].duration_ms, Some(61_000));
         let json = serde_json::to_value(&history[1].parts[1]).unwrap();
         assert_eq!(json["type"], "tool_call");
         assert_eq!(json["output"], "a b");
+        assert_eq!(json["_meta"]["contextCompaction"], serde_json::json!({}));
     }
 
     #[test]

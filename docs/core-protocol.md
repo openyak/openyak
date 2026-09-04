@@ -24,11 +24,12 @@ interface Message {
   id: string; task_id: string; role: "user" | "assistant";
   agent: AgentId | null;                   // which agent produced/received it
   parts: Part[]; created_at: string; status: "streaming" | "done" | "error" | "cancelled";
+  duration_ms?: number | null;             // wall-clock assistant response time; null for user/legacy messages
 }
 type Part =
   | { type: "text"; text: string }
   | { type: "thought"; text: string }
-  | { type: "tool_call"; id: string; title: string; kind: string; status: string; output?: string }
+  | { type: "tool_call"; id: string; title: string; kind: string; status: string; output?: string; _meta?: Record<string, unknown> }
   | { type: "error"; message: string }
   | { type: "image"; mime_type: string; data: string }   // attachment on a user message, base64
   | { type: "file"; path: string; name: string };        // attachment on a user message, by path
@@ -75,6 +76,7 @@ it only for the mode pill's icon and colour.
 | `chat.retry`         | `{ task_id, message_id, agent: AgentId }`              | `{ assistant_message_id }` |
 | `chat.cancel`        | `{ task_id }`                                          | `{}`               |
 | `agent.connect`      | `{ task_id, agent: AgentId }`                          | `{}`               |
+| `agent.disconnect`   | `{ agent: AgentId }`                                   | `{}`               |
 | `agent.set_config`   | `{ task_id, agent: AgentId, config_id: string, value: string \| boolean }` | `{}` |
 | `permission.respond` | `{ request_id, option_id: string \| null }`            | `{}`               |
 
@@ -95,6 +97,9 @@ the start is scheduled; readiness comes through `agent.status`. If the pair is a
 running, core re-sends `agent.status` and `agent.config` so a freshly loaded app still
 learns the session's options.
 
+`agent.disconnect` stops every session for that provider across Tasks. OpenYak uses it
+when the provider is disabled in Settings; later `agent.connect` calls can start it again.
+
 `agent.set_config` forwards one option change to the running agent session
 (ACP `session/set_config_option`, or `session/set_mode` for agents that only list
 modes) and fails if the agent is not connected, rejects the value, or does not answer
@@ -106,7 +111,7 @@ whenever it has to start a fresh session for that pair.
 | method          | params |
 |-----------------|--------|
 | `chat.update`   | `{ task_id, message_id, part_index: number, part: Part }` — upsert one part of the streaming assistant message. Text parts are sent whole (accumulated), not as deltas. |
-| `chat.done`     | `{ task_id, message_id, status: "done" \| "error" \| "cancelled", error?: string }` |
+| `chat.done`     | `{ task_id, message_id, status: "done" \| "error" \| "cancelled", duration_ms: number, error?: string }` |
 | `agent.status`  | `{ task_id, agent: AgentId, state: "starting" \| "ready" \| "exited", detail?: string }` |
 | `agent.config`  | `{ task_id, agent: AgentId, options: AgentConfigOption[] }` — the agent's session options and their current values. A select value can carry `disabled: true` and `disabled_reason` when the agent advertised but definitively rejected it for this session. Sent when a session starts or resumes, after an accepted `agent.set_config`, after a definitive rejection, and whenever the agent changes an option itself. Replaces any earlier list for the pair. |
 

@@ -13,6 +13,7 @@ import type {
   PermissionResponse,
   Project,
   Task,
+  ThemePreference,
 } from '../../shared/protocol'
 import { request } from './api'
 import { Sidebar } from './Sidebar'
@@ -21,6 +22,8 @@ import { Composer } from './Composer'
 import { IconClose, IconSidebar } from './icons'
 import { titleFrom } from './format'
 import { ButtonTooltip } from './ButtonTooltip'
+import { Settings } from './Settings'
+import { readThemePreference, THEME_KEY } from './theme'
 
 export interface PendingPermission {
   request: PermissionRequest
@@ -43,7 +46,32 @@ const isDraft = (t: Task | null | undefined): boolean => !!t && t.message_count 
 const NO_TASK = '__none'
 const PROJECTLESS_TASKS = '__projectless'
 const SIDEBAR_KEY = 'openyak.sidebar'
+const PROVIDERS_ENABLED_KEY = 'openyak.providers.enabled'
+const DEFAULT_PROVIDER_KEY = 'openyak.providers.default'
+const PROVIDER_SETUP_URLS: Record<AgentId, string> = {
+  claude: 'https://docs.anthropic.com/en/docs/claude-code',
+  codex: 'https://github.com/openai/codex',
+}
 const isMac = navigator.platform.startsWith('Mac')
+
+function readEnabledProviders(): Record<AgentId, boolean> {
+  try {
+    const value = JSON.parse(localStorage.getItem(PROVIDERS_ENABLED_KEY) ?? '{}') as Partial<
+      Record<AgentId, boolean>
+    >
+    return { claude: value.claude !== false, codex: value.codex !== false }
+  } catch {
+    return { claude: true, codex: true }
+  }
+}
+
+function readDefaultProvider(): AgentId {
+  try {
+    return localStorage.getItem(DEFAULT_PROVIDER_KEY) === 'codex' ? 'codex' : 'claude'
+  } catch {
+    return 'claude'
+  }
+}
 
 /** Remove Electron/RPC implementation details before an error reaches the UI. */
 function userErrorMessage(err: unknown): string {
@@ -72,6 +100,12 @@ function taskBucket(projectId: string | null): string {
 
 export function App() {
   const [agents, setAgents] = useState<Agent[]>([])
+  const [enabledProviders, setEnabledProviders] =
+    useState<Record<AgentId, boolean>>(readEnabledProviders)
+  const [defaultProvider, setDefaultProvider] = useState<AgentId>(readDefaultProvider)
+  const [activeView, setActiveView] = useState<'chat' | 'settings'>('chat')
+  const [theme, setTheme] = useState<ThemePreference>(readThemePreference)
+  const [scanningProviders, setScanningProviders] = useState(false)
   const [projects, setProjects] = useState<Project[]>([])
   const [tasksByProject, setTasksByProject] = useState<Record<string, Task[]>>({})
   const [taskId, setTaskId] = useState<string | null>(null)
@@ -107,6 +141,89 @@ export function App() {
   }, [projects])
 
   const fail = useCallback((err: unknown) => setError(userErrorMessage(err)), [])
+
+  useEffect(() => {
+    void window.openyak.setTheme(theme).catch(fail)
+  }, [fail, theme])
+
+  const updateTheme = useCallback((value: ThemePreference) => {
+    setTheme(value)
+    try {
+      localStorage.setItem(THEME_KEY, value)
+    } catch {
+      // The preference still applies for this app session.
+    }
+  }, [])
+
+  const updateProviderEnabled = useCallback((id: AgentId, enabled: boolean) => {
+    setEnabledProviders((current) => {
+      const next = { ...current, [id]: enabled }
+      try {
+        localStorage.setItem(PROVIDERS_ENABLED_KEY, JSON.stringify(next))
+      } catch {
+        // The preference still applies for this app session.
+      }
+      return next
+    })
+    if (!enabled && defaultProvider === id) {
+      const fallback = agents.find(
+        (candidate) => candidate.id !== id && candidate.available && enabledProviders[candidate.id],
+      )
+      if (fallback) {
+        setDefaultProvider(fallback.id)
+        try {
+          localStorage.setItem(DEFAULT_PROVIDER_KEY, fallback.id)
+        } catch {
+          // The preference still applies for this app session.
+        }
+      }
+    }
+    if (!enabled) {
+      void request('agent.disconnect', { agent: id }).catch(fail)
+      setStatuses((current) =>
+        Object.fromEntries(
+          Object.entries(current).filter(([key]) => !key.endsWith(`/${id}`)),
+        ),
+      )
+      setConfigs((current) =>
+        Object.fromEntries(
+          Object.entries(current).filter(([key]) => !key.endsWith(`/${id}`)),
+        ),
+      )
+    }
+  }, [agents, defaultProvider, enabledProviders, fail])
+
+  const updateDefaultProvider = useCallback((id: AgentId) => {
+    setDefaultProvider(id)
+    try {
+      localStorage.setItem(DEFAULT_PROVIDER_KEY, id)
+    } catch {
+      // The preference still applies for this app session.
+    }
+  }, [])
+
+  const rescanProviders = useCallback(async () => {
+    const startedAt = performance.now()
+    setScanningProviders(true)
+    setError(null)
+    try {
+      setAgents(await request<Agent[]>('agent.list'))
+    } catch (err) {
+      fail(err)
+    } finally {
+      // Keep fast local scans visible long enough to register as feedback.
+      const remaining = 450 - (performance.now() - startedAt)
+      if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining))
+      setScanningProviders(false)
+    }
+  }, [fail])
+
+  const openProviderSetup = useCallback(
+    (id: AgentId) => {
+      void window.openyak.openExternal(PROVIDER_SETUP_URLS[id]).catch(fail)
+    },
+    [fail],
+  )
 
   const markTaskWorking = useCallback((id: string, working: boolean) => {
     setWorkingTasks((current) => {
@@ -302,9 +419,14 @@ export function App() {
     }
   }, [bumpTask, markTaskWorking])
 
-  // The agent the next message goes to: the explicit pick for this chat, else the agent
-  // that last served it, else the first one installed.
-  const available = agents.filter((a) => a.available)
+  // Disabled providers remain visible in Settings but are neither started nor offered in
+  // the composer. The next message uses an explicit choice, then chat history, then the
+  // user's default provider, and finally the first enabled installation.
+  const composerAgents = agents.map((candidate) => ({
+    ...candidate,
+    available: candidate.available && enabledProviders[candidate.id],
+  }))
+  const available = composerAgents.filter((candidate) => candidate.available)
   const isAvailable = (id: AgentId | null | undefined): id is AgentId =>
     !!id && available.some((a) => a.id === id)
   const chosen = agentChoice[taskId ?? NO_TASK]
@@ -313,7 +435,9 @@ export function App() {
     ? chosen
     : isAvailable(lastUsed)
       ? lastUsed
-      : (available[0]?.id ?? null)
+      : isAvailable(defaultProvider)
+        ? defaultProvider
+        : (available[0]?.id ?? null)
 
   useEffect(() => {
     agentRef.current = agent
@@ -349,6 +473,7 @@ export function App() {
   )
 
   const newChat = useCallback(() => {
+    setActiveView('chat')
     const current = currentTask()
     if (isDraft(current) && current?.project_id === null) return
     dropIfDraft(taskRef.current)
@@ -358,6 +483,7 @@ export function App() {
 
   const selectTask = useCallback(
     (id: string) => {
+      setActiveView('chat')
       if (id === taskRef.current) return
       dropIfDraft(taskRef.current)
       setCancelling(false)
@@ -370,6 +496,7 @@ export function App() {
 
   const selectProject = useCallback(
     (pid: string | null) => {
+      setActiveView('chat')
       const current = currentTask()
       if (current && isDraft(current) && current.project_id === pid) return
       dropIfDraft(taskRef.current)
@@ -381,6 +508,7 @@ export function App() {
   )
 
   const addProject = useCallback(async () => {
+    setActiveView('chat')
     const dir = await window.openyak.pickDirectory()
     if (!dir) return
     try {
@@ -848,6 +976,9 @@ export function App() {
   const statusByAgent: Partial<Record<AgentId, AgentStatus | null>> = taskId
     ? Object.fromEntries(available.map((a) => [a.id, statuses[pairKey(taskId, a.id)] ?? null]))
     : {}
+  const providerStatusByAgent: Partial<Record<AgentId, AgentStatus | null>> = taskId
+    ? Object.fromEntries(agents.map((a) => [a.id, statuses[pairKey(taskId, a.id)] ?? null]))
+    : {}
   const streaming = messages.some((m) => m.status === 'streaming')
   const notice = coreExited ?? error
 
@@ -856,11 +987,17 @@ export function App() {
       <Sidebar
         open={sidebarOpen}
         onToggle={toggleSidebar}
+        settingsOpen={activeView === 'settings'}
+        onOpenSettings={() => {
+          setEditingMessage(null)
+          setActiveView('settings')
+        }}
+        onBackToApp={() => setActiveView('chat')}
         projects={projects}
         tasksByProject={tasksByProject}
         workingTaskIds={workingTasks}
-        selectedTaskId={taskId}
-        draft={draft}
+        selectedTaskId={activeView === 'chat' ? taskId : null}
+        draft={activeView === 'chat' && draft}
         draftProjectId={draftProjectId}
         onNewChat={newChat}
         onSelectTask={selectTask}
@@ -870,7 +1007,9 @@ export function App() {
         onRenameTask={renameTask}
         onDeleteTask={deleteTask}
       />
-      <main className="main">
+      <main
+        className={`main${activeView === 'settings' ? ' settings-open' : ''}${sidebarOpen && activeView === 'chat' ? ' sidebar-framed' : ''}`}
+      >
         <header
           className={`titlebar main-titlebar${!sidebarOpen && isMac ? ' with-traffic-lights' : ''}`}
         >
@@ -885,51 +1024,73 @@ export function App() {
               <IconSidebar size={18} />
             </button>
           )}
-          <div className="main-title">{task && !draft ? task.title : 'New chat'}</div>
+          <div className="main-title">
+            {activeView === 'settings' ? 'Settings' : task && !draft ? task.title : 'New chat'}
+          </div>
         </header>
 
-        <Thread
-          messages={messages}
-          agents={agents}
-          busy={streaming}
-          permission={permission}
-          onPermission={resolvePermission}
-          editingMessage={editingMessage}
-          onEdit={setEditingMessage}
-          onCancelEdit={() => setEditingMessage(null)}
-          onSubmitEdit={editAndResend}
-          onRetry={(message) => void retry(message)}
-          onContinue={() => void send('Continue from where you stopped.', [])}
-          empty={
-            draft ? (
-              <div className="hero">
-                <h1>What should we get done?</h1>
-              </div>
-            ) : null
-          }
-        />
-
-        {!editingMessage && (
-          <Composer
-            key={taskId ?? NO_TASK}
-            draft={draft}
-            hasChat={task !== null}
-            projects={projects}
-            draftProjectId={draftProjectId}
-            onChooseProject={selectProject}
-            onAddProject={addProject}
+        {activeView === 'settings' ? (
+          <Settings
             agents={agents}
-            agent={agent}
-            onAgentChange={chooseAgent}
-            optionsByAgent={optionsByAgent}
-            statusByAgent={statusByAgent}
-            settingConfig={settingConfig}
-            onSetConfig={setConfig}
-            streaming={streaming}
-            cancelling={cancelling}
-            onSend={send}
-            onCancel={cancel}
+            enabled={enabledProviders}
+            defaultProvider={defaultProvider}
+            statusByAgent={providerStatusByAgent}
+            scanning={scanningProviders}
+            providerChangesLocked={workingTasks.size > 0}
+            theme={theme}
+            onEnabledChange={updateProviderEnabled}
+            onDefaultChange={updateDefaultProvider}
+            onRescan={() => void rescanProviders()}
+            onOpenSetup={openProviderSetup}
+            onThemeChange={updateTheme}
           />
+        ) : (
+          <>
+            <Thread
+              key={`thread-${taskId ?? NO_TASK}`}
+              messages={messages}
+              agents={agents}
+              busy={streaming}
+              permission={permission}
+              onPermission={resolvePermission}
+              editingMessage={editingMessage}
+              onEdit={setEditingMessage}
+              onCancelEdit={() => setEditingMessage(null)}
+              onSubmitEdit={editAndResend}
+              onRetry={(message) => void retry(message)}
+              onContinue={() => void send('Continue from where you stopped.', [])}
+              empty={
+                draft ? (
+                  <div className="hero">
+                    <h1>What should we get done?</h1>
+                  </div>
+                ) : null
+              }
+            />
+
+            {!editingMessage && (
+              <Composer
+                key={taskId ?? NO_TASK}
+                draft={draft}
+                hasChat={task !== null}
+                projects={projects}
+                draftProjectId={draftProjectId}
+                onChooseProject={selectProject}
+                onAddProject={addProject}
+                agents={composerAgents}
+                agent={agent}
+                onAgentChange={chooseAgent}
+                optionsByAgent={optionsByAgent}
+                statusByAgent={statusByAgent}
+                settingConfig={settingConfig}
+                onSetConfig={setConfig}
+                streaming={streaming}
+                cancelling={cancelling}
+                onSend={send}
+                onCancel={cancel}
+              />
+            )}
+          </>
         )}
 
         {notice && (
@@ -992,6 +1153,7 @@ function applyDone(prev: Message[], d: ChatDone, agent: AgentId | null): Message
         parts: d.status === 'error' && d.error ? [{ type: 'error', message: d.error }] : [],
         created_at: new Date().toISOString(),
         status: d.status,
+        duration_ms: d.duration_ms ?? null,
       },
     ]
   }
@@ -1002,7 +1164,7 @@ function applyDone(prev: Message[], d: ChatDone, agent: AgentId | null): Message
     d.status === 'error' && d.error && !hasError
       ? [...message.parts, { type: 'error' as const, message: d.error }]
       : message.parts
-  next[idx] = { ...message, status: d.status, parts }
+  next[idx] = { ...message, status: d.status, parts, duration_ms: d.duration_ms ?? null }
   return next
 }
 

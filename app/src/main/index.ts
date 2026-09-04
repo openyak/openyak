@@ -92,7 +92,7 @@ function startCore(): CoreClient {
 
 // Window chrome matches the renderer's theme so there is no flash on launch and the
 // title-bar area (macOS traffic lights sit over the sidebar) blends in.
-const windowBackground = () => (nativeTheme.shouldUseDarkColors ? '#141515' : '#f4f3e8')
+const windowBackground = () => (nativeTheme.shouldUseDarkColors ? '#171717' : '#f4f3e8')
 
 function createWindow(): void {
   win = new BrowserWindow({
@@ -161,6 +161,20 @@ ipcMain.handle('dialog:pick-files', async () => {
   }
   const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
   return r.canceled ? [] : r.filePaths
+})
+
+ipcMain.handle('shell:open-external', async (_event, value: unknown) => {
+  if (typeof value !== 'string') throw new Error('Expected an HTTPS URL')
+  const url = new URL(value)
+  if (url.protocol !== 'https:') throw new Error('Only HTTPS URLs can be opened')
+  await shell.openExternal(url.toString())
+})
+
+ipcMain.handle('theme:set', (_event, value: unknown) => {
+  if (value !== 'system' && value !== 'light' && value !== 'dark') {
+    throw new Error('Invalid theme preference')
+  }
+  nativeTheme.themeSource = value
 })
 
 app.whenReady().then(() => {

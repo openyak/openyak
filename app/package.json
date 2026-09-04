@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "check": "tsc --noEmit -p tsconfig.json && eslint ."
+    "check": "tsc --noEmit -p tsconfig.json && eslint .",
+    "test": "node --test --experimental-strip-types test/*.test.ts"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "0.73.0",

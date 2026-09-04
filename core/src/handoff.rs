@@ -89,6 +89,7 @@ mod tests {
             parts: vec![Part::Text { text: text.into() }],
             created_at: String::new(),
             status: "done".into(),
+            duration_ms: None,
         }
     }
 
@@ -218,6 +219,7 @@ mod tests {
                 kind: "execute".into(),
                 status: "completed".into(),
                 output: None,
+                meta: None,
             },
         );
         m.parts.push(Part::Error {

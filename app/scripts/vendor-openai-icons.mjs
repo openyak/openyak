@@ -40,6 +40,9 @@ const ICON_NAMES = [
   'Desktop',
   'Chat',
   'SettingsCog',
+  'BookOpen',
+  'Tools',
+  'TextShorter',
 ]
 
 const sourceRoot = process.argv[2]

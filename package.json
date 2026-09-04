@@ -11,7 +11,7 @@
     "build:core": "cargo build --release --manifest-path core/Cargo.toml",
     "dev": "npm run build:core && npm run dev -w app",
     "build": "npm run build:core && npm run build -w app",
-    "check": "cargo test --manifest-path core/Cargo.toml && npm run check -w app"
+    "check": "cargo test --manifest-path core/Cargo.toml && npm run test -w app && npm run check -w app"
   },
   "allowScripts": {
     "electron@44.1.1": true

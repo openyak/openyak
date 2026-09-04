@@ -37,6 +37,9 @@ type OfficialIconName =
   | 'Desktop'
   | 'Chat'
   | 'SettingsCog'
+  | 'BookOpen'
+  | 'Tools'
+  | 'TextShorter'
 
 function OfficialIcon({
   name,
@@ -102,3 +105,6 @@ export const IconBolt = icon('Bolt')
 export const IconDesktop = icon('Desktop')
 export const IconChat = icon('Chat')
 export const IconSettings = icon('SettingsCog')
+export const IconBookOpen = icon('BookOpen')
+export const IconTools = icon('Tools')
+export const IconTextShorter = icon('TextShorter')

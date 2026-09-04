@@ -46,6 +46,14 @@ const api: OpenYakApi = {
     return ipcRenderer.invoke('dialog:pick-files') as Promise<string[]>
   },
 
+  openExternal(url: string): Promise<void> {
+    return ipcRenderer.invoke('shell:open-external', url) as Promise<void>
+  },
+
+  setTheme(theme): Promise<void> {
+    return ipcRenderer.invoke('theme:set', theme) as Promise<void>
+  },
+
   // Sandboxed renderers do not see File.path; the preload resolves dropped or pasted
   // files to their on-disk path so the agent can be pointed at them.
   pathForFile(file: File): string {

@@ -1,4 +1,4 @@
-import { useRef, useState, type ClipboardEvent, type DragEvent } from 'react'
+import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react'
 import Markdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
@@ -12,18 +12,37 @@ import {
   type AttachmentDraft,
 } from './attachmentDrafts'
 import {
+  IconBookOpen,
   IconCheck,
   IconChevronRight,
   IconClose,
   IconCopy,
   IconEdit,
   IconFile,
+  IconImage,
   IconPlay,
   IconPlus,
   IconRetry,
+  IconSearch,
   IconTerminal,
+  IconTextShorter,
+  IconTools,
   IconWarning,
 } from './icons'
+import {
+  groupWorkParts,
+  contextCompactionLabel,
+  isContextCompaction,
+  normalizeThoughtText,
+  partitionAssistantParts,
+  shouldShowWorkStatus,
+  shouldExposeToolOutput,
+  summarizeWorkDetails,
+  toolActivityKind,
+  workNarrativeParts,
+  type WorkActivity,
+  type ToolPart,
+} from './messagePresentation'
 
 interface Props {
   message: Message
@@ -50,7 +69,6 @@ const components: Components = {
 type TextPart = Extract<Part, { type: 'text' }>
 type ImagePart = Extract<Part, { type: 'image' }>
 type FilePart = Extract<Part, { type: 'file' }>
-type ToolPart = Extract<Part, { type: 'tool_call' }>
 
 export function MessageItem({
   message,
@@ -132,10 +150,8 @@ export function MessageItem({
   }
 
   const streaming = message.status === 'streaming'
-  const lastToolIndex = parts.findLastIndex((part) => part.type === 'tool_call')
-  const hasCompletedWork = !streaming && lastToolIndex >= 0
-  const workParts = hasCompletedWork ? parts.slice(0, lastToolIndex + 1) : []
-  const visibleParts = hasCompletedWork ? parts.slice(lastToolIndex + 1) : parts
+  const { workParts, visibleParts } = partitionAssistantParts(parts, streaming)
+  const showWorkStatus = shouldShowWorkStatus(workParts, streaming)
   const copyableText = visibleParts
     .filter((part): part is TextPart => part.type === 'text')
     .map((part) => part.text)
@@ -144,16 +160,11 @@ export function MessageItem({
     <div className={`msg msg-assistant status-${message.status}`}>
       {agentName && <div className="msg-agent">{agentName}</div>}
       <div className="msg-body">
-        {hasCompletedWork && <WorkDetails parts={workParts} />}
+        {showWorkStatus && <WorkDetails message={message} parts={workParts} />}
         {visibleParts.map((part, i) => (
           <PartView key={i} part={part} live={streaming && i === visibleParts.length - 1} />
         ))}
-        {streaming && parts.length === 0 && (
-          <div className="thinking" role="status" aria-live="polite">
-            <span className="thinking-label">Working</span>
-            <span className="thinking-pulse" aria-hidden="true" />
-          </div>
-        )}
+        {streaming && visibleParts.length === 0 && <ThinkingActivity />}
         {message.status === 'cancelled' && <div className="msg-note">Stopped</div>}
         {!streaming && (
           <div className="msg-actions">
@@ -431,15 +442,8 @@ function PartView({ part, live }: { part: Part; live: boolean }) {
         </div>
       )
     case 'thought':
-      return (
-        <details className="thought">
-          <summary>
-            <IconChevronRight size={12} className="thought-caret" />
-            {live ? 'Thinking' : 'Thought'}
-          </summary>
-          <div className="thought-body">{part.text}</div>
-        </details>
-      )
+      // Keep streaming responsive without exposing the provider's private reasoning.
+      return <ThinkingActivity />
     case 'tool_call':
       return <ToolCall part={part} />
     case 'error':
@@ -451,22 +455,72 @@ function PartView({ part, live }: { part: Part; live: boolean }) {
   }
 }
 
+function ThinkingActivity() {
+  return (
+    <div className="thinking" role="status" aria-live="polite">
+      <span className="thinking-label">Thinking…</span>
+    </div>
+  )
+}
+
 /** Tool output is shown verbatim in a monospace box; a wrapping code fence is noise. */
 function unfence(text: string): string {
   const m = /^```[^\n]*\n([\s\S]*?)\n?```\s*$/.exec(text.trim())
   return m ? m[1] : text
 }
 
-function ToolCall({ part }: { part: Extract<Part, { type: 'tool_call' }> }) {
+function ToolIcon({ part, size = 14 }: { part: ToolPart; size?: number }) {
+  const kind = toolActivityKind(part)
+  const Icon =
+    kind === 'compaction'
+      ? IconTextShorter
+      : kind === 'execute'
+      ? IconTerminal
+      : kind === 'search'
+        ? IconSearch
+        : kind === 'view'
+          ? IconImage
+          : kind === 'read'
+            ? IconBookOpen
+            : kind === 'edit'
+              ? IconEdit
+              : kind === 'load'
+                ? IconTools
+                : IconFile
+  return <Icon size={size} className="tool-icon" />
+}
+
+function ToolTitle({ part }: { part: ToolPart }) {
+  const command =
+    toolActivityKind(part) === 'execute' && !/^(ran|running)\b/i.test(part.title.trim())
+  if (!command) return <>{part.title}</>
+  const running = part.status === 'pending' || part.status === 'in_progress'
+  return (
+    <>
+      <span className="tool-title-verb">{running ? 'Running' : 'Ran'}</span>
+      <code>{part.title}</code>
+    </>
+  )
+}
+
+function ToolCall({ part }: { part: ToolPart }) {
   const [open, setOpen] = useState(false)
-  const Icon = part.kind === 'execute' ? IconTerminal : IconFile
-  const expandable = !!part.output
+  if (isContextCompaction(part)) {
+    const active = part.status === 'pending' || part.status === 'in_progress'
+    return (
+      <div
+        className={`tool-activity-row tool-compaction${active ? ' is-active' : ''}`}
+        role="status"
+        aria-live="polite"
+      >
+        <ToolIcon part={part} size={15} />
+        <span className="tool-activity-title">{contextCompactionLabel(part)}</span>
+      </div>
+    )
+  }
+  const expandable = shouldExposeToolOutput(part)
   const statusLabel =
-    part.status === 'in_progress' || part.status === 'pending'
-      ? 'Running'
-      : part.status === 'failed'
-        ? 'Failed'
-        : null
+    part.status === 'failed' ? 'Failed' : null
   return (
     <div className={`tool tool-${part.status}`}>
       <button
@@ -477,8 +531,10 @@ function ToolCall({ part }: { part: Extract<Part, { type: 'tool_call' }> }) {
         aria-label={`${part.title}: ${part.status}${expandable ? '. View output' : ''}`}
         title={expandable ? 'View tool output' : undefined}
       >
-        <Icon size={14} className="tool-icon" />
-        <span className="tool-title">{part.title}</span>
+        <ToolIcon part={part} />
+        <span className="tool-title">
+          <ToolTitle part={part} />
+        </span>
         <span className="tool-dot" />
         {statusLabel && <span className="tool-status-label">{statusLabel}</span>}
         {expandable && (
@@ -490,38 +546,82 @@ function ToolCall({ part }: { part: Extract<Part, { type: 'tool_call' }> }) {
   )
 }
 
-function WorkDetails({ parts }: { parts: Part[] }) {
-  const tools = parts.filter((part): part is ToolPart => part.type === 'tool_call')
-  const failed = tools.filter((part) => part.status === 'failed').length
-  const pending = tools.filter(
-    (part) => part.status === 'pending' || part.status === 'in_progress',
-  ).length
-  const needsAttention =
-    failed > 0 || pending > 0 || parts.some((part) => part.type === 'error')
-  const [open, setOpen] = useState(needsAttention)
-  const countLabel = `${tools.length} ${tools.length === 1 ? 'step' : 'steps'}`
+function ActivityRow({ activity }: { activity: WorkActivity }) {
+  const failed = activity.tools.filter((tool) => tool.status === 'failed').length
+  return (
+    <div className={`tool-activity-row${failed ? ' has-failure' : ''}`}>
+      <ToolIcon part={activity.tools[0]} size={15} />
+      <span className="tool-activity-title">{activity.label}</span>
+      {failed > 0 && (
+        <span className="tool-status-label">{failed === 1 ? '1 failed' : `${failed} failed`}</span>
+      )}
+    </div>
+  )
+}
+
+function elapsedSince(createdAt: string): number {
+  const startedAt = Date.parse(createdAt)
+  return Number.isFinite(startedAt) ? Math.max(0, Date.now() - startedAt) : 0
+}
+
+function WorkDetails({ message, parts }: { message: Message; parts: Part[] }) {
+  const streaming = message.status === 'streaming'
+  const [liveDuration, setLiveDuration] = useState(() => elapsedSince(message.created_at))
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    if (!streaming) return
+    const update = () => setLiveDuration(elapsedSince(message.created_at))
+    update()
+    const timer = window.setInterval(update, 1000)
+    return () => window.clearInterval(timer)
+  }, [message.created_at, streaming])
+
+  const duration = streaming ? liveDuration : message.duration_ms
+  const summary = summarizeWorkDetails(duration, streaming)
+  const activities = groupWorkParts(parts)
+  const narrative = workNarrativeParts(parts)
+
+  if (activities.length === 0 && narrative.length === 0) {
+    return (
+      <div className="work-details work-details-static">
+        <div className="work-details-summary" role="status" aria-live="polite">
+          {summary}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <details
-      className={`work-details${needsAttention ? ' needs-attention' : ''}`}
+      className="work-details"
       open={open}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       <summary>
-        <span>{needsAttention ? 'Work details' : 'Worked'}</span>
-        <span className="work-details-count">
-          {failed > 0 ? `${failed} failed` : pending > 0 ? `${pending} still running` : countLabel}
-        </span>
+        <span>{summary}</span>
         <IconChevronRight size={13} className="work-details-caret" />
       </summary>
       <div className="work-details-body">
-        {parts.map((part, index) =>
-          part.type === 'tool_call' ? (
-            <ToolCall key={part.id} part={part} />
+        {narrative.map((part, index) =>
+          part.type === 'error' ? (
+            <div key={`error:${index}`} className="msg-error">
+              {part.message}
+            </div>
           ) : (
-            <PartView key={index} part={part} live={false} />
+            <div key={`${part.type}:${index}`} className="work-details-narrative md">
+              <Markdown remarkPlugins={[remarkGfm]} components={components}>
+                {part.type === 'thought' ? normalizeThoughtText(part.text) : part.text}
+              </Markdown>
+            </div>
           ),
         )}
+        {activities.map((activity) => (
+          <ActivityRow
+            key={`${activity.kind}:${activity.tools.map((tool) => tool.id).join(':')}`}
+            activity={activity}
+          />
+        ))}
       </div>
     </details>
   )
