@@ -36,7 +36,8 @@ export async function resolveProjectFile(
   try {
     const root = await realpath(rootValue)
     const unresolved = path.resolve(root, input.path)
-    if (!within(root, unresolved)) return null
+    // macOS can spell the same directory /var and /private/var. Authorize the
+    // canonical target, not a lexical alias, before stat/read/open.
     const file = await realpath(unresolved)
     if (!within(root, file)) return null
     const info = await stat(file)

@@ -9,6 +9,7 @@ import { saveImageAttachment } from './save-image'
 import { agentHostProfiles } from './agent-host-profiles'
 import { CodexHostClient } from './codex-host'
 import { resolveProjectFile } from './project-file-host'
+import { taskFileRoot } from './task-file-context'
 import {
   inspectProjectFilePreview,
   installProjectFileProtocol,
@@ -314,23 +315,28 @@ ipcMain.handle('shell:open-external', async (_event, value: unknown) => {
   await shell.openExternal(url.toString())
 })
 
-ipcMain.handle('file:resolve', (_event, root: unknown, reference: unknown) =>
-  resolveProjectFile(root, reference),
+const fileRoot = (task: unknown) => taskFileRoot(task, (method, params) => {
+  if (!core) throw new Error('Core is not running')
+  return core.request(method, params)
+})
+
+ipcMain.handle('file:resolve', async (_event, task: unknown, reference: unknown) =>
+  resolveProjectFile(await fileRoot(task), reference),
 )
 
-ipcMain.handle('file:inspect', (_event, root: unknown, reference: unknown) =>
-  inspectProjectFilePreview(root, reference),
+ipcMain.handle('file:inspect', async (_event, task: unknown, reference: unknown) =>
+  inspectProjectFilePreview(await fileRoot(task), reference),
 )
 
-ipcMain.handle('file:open', async (_event, root: unknown, reference: unknown) => {
-  const file = await resolveProjectFile(root, reference)
+ipcMain.handle('file:open', async (_event, task: unknown, reference: unknown) => {
+  const file = await resolveProjectFile(await fileRoot(task), reference)
   if (!file) throw new Error('File is not available in the active project')
   const error = await shell.openPath(file.path)
   if (error) throw new Error(error)
 })
 
-ipcMain.handle('file:reveal', async (_event, root: unknown, reference: unknown) => {
-  const file = await resolveProjectFile(root, reference)
+ipcMain.handle('file:reveal', async (_event, task: unknown, reference: unknown) => {
+  const file = await resolveProjectFile(await fileRoot(task), reference)
   if (!file) throw new Error('File is not available in the active project')
   shell.showItemInFolder(file.path)
 })
@@ -339,12 +345,6 @@ const record = (value: unknown): Record<string, unknown> =>
   value != null && typeof value === 'object' ? (value as Record<string, unknown>) : {}
 
 const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : [])
-
-const artifactRoot = (value: unknown): string => {
-  if (value == null) return path.join(app.getPath('userData'), 'projectless')
-  if (typeof value !== 'string') throw new Error('Invalid artifact project')
-  return value
-}
 
 async function collectCodexPages(method: string, params: Record<string, unknown>): Promise<{ data: unknown[] }> {
   const data: unknown[] = []
@@ -414,17 +414,17 @@ ipcMain.handle('codex:skill-enabled', async (_event, pathValue: unknown, enabled
   return result.effectiveEnabled === true
 })
 
-ipcMain.handle('artifact:inspect', (_event, task: unknown, root: unknown, artifact: unknown) =>
-  inspectArtifact(task, artifactRoot(root), artifact),
+ipcMain.handle('artifact:inspect', async (_event, task: unknown, artifact: unknown) =>
+  inspectArtifact(task, await fileRoot(task), artifact),
 )
 
-ipcMain.handle('artifact:open', async (_event, task: unknown, root: unknown, file: unknown) => {
-  const error = await shell.openPath(resolveArtifactPath(task, artifactRoot(root), file))
+ipcMain.handle('artifact:open', async (_event, task: unknown, file: unknown) => {
+  const error = await shell.openPath(resolveArtifactPath(task, await fileRoot(task), file))
   if (error) throw new Error(error)
 })
 
-ipcMain.handle('artifact:reveal', (_event, task: unknown, root: unknown, file: unknown) => {
-  shell.showItemInFolder(resolveArtifactPath(task, artifactRoot(root), file))
+ipcMain.handle('artifact:reveal', async (_event, task: unknown, file: unknown) => {
+  shell.showItemInFolder(resolveArtifactPath(task, await fileRoot(task), file))
 })
 
 ipcMain.handle('theme:set', (_event, value: unknown) => {

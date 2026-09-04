@@ -60,7 +60,8 @@ remain eligible for the next Handoff instead of pretending their input was accep
 - Original provider events are durable. Stable Part IDs reconcile streaming and final
   content. Provider-specific interpretation happens in drivers, never by tool-name
   guessing in the renderer. Unknown requests fail explicitly; unknown items are inspectable.
-- App displays child-Agent status/activity details and a lazy paginated event log.
+- App displays child-Agent status/activity details. Raw diagnostics are not displayed
+  in the Chat; the paginated Core API remains available for debugging.
   Concurrent questions/approvals queue per Task; cancelled requests are removed.
 
 ## Host protocol
@@ -107,6 +108,8 @@ node app/scripts/native-core-smoke.mjs fake
 node app/scripts/native-core-smoke.mjs codex    # opt-in real inference
 node app/scripts/native-runtime-smoke.mjs claude # opt-in real inference
 node app/scripts/native-gui-smoke.mjs           # opt-in Electron + Playwright
+node app/scripts/file-preview-gui-smoke.mjs     # isolated Electron file-preview regression
+node app/scripts/file-preview-gui-smoke.mjs --live # also generate a real Codex report
 ```
 
 Deterministic Core tests use an isolated temporary database/worker and cover send,
@@ -118,8 +121,58 @@ Live Codex passed two Messages across a Core restart. Claude completed startup a
 configuration discovery but real inference hit the account session limit during
 this run. Full live Claude/tool/multi-Agent parity is not claimed.
 
-The Electron test also passed a real Codex send, rendered completion and raw-log
-loading with no renderer exceptions. Explicit IPC fixtures verified two concurrent
+The initial Electron test passed a real Codex send, rendered completion and raw-log
+loading with no renderer exceptions. The raw-log widget has since been removed from
+Chat; the smoke test now asserts its absence. Explicit IPC fixtures verified two concurrent
 questions, fresh form state on the second question, cancellation and a child-Agent
 card. Those fixtures are not evidence of a live provider multi-Agent run. It uses
 an isolated data directory and preserves a screenshot for visual inspection.
+
+## Task-scoped file outputs
+
+File resolve/inspect/open/reveal IPC accepts a Task ID, not a renderer-supplied root.
+The main process queries `task.context`; Core shares its cwd resolver with agent execution.
+This covers both project-bound and projectless Chats without duplicating a workspace path
+in the frontend. Canonical-path containment still rejects traversal and escaping symlinks.
+
+Successful structured Codex `fileChange` items, Claude `Write`/`Edit` tool results with
+official tool metadata, and ACP `diff` content normalize in Core to:
+
+```json
+{"type":"event","kind":"file.output","data":{"schema_version":1,"tool_call_id":"write-id","files":[{"path":"report.md"}]}}
+```
+
+Original provider parts are retained. Terminal legacy history is enriched in memory,
+idempotently, without rewriting the database or changing live part indices. Failures,
+in-progress writes and deletions do not produce output cards. Shell output and response
+prose are not interpreted as file-write evidence. Official `artifact.*` remains distinct;
+both event families use the workbench. Presentation files auto-preview; source files
+remain clickable without taking focus automatically. Closing a preview or switching
+tasks does not reopen an already-presented output during the same app session.
+
+The deterministic GUI regression covers a legacy projectless Chinese/space-encoded
+report path, automatic and manual opening, Markdown rendering, nested file links,
+syntax highlighting/line targets, HTML sandboxing, multiple tabs, task switching,
+missing-file feedback and path/symlink denial. It never writes to the user's database.
+
+## Approval presentation
+
+Native Codex approvals normalize official decision variants into human-readable options
+inside the runtime adapter, not the renderer. Option IDs still map to the original
+decision values (including policy-amendment objects). `decline` rejects the operation
+but permits the agent to continue; `cancel` interrupts the turn. Session-scoped grants
+are never labeled permanent and persistent grants are never preselected. Unsupported
+future decision variants are visible but disabled and cannot be submitted as grants.
+
+Optional `PermissionRequest.details` carries command, working directory, reason,
+network target, additional permission context, and file changes. File approvals join
+the previously received item by `itemId`; missing diffs are reported as unavailable,
+never reconstructed from assistant prose. The original `tool_call` remains intact.
+ACP falls back to its structured diff/location/rawInput fields and keeps provider labels.
+
+The shared permission card presents scoped radio choices and one Submit action, with
+a separate cancel action and a duplicate-submit guard. Enter submits only inside the
+form; Escape cancels only while focus is within it. Elicitation styling is unchanged.
+`app/test/permission-preview.html` is an isolated Vite browser fixture using the actual
+component and normalizer. Its callbacks only record decisions; no agent is invoked and
+no permissions are changed. Unit tests separately verify native decision round trips.

@@ -13,18 +13,17 @@ import type {
   Attachment,
   ElicitationResponse,
   Message,
-  PermissionRequest,
+  ProjectFileReference,
 } from '../../shared/protocol'
 import type { PendingElicitation, PendingPermission } from './App'
 import { ElicitationCard } from './ElicitationCard'
+import { PermissionCard } from './PermissionCard'
 import { MessageItem } from './Message'
-import { RuntimeLog } from './RuntimeLog'
 import { RuntimeActivity } from './RuntimeActivity'
 import type { Part } from '../../shared/protocol'
-import { IconArrowDown, IconHand } from './icons'
+import { IconArrowDown } from './icons'
 
 interface Props {
-  taskId: string | null
   backgroundParts: Part[]
   messages: Message[]
   agents: Agent[]
@@ -40,6 +39,7 @@ interface Props {
   onRetry: (message: Message) => void
   onContinue: () => void
   onOpenArtifact?: (artifact: ArtifactReference) => void
+  onOpenFile?: (reference: ProjectFileReference) => void
   /** Shown instead of the list while there are no messages. */
   empty: ReactNode
 }
@@ -89,7 +89,6 @@ function messageSummary(message: Message, preserveLines = false): string {
 }
 
 export function Thread({
-  taskId,
   backgroundParts,
   messages,
   agents,
@@ -105,6 +104,7 @@ export function Thread({
   onRetry,
   onContinue,
   onOpenArtifact,
+  onOpenFile,
   empty,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null)
@@ -242,11 +242,11 @@ export function Thread({
                   onRetry={onRetry}
                   onContinue={onContinue}
                   onOpenArtifact={onOpenArtifact}
+                  onOpenFile={onOpenFile}
                 />
               </div>
             ))}
             <RuntimeActivity parts={backgroundParts} />
-            {taskId && <RuntimeLog key={taskId} taskId={taskId} />}
             {permission && (
               <PermissionCard
                 key={permission.request.request_id}
@@ -330,43 +330,6 @@ export function Thread({
           <IconArrowDown size={17} />
         </button>
       )}
-    </div>
-  )
-}
-
-/** The agent's own permission request, forwarded as is; the answer goes straight back. */
-function PermissionCard({
-  request,
-  agentName,
-  onChoose,
-}: {
-  request: PermissionRequest
-  agentName: string
-  onChoose: (optionId: string | null) => void
-}) {
-  return (
-    <div className="permission">
-      <div className="permission-head">
-        <IconHand size={15} />
-        <span>{agentName} asks for permission</span>
-      </div>
-      <div className="permission-title">{request.title}</div>
-      <div className="permission-actions">
-        {request.options.map((o) => (
-          <button
-            key={o.id}
-            type="button"
-            className={`btn${o.kind.startsWith('allow') ? ' btn-primary' : ''}`}
-            title={o.kind}
-            onClick={() => onChoose(o.id)}
-          >
-            {o.label}
-          </button>
-        ))}
-        <button type="button" className="btn btn-ghost" onClick={() => onChoose(null)}>
-          Dismiss
-        </button>
-      </div>
     </div>
   )
 }

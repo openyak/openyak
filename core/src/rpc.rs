@@ -242,6 +242,11 @@ async fn handle(ctx: &Arc<Ctx>, method: &str, params: Value) -> Result<Value, Rp
             }
             json!(store.create_task(p.project_id.as_deref(), &p.title)?)
         }
+        "task.context" => {
+            let p: TaskId = parse(params)?;
+            let (task, cwd) = task_context(ctx, &p.task_id)?;
+            json!({ "task_id": task.id, "cwd": cwd })
+        }
         "task.rename" => {
             let p: TaskRename = parse(params)?;
             let task = store
@@ -260,7 +265,14 @@ async fn handle(ctx: &Arc<Ctx>, method: &str, params: Value) -> Result<Value, Rp
         }
         "chat.history" => {
             let p: TaskId = parse(params)?;
-            json!(store.list_messages(&p.task_id)?)
+            let mut messages = store.list_messages(&p.task_id)?;
+            for message in &mut messages {
+                // Never append synthetic indices to an actively streaming transcript.
+                if message.role == "assistant" && message.status != "streaming" {
+                    crate::file_outputs::enrich(&mut message.parts);
+                }
+            }
+            json!(messages)
         }
         "chat.events" => {
             let p: TaskId = parse(params)?;
@@ -342,6 +354,11 @@ fn locate(ctx: &Arc<Ctx>, task_id: &str, agent: &str) -> Result<(Task, String), 
     if !agents::is_known(agent) {
         return Err(RpcError::invalid_params(format!("unknown agent: {agent}")));
     }
+    task_context(ctx, task_id)
+}
+
+/// Shared authority for both agent execution and host file previews.
+fn task_context(ctx: &Arc<Ctx>, task_id: &str) -> Result<(Task, String), RpcError> {
     let task = ctx
         .store
         .get_task(task_id)?
@@ -356,6 +373,58 @@ fn locate(ctx: &Arc<Ctx>, task_id: &str, agent: &str) -> Result<(Task, String), 
         None => ctx.projectless_dir.clone(),
     };
     Ok((task, cwd))
+}
+
+#[cfg(test)]
+mod file_context_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    #[tokio::test]
+    async fn preview_context_matches_execution_and_legacy_history_is_enriched_without_rewriting() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let ctx = Arc::new(Ctx {
+            store: crate::store::Store::in_memory().unwrap(),
+            out: Outbound(tx),
+            agents: crate::agents::AgentPool::default(),
+            projectless_dir: "/workspace/Application Support/projectless".into(),
+            permissions: Mutex::default(),
+            elicitations: Mutex::default(),
+        });
+        let task = ctx.store.create_task(None, "report").unwrap();
+        let context = handle(&ctx, "task.context", json!({"task_id":task.id}))
+            .await
+            .unwrap_or_else(|e| panic!("{}", e.message));
+        assert_eq!(
+            context["cwd"],
+            locate(&ctx, &task.id, "codex")
+                .unwrap_or_else(|e| panic!("{}", e.message))
+                .1
+        );
+        assert!(handle(&ctx, "task.context", json!({"task_id":"missing"}))
+            .await
+            .is_err());
+        let project = ctx
+            .store
+            .create_project("project", "/workspace/project")
+            .unwrap();
+        let project_task = ctx.store.create_task(Some(&project.id), "report").unwrap();
+        assert_eq!(
+            task_context(&ctx, &project_task.id)
+                .unwrap_or_else(|e| panic!("{}", e.message))
+                .1,
+            project.path
+        );
+        let part: Part = serde_json::from_value(json!({"type":"tool_call","id":"write","title":"Write","kind":"edit","status":"completed","_meta":{"claudeCode":{"toolName":"Write"}},"raw_input":{"file_path":"report.md"}})).unwrap();
+        ctx.store
+            .insert_message(&task.id, "assistant", Some("claude"), &[part], "done")
+            .unwrap();
+        let history = handle(&ctx, "chat.history", json!({"task_id":task.id}))
+            .await
+            .unwrap_or_else(|e| panic!("{}", e.message));
+        assert_eq!(history[0]["parts"][1]["kind"], "file.output");
+        assert_eq!(ctx.store.list_messages(&task.id).unwrap()[0].parts.len(), 1);
+    }
 }
 
 async fn chat_send(ctx: &Arc<Ctx>, p: ChatSend) -> Result<Value, RpcError> {

@@ -2,6 +2,7 @@
 
 mod agents;
 mod artifacts;
+mod file_outputs;
 mod handoff;
 mod rpc;
 mod store;

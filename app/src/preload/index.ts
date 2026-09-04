@@ -74,20 +74,20 @@ const api: OpenYakApi = {
     return ipcRenderer.invoke('shell:open-external', url) as Promise<void>
   },
 
-  resolveProjectFile(projectPath, reference) {
-    return ipcRenderer.invoke('file:resolve', projectPath, reference)
+  resolveProjectFile(taskId, reference) {
+    return ipcRenderer.invoke('file:resolve', taskId, reference)
   },
 
-  inspectProjectFile(projectPath, reference) {
-    return ipcRenderer.invoke('file:inspect', projectPath, reference)
+  inspectProjectFile(taskId, reference) {
+    return ipcRenderer.invoke('file:inspect', taskId, reference)
   },
 
-  openProjectFile(projectPath, reference) {
-    return ipcRenderer.invoke('file:open', projectPath, reference) as Promise<void>
+  openProjectFile(taskId, reference) {
+    return ipcRenderer.invoke('file:open', taskId, reference) as Promise<void>
   },
 
-  revealProjectFile(projectPath, reference) {
-    return ipcRenderer.invoke('file:reveal', projectPath, reference) as Promise<void>
+  revealProjectFile(taskId, reference) {
+    return ipcRenderer.invoke('file:reveal', taskId, reference) as Promise<void>
   },
 
   codexCapabilities(projectPath = null) {
@@ -98,16 +98,16 @@ const api: OpenYakApi = {
     return ipcRenderer.invoke('codex:skill-enabled', path, enabled) as Promise<boolean>
   },
 
-  inspectArtifact(taskId, projectPath, artifact) {
-    return ipcRenderer.invoke('artifact:inspect', taskId, projectPath, artifact)
+  inspectArtifact(taskId, artifact) {
+    return ipcRenderer.invoke('artifact:inspect', taskId, artifact)
   },
 
-  openArtifact(taskId, projectPath, filePath) {
-    return ipcRenderer.invoke('artifact:open', taskId, projectPath, filePath) as Promise<void>
+  openArtifact(taskId, filePath) {
+    return ipcRenderer.invoke('artifact:open', taskId, filePath) as Promise<void>
   },
 
-  revealArtifact(taskId, projectPath, filePath) {
-    return ipcRenderer.invoke('artifact:reveal', taskId, projectPath, filePath) as Promise<void>
+  revealArtifact(taskId, filePath) {
+    return ipcRenderer.invoke('artifact:reveal', taskId, filePath) as Promise<void>
   },
 
   setTheme(theme): Promise<void> {

@@ -3,6 +3,7 @@ import type { ArtifactEventData, ArtifactReference, Part } from '../../shared/pr
 const autoPreviewExtensions = new Set([
   'avif',
   'bmp',
+  'docx',
   'gif',
   'htm',
   'html',

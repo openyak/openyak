@@ -285,10 +285,22 @@ export interface PermissionRequest {
   agent: AgentId
   title: string
   options: PermissionOption[]
+  /** Normalized by native runtimes; ACP clients can use tool_call instead. */
+  details?: PermissionDetails
   /** The ACP ToolCallUpdate of the request verbatim: title, kind, status, content incl. diffs, locations, rawInput, rawOutput, _meta. */
   tool_call: unknown
   /** The request's own meta. */
   _meta?: Record<string, unknown>
+}
+
+export interface PermissionDetails {
+  kind?: 'command' | 'files' | 'network' | 'permissions' | 'tool'
+  reason?: string
+  command?: string
+  cwd?: string
+  target?: string
+  files: { path: string; diff?: string; before?: string; after?: string }[]
+  input?: unknown
 }
 
 export interface PermissionResponse {
@@ -375,28 +387,27 @@ export interface OpenYakApi {
   saveImage(image: { mimeType: string; data: string; suggestedName?: string }): Promise<boolean>
   /** Open a trusted HTTPS setup page in the user's default browser. */
   openExternal(url: string): Promise<void>
-  /** Resolve a Markdown candidate without granting access outside the active project. */
+  /** Resolve inside the Task's execution cwd, determined by Core (including projectless Chats). */
   resolveProjectFile(
-    projectPath: string | null,
+    taskId: string,
     reference: ProjectFileReference,
   ): Promise<ResolvedProjectFile | null>
   inspectProjectFile(
-    projectPath: string | null,
+    taskId: string,
     reference: ProjectFileReference,
   ): Promise<ProjectFilePreview>
-  openProjectFile(projectPath: string | null, reference: ProjectFileReference): Promise<void>
-  revealProjectFile(projectPath: string | null, reference: ProjectFileReference): Promise<void>
+  openProjectFile(taskId: string, reference: ProjectFileReference): Promise<void>
+  revealProjectFile(taskId: string, reference: ProjectFileReference): Promise<void>
   /** Inventory from the public Codex App Server used by the official desktop host. */
   codexCapabilities(projectPath?: string | null): Promise<CodexHostCapabilities>
   setCodexSkillEnabled(path: string, enabled: boolean): Promise<boolean>
   /** Validate a generated file against its project and create a short-lived preview URL. */
   inspectArtifact(
     taskId: string,
-    projectPath: string | null,
     artifact: ArtifactReference,
   ): Promise<ArtifactPreview>
-  openArtifact(taskId: string, projectPath: string | null, filePath: string): Promise<void>
-  revealArtifact(taskId: string, projectPath: string | null, filePath: string): Promise<void>
+  openArtifact(taskId: string, filePath: string): Promise<void>
+  revealArtifact(taskId: string, filePath: string): Promise<void>
   /** Apply the user's theme to Electron chrome and the renderer. */
   setTheme(theme: ThemePreference): Promise<void>
   /** On-disk path of a dropped or pasted File, or '' when it has none (clipboard images). */

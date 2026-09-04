@@ -31,7 +31,8 @@ import { ButtonTooltip } from './ButtonTooltip'
 import { Settings } from './Settings'
 import { readThemePreference, THEME_KEY } from './theme'
 import { commandsFromEventData } from './commandPresentation'
-import { artifactsFromParts, shouldAutoPreviewArtifact } from './artifactPresentation'
+import { shouldAutoPreviewArtifact } from './artifactPresentation'
+import { fileOutputsFromParts } from './fileOutputPresentation'
 import { ProjectFileReferenceProvider } from './MarkdownBlocks'
 import { WorkbenchPanel } from './WorkbenchPanel'
 import {
@@ -154,7 +155,7 @@ export function App() {
   const [error, setError] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(readSidebar)
   const [workbench, setWorkbench] = useState(emptyWorkbenchState)
-  const autoPreviewedArtifact = useRef<string | null>(null)
+  const autoPreviewedFiles = useRef(new Set<string>())
   const previewRequestSequence = useRef(0)
 
   // Latest values, readable from handlers and callbacks without re-creating them.
@@ -1120,7 +1121,7 @@ export function App() {
     const openingTaskId = taskId
     const sequence = ++previewRequestSequence.current
     try {
-      const preview = await window.openyak.inspectArtifact(openingTaskId, projectPath, reference)
+      const preview = await window.openyak.inspectArtifact(openingTaskId, reference)
       setWorkbench((current) => openWorkbenchTab(
         current,
         artifactTab(openingTaskId, preview),
@@ -1129,14 +1130,14 @@ export function App() {
     } catch (err) {
       fail(err)
     }
-  }, [fail, projectPath, taskId])
+  }, [fail, taskId])
 
   const previewProjectFile = useCallback(async (reference: ProjectFileReference) => {
-    if (!projectPath || !taskId) return
+    if (!taskId) return
     const openingTaskId = taskId
     const sequence = ++previewRequestSequence.current
     try {
-      const preview = await window.openyak.inspectProjectFile(projectPath, reference)
+      const preview = await window.openyak.inspectProjectFile(openingTaskId, reference)
       setWorkbench((current) => openWorkbenchTab(
         current,
         projectFileTab(openingTaskId, preview),
@@ -1145,21 +1146,22 @@ export function App() {
     } catch (err) {
       fail(err)
     }
-  }, [fail, projectPath, taskId])
+  }, [fail, taskId])
 
   useEffect(() => {
     if (!taskId) return
-    const declarations = messages.flatMap((message) =>
-      artifactsFromParts(message.parts).map((item) => ({
+    const declarations = messages.filter(message => message.task_id === taskId).flatMap((message) =>
+      fileOutputsFromParts(message.parts).map((item) => ({
         ...item,
         key: `${taskId}:${message.id}:${item.key}`,
       })),
     )
-    const latest = declarations.findLast(({ artifact }) => shouldAutoPreviewArtifact(artifact))
-    if (!latest || autoPreviewedArtifact.current === latest.key) return
-    autoPreviewedArtifact.current = latest.key
-    void previewArtifact(latest.artifact)
-  }, [messages, previewArtifact, projectPath, taskId])
+    const latest = declarations.findLast(({ reference }) => shouldAutoPreviewArtifact(reference))
+    if (!latest || autoPreviewedFiles.current.has(latest.key)) return
+    autoPreviewedFiles.current.add(latest.key)
+    if (latest.kind === 'artifact') void previewArtifact(latest.reference)
+    else if (latest.reference.path) void previewProjectFile({ path: latest.reference.path })
+  }, [messages, previewArtifact, previewProjectFile, taskId])
 
   const mainTitlebar = (
     <header
@@ -1233,7 +1235,7 @@ export function App() {
             />
           </>
         ) : (
-          <ProjectFileReferenceProvider projectPath={projectPath} onOpen={previewProjectFile}>
+          <ProjectFileReferenceProvider taskId={taskId} onOpen={previewProjectFile}>
             <div className={`workspace-shell${workbenchOpen ? ' has-workbench' : ''}`}>
               <section className="chat-workspace" aria-label="Chat">
                 {mainTitlebar}
@@ -1241,7 +1243,6 @@ export function App() {
                   <div className="chat-stage">
                     <Thread
                       key={`thread-${taskId ?? NO_TASK}`}
-                      taskId={taskId}
                       backgroundParts={backgroundEvents.filter(event => event.task_id === taskId).map(event => ({ type: 'event', kind: event.kind, data: event.data }))}
                       messages={messages}
                       agents={agents}
@@ -1257,6 +1258,7 @@ export function App() {
                       onRetry={(message) => void retry(message)}
                       onContinue={() => void send('Continue from where you stopped.', [])}
                       onOpenArtifact={(path) => void previewArtifact(path)}
+                      onOpenFile={(reference) => void previewProjectFile(reference)}
                       empty={
                         draft ? (
                           <div className="hero">
@@ -1296,19 +1298,18 @@ export function App() {
                 <WorkbenchPanel
                   tabs={taskWorkbenchTabs}
                   active={activeWorkbenchTab}
-                  projectName={projectPath ? basename(projectPath) : undefined}
                   onSelect={(key) => setWorkbench((current) => activateWorkbenchTab(current, key))}
                   onClose={(key) => setWorkbench((current) => closeWorkbenchTab(current, key))}
                   onOpen={(tab) => {
                     const operation = tab.kind === 'artifact'
-                      ? window.openyak.openArtifact(tab.taskId, projectPath, tab.preview.path)
-                      : window.openyak.openProjectFile(projectPath, tab.preview)
+                      ? window.openyak.openArtifact(tab.taskId, tab.preview.path)
+                      : window.openyak.openProjectFile(tab.taskId, tab.preview)
                     void operation.catch(fail)
                   }}
                   onReveal={(tab) => {
                     const operation = tab.kind === 'artifact'
-                      ? window.openyak.revealArtifact(tab.taskId, projectPath, tab.preview.path)
-                      : window.openyak.revealProjectFile(projectPath, tab.preview)
+                      ? window.openyak.revealArtifact(tab.taskId, tab.preview.path)
+                      : window.openyak.revealProjectFile(tab.taskId, tab.preview)
                     void operation.catch(fail)
                   }}
                   onOpenPublished={(tab) => {

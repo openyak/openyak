@@ -6,6 +6,7 @@ import remarkGfm from 'remark-gfm'
 import { IconFile } from './icons'
 import { markdownComponents, useDarkAppearance } from './MarkdownBlocks'
 import { codePreviewLanguage, filePreviewKind } from './filePreviewPresentation'
+import { markdownUrlTransform } from './markdownUrlTransform'
 
 interface Props {
   name: string
@@ -93,6 +94,7 @@ export function FilePreviewContent(props: Props) {
     return (
       <div className="workbench-content workbench-markdown md">
         <Markdown
+          urlTransform={markdownUrlTransform}
           remarkPlugins={[remarkGfm]}
           rehypePlugins={[rehypeHighlight]}
           components={markdownComponents}

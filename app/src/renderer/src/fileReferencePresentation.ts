@@ -28,7 +28,8 @@ export function markdownFileReference(value: string): ProjectFileReference | nul
     } catch {
       return null
     }
-  } else if (scheme.test(target) && !windowsAbsolutePath.test(target)) {
+  } else if (scheme.test(target) && !windowsAbsolutePath.test(target)
+    && !/^[^:/\\]+\.[^:/\\]+:\d+(?::\d+)?$/.test(target)) {
     return null
   }
 

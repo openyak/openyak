@@ -136,6 +136,32 @@ test('Codex requestUserInput replies use the official answer map', async () => {
     { id: 9, result: { answers: { q: { answers: ['Custom answer'] } } } },
   ])
 })
+test('Codex approvals join pending file details and preserve every decision on reply', async () => {
+  const decisions = ['accept', 'acceptForSession', 'decline', 'cancel', { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['pnpm', 'test'] } }]
+  for (const [index, decision] of decisions.entries()) {
+    const h = harness(), replies: unknown[] = []
+    let payload: Record<string, unknown> = {}
+    h.sink.request = async (_method, params) => { payload = params as Record<string, unknown>; return { option_id: String(index) } }
+    const driver = new CodexDriver(h.sink)
+    const d = driver as unknown as { rpc: { send(m: unknown): void }; receive(m: unknown): void; request(m: unknown): Promise<void> }
+    d.rpc = { send: m => replies.push(m) }
+    d.receive({ method: 'item/started', params: { item: { id: 'change', type: 'fileChange', changes: [{ path: '/project/report.md', diff: '+# Report' }] } } })
+    await d.request({ id: 40, method: 'item/fileChange/requestApproval', params: { itemId: 'change', availableDecisions: decisions } })
+    assert.deepEqual(replies, [{ id: 40, result: { decision } }])
+    assert.equal(payload.title, 'Allow changes to report.md?')
+    assert.deepEqual((payload.details as { files: unknown }).files, [{ path: '/project/report.md', diff: '+# Report' }])
+  }
+})
+test('Codex invalid or unsupported approval responses fail closed', async () => {
+  for (const option_id of [null, '', ' ', '-1', '999', '0.0', '0']) {
+    const h = harness(), replies: unknown[] = []
+    h.sink.request = async () => ({ option_id })
+    const d = new CodexDriver(h.sink) as unknown as { rpc: { send(m: unknown): void }; request(m: unknown): Promise<void> }
+    d.rpc = { send: m => replies.push(m) }
+    await d.request({ id: 41, method: 'item/commandExecution/requestApproval', params: { availableDecisions: [{ futureGrant: {} }] } })
+    assert.deepEqual(replies, [{ id: 41, result: { decision: 'cancel' } }])
+  }
+})
 test('unknown native requests fail explicitly, never fabricate successful results', async () => {
   const h = harness(),
     driver = new CodexDriver(h.sink),

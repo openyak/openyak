@@ -92,6 +92,7 @@ it only for the mode pill's icon and colour.
 | `project.delete`     | `{ project_id }`                                       | `{}` — removes the Project and all of its Chats and agent sessions |
 | `task.list`          | `{ project_id: string \| null }`                        | `Task[]` (most recently updated first) |
 | `task.create`        | `{ project_id: string \| null, title }`                 | `Task`             |
+| `task.context`       | `{ task_id }`                                         | `{ task_id, cwd }` — same cwd used by agent execution, including projectless Chats |
 | `task.rename`        | `{ task_id, title }`                                   | `Task`             |
 | `task.delete`        | `{ task_id }`                                          | `{}` — removes the Chat and the task's agent sessions |
 | `chat.history`       | `{ task_id }`                                          | `Message[]`        |

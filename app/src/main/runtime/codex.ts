@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module'
 import { JsonRpcProcess } from './json-rpc.ts'
+import { codexApproval } from './approval.ts'
 import {
   array,
   object,
@@ -550,31 +551,18 @@ export class CodexDriver implements NativeDriver {
         method === 'item/commandExecution/requestApproval' ||
         method === 'item/fileChange/requestApproval'
       ) {
-        const decisions = Array.isArray(p.availableDecisions)
-          ? p.availableDecisions
-          : ['accept', 'acceptForSession', 'decline', 'cancel']
+        const { decisions, ...approval } = codexApproval(method, p, this.parts.get(string(p.itemId)))
         const response = object(
           await this.sink.request(
             'permission.request',
-            {
-              title: p.reason || p.command || 'Approve changes',
-              tool_call: p,
-              options: decisions.map((d, i) => ({
-                id: String(i),
-                label: typeof d === 'string' ? d : JSON.stringify(d),
-                kind:
-                  d === 'decline' || d === 'cancel'
-                    ? 'reject_once'
-                    : 'allow_once',
-              })),
-            },
+            approval,
             controller.signal,
           ),
         )
         const index = Number(response.option_id)
         result = {
           decision:
-            response.option_id != null && Number.isInteger(index)
+            typeof response.option_id === 'string' && /^\d+$/.test(response.option_id) && Number.isInteger(index) && approval.options[index]?.kind !== 'unsupported'
               ? (decisions[index] ?? 'cancel')
               : 'cancel',
         }
@@ -585,6 +573,7 @@ export class CodexDriver implements NativeDriver {
             {
               title: p.reason || 'Grant requested permissions',
               tool_call: p,
+              details: { kind: 'permissions', files: [], input: p.permissions },
               options: [
                 {
                   id: 'allow',

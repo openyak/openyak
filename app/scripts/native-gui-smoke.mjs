@@ -48,9 +48,8 @@ try {
     .locator('.msg-assistant.status-done')
     .filter({ hasText: 'gui-native-ok' })
     .waitFor({ timeout: 150000 })
-  await page.getByText('Agent event log', { exact: true }).click()
-  await page.locator('.runtime-log details').first().waitFor({ timeout: 10000 })
-  await page.getByText('Agent event log', { exact: true }).click()
+  assert.equal(await page.getByText('Agent event log', { exact: true }).count(), 0)
+  assert.equal(await page.locator('.runtime-log').count(), 0)
   const tasks = await page.evaluate(() =>
     window.openyak.request('task.list', {}),
   )

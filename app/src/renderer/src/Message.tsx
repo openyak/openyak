@@ -10,7 +10,7 @@ import {
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
-import type { ArtifactReference, Attachment, Message, Part } from '../../shared/protocol'
+import type { ArtifactReference, Attachment, Message, Part, ProjectFileReference } from '../../shared/protocol'
 import { RuntimeActivity } from './RuntimeActivity'
 import {
   draftsFromFiles,
@@ -21,6 +21,7 @@ import {
   type AttachmentDraft,
 } from './attachmentDrafts'
 import { markdownComponents } from './MarkdownBlocks'
+import { markdownUrlTransform } from './markdownUrlTransform'
 import { AttachmentImage } from './AttachmentImage'
 import {
   IconBookOpen,
@@ -62,7 +63,8 @@ import {
   type WorkActivity,
   type ToolPart,
 } from './messagePresentation'
-import { artifactName, artifactsFromParts } from './artifactPresentation'
+import { artifactName } from './artifactPresentation'
+import { fileOutputsFromParts } from './fileOutputPresentation'
 import { toolRichContent } from './toolContentPresentation'
 
 interface Props {
@@ -76,6 +78,7 @@ interface Props {
   onRetry: (message: Message) => void
   onContinue: () => void
   onOpenArtifact?: (artifact: ArtifactReference) => void
+  onOpenFile?: (reference: ProjectFileReference) => void
 }
 
 type TextPart = Extract<Part, { type: 'text' }>
@@ -93,6 +96,7 @@ export function MessageItem({
   onRetry,
   onContinue,
   onOpenArtifact,
+  onOpenFile,
 }: Props) {
   // Parts arrive by index and can be sparse for a moment.
   const parts = message.parts.filter((p): p is Part => Boolean(p))
@@ -171,7 +175,7 @@ export function MessageItem({
     .filter((part): part is TextPart => part.type === 'text')
     .map((part) => part.text)
     .join('\n\n')
-  const artifacts = artifactsFromParts(parts)
+  const artifacts = fileOutputsFromParts(parts)
   return (
     <div className={`msg msg-assistant status-${message.status}`}>
       <div className="msg-body">
@@ -198,15 +202,15 @@ export function MessageItem({
             />
           )
         })}
-        {artifacts.length > 0 && onOpenArtifact && (
+        {artifacts.length > 0 && (
           <div className="message-artifacts" aria-label="Files created or changed">
-            {artifacts.map(({ key, artifact }) => (
+            {artifacts.map(({ key, kind, reference: artifact }) => (
               <button
                 key={key}
                 type="button"
                 className="artifact-chip"
                 title={artifact.path ?? artifact.url}
-                onClick={() => onOpenArtifact(artifact)}
+                onClick={() => kind === 'artifact' ? onOpenArtifact?.(artifact) : artifact.path && onOpenFile?.({ path: artifact.path })}
               >
                 <IconFile size={14} />
                 <span>{artifactName(artifact)}</span>
@@ -513,6 +517,7 @@ const MarkdownFragment = memo(function MarkdownFragment({ text }: { text: string
   if (!text) return null
   return (
     <Markdown
+      urlTransform={markdownUrlTransform}
       remarkPlugins={[remarkGfm]}
       rehypePlugins={[rehypeHighlight]}
       components={markdownComponents}
@@ -592,7 +597,7 @@ function WorkStatus({
       role={active ? 'status' : undefined}
       aria-live={active ? 'polite' : undefined}
     >
-      <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+      <Markdown urlTransform={markdownUrlTransform} remarkPlugins={[remarkGfm]} components={markdownComponents}>
         {part.text}
       </Markdown>
     </div>
@@ -902,7 +907,7 @@ function WorkDetails({
           if (!content) return null
           return (
             <div key={`${part.type}:${entry.partIndex}`} className="work-details-narrative md">
-              <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+              <Markdown urlTransform={markdownUrlTransform} remarkPlugins={[remarkGfm]} components={markdownComponents}>
                 {content}
               </Markdown>
             </div>

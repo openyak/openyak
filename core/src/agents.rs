@@ -1094,6 +1094,13 @@ impl Connection {
             &live.parts[index],
         );
         live.persist(&self.ctx.store, index);
+        if let Some(event) = crate::file_outputs::from_tool(&live.parts[index]) {
+            if !live.parts.contains(&event) {
+                let next = live.parts.len();
+                live.parts.push(event);
+                self.changed(live, next);
+            }
+        }
     }
 
     /// Keep and announce an update that arrived while no reply was streaming.

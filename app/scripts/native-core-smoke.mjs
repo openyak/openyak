@@ -35,6 +35,7 @@ rl.on('line', line => {
  } else if(!m.method && m.id.startsWith('question-')) {
    answers.add(m.id); if(answers.size===2) {
      send({method:'runtime.part',params:{key:'answer',part:{type:'text',text:'core-native-ok'}}});
+     send({method:'runtime.part',params:{key:'report',part:{type:'tool_call',id:'report',title:'fileChange',kind:'edit',status:'completed',raw_output:{type:'fileChange',status:'completed',changes:[{path:'report.md',kind:{type:'add'}}]}}}});
      event('agent.updated',{id:'child',parentId:session,status:'completed',name:'Fixture child'});
      done('end_turn'); answers.clear();
    }
@@ -131,6 +132,8 @@ try {
     title: 'Native integration test',
   })
   const args = { task_id: task.id, agent }
+  const context = await request('task.context', { task_id: task.id })
+  assert.equal(context.cwd, join(directory, 'projectless'))
   const send = async (text) => {
     const sent = await request('chat.send', { ...args, text })
     const done = await until(
@@ -162,6 +165,8 @@ try {
     ),
   )
   if (mode === 'fake') {
+    assert.equal(history[1].parts.filter(p => p.type === 'event' && p.kind === 'file.output').length, 1)
+    assert.ok(notifications.some(m => m.method === 'chat.update' && m.params.part?.kind === 'file.output'))
     assert.equal(requests.length, 2)
     assert.notEqual(requests[0].id, requests[1].id)
   }

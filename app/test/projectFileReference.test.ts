@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { markdownUrlTransform } from '../src/renderer/src/markdownUrlTransform.ts'
 import {
   inlineFileReference,
   markdownFileReference,
@@ -13,6 +14,11 @@ import {
 } from '../src/main/project-file-host.ts'
 
 test('parses Markdown file destinations without hard-coding repository names', () => {
+  assert.deepEqual(markdownFileReference('answer.ts:2'), { path: 'answer.ts', line: 2 })
+  assert.equal(markdownUrlTransform('answer.ts:2', 'href'), 'answer.ts:2')
+  assert.equal(markdownUrlTransform('file:///tmp/report.md', 'href'), 'file:///tmp/report.md')
+  assert.equal(markdownUrlTransform('file:///tmp/private.png', 'src'), '')
+  assert.equal(markdownUrlTransform('javascript:alert(1)', 'href'), '')
   assert.deepEqual(markdownFileReference('/Users/example/project/app/src/View.tsx:389'), {
     path: '/Users/example/project/app/src/View.tsx',
     line: 389,

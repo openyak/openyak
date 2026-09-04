@@ -26,24 +26,24 @@ import type { ProjectFileReference, ResolvedProjectFile } from '../../shared/pro
 import { inlineFileReference, markdownFileReference } from './fileReferencePresentation'
 
 interface ProjectFileReferenceContextValue {
-  projectPath: string
+  taskId: string
   onOpen: (reference: ProjectFileReference) => void
 }
 
 const ProjectFileReferenceContext = createContext<ProjectFileReferenceContextValue | null>(null)
 
 export function ProjectFileReferenceProvider({
-  projectPath,
+  taskId,
   onOpen,
   children,
 }: {
-  projectPath: string | null
+  taskId: string | null
   onOpen: (reference: ProjectFileReference) => void
   children: ReactNode
 }) {
   const value = useMemo(
-    () => (projectPath ? { projectPath, onOpen } : null),
-    [onOpen, projectPath],
+    () => (taskId ? { taskId, onOpen } : null),
+    [onOpen, taskId],
   )
   return (
     <ProjectFileReferenceContext.Provider value={value}>
@@ -88,12 +88,12 @@ function MarkdownInlineCode({ children, className, ...props }: React.ComponentPr
   const element = useRef<HTMLElement>(null)
   const text = typeof children === 'string' ? children.replace(/\n$/, '') : ''
   const candidate = inlineFileReference(text)
-  const projectPath = context?.projectPath
+  const taskId = context?.taskId
   const candidatePath = candidate?.path
   const candidateLine = candidate?.line
   const candidateColumn = candidate?.column
-  const lookupKey = projectPath && candidatePath
-    ? `${projectPath}\0${candidatePath}\0${candidateLine ?? ''}\0${candidateColumn ?? ''}`
+  const lookupKey = taskId && candidatePath
+    ? `${taskId}\0${candidatePath}\0${candidateLine ?? ''}\0${candidateColumn ?? ''}`
     : null
   const [resolution, setResolution] = useState<{
     key: string
@@ -103,10 +103,10 @@ function MarkdownInlineCode({ children, className, ...props }: React.ComponentPr
 
   useEffect(() => {
     let current = true
-    if (!projectPath || !candidatePath || !lookupKey || element.current?.closest('pre')) {
+    if (!taskId || !candidatePath || !lookupKey || element.current?.closest('pre')) {
       return () => { current = false }
     }
-    void window.openyak.resolveProjectFile(projectPath, {
+    void window.openyak.resolveProjectFile(taskId, {
       path: candidatePath,
       ...(candidateLine ? { line: candidateLine } : {}),
       ...(candidateColumn ? { column: candidateColumn } : {}),
@@ -118,7 +118,7 @@ function MarkdownInlineCode({ children, className, ...props }: React.ComponentPr
         if (current) setResolution({ key: lookupKey, file: null })
       })
     return () => { current = false }
-  }, [candidateColumn, candidateLine, candidatePath, lookupKey, projectPath])
+  }, [candidateColumn, candidateLine, candidatePath, lookupKey, taskId])
 
   if (resolved && context && candidate) {
     const location = `${resolved.relativePath}${resolved.line ? `:${resolved.line}` : ''}${resolved.column ? `:${resolved.column}` : ''}`
