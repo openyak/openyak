@@ -243,6 +243,28 @@ textarea:focus-visible {
   width: 24px;
   height: 24px;
 }
+/* Sidebar toggle: chevron hidden at rest, surfaces on hover; flips by rotating
+   around the content pane's centre so open→closed reads as one motion. */
+.icon-sidebar-toggle-chevron {
+  opacity: 0;
+  transform-origin: 15.25px 12px;
+  transform: rotate(0deg) scale(0.7);
+  transition:
+    opacity 0.16s ease,
+    transform 0.22s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.icon-sidebar-toggle.is-closed .icon-sidebar-toggle-chevron {
+  transform: rotate(180deg) scale(0.7);
+}
+.icon-btn:hover .icon-sidebar-toggle-chevron,
+.icon-btn:focus-visible .icon-sidebar-toggle-chevron {
+  opacity: 1;
+  transform: rotate(0deg) scale(1);
+}
+.icon-btn:hover .icon-sidebar-toggle.is-closed .icon-sidebar-toggle-chevron,
+.icon-btn:focus-visible .icon-sidebar-toggle.is-closed .icon-sidebar-toggle-chevron {
+  transform: rotate(180deg) scale(1);
+}
 
 /* Sidebar */
 
@@ -265,25 +287,51 @@ textarea:focus-visible {
   z-index: 40;
   top: 0;
   right: 0;
-  width: 7px;
+  width: 8px;
   height: 100%;
   cursor: col-resize;
   touch-action: none;
 }
-.sidebar-resize-handle::after {
+/* Hairline boundary between sidebar and main; shared by the handle. */
+.sidebar-resize-handle::before {
   content: '';
   position: absolute;
   top: 0;
   right: 0;
-  width: 2px;
+  width: 1px;
   height: 100%;
-  background: transparent;
-  transition: background 0.12s ease;
+  background: var(--border);
+  transition: background 0.16s ease;
+}
+/* Grip pill: hidden until hover, sits centered on the boundary. */
+.sidebar-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 0;
+  width: 3px;
+  height: 36px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-tertiary) 55%, transparent);
+  opacity: 0;
+  transform: translateY(-50%) scaleY(0.6);
+  transition:
+    opacity 0.14s ease,
+    transform 0.14s ease,
+    background 0.14s ease;
 }
 .sidebar-resize-handle:hover::after,
 .sidebar-resize-handle:focus-visible::after,
 .sidebar.resizing .sidebar-resize-handle::after {
-  background: var(--border-strong);
+  opacity: 1;
+  transform: translateY(-50%) scaleY(1);
+}
+.sidebar-resize-handle:focus-visible::after,
+.sidebar.resizing .sidebar-resize-handle::after {
+  background: var(--accent);
+}
+.sidebar.resizing .sidebar-resize-handle::before {
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
 }
 .sidebar-resize-handle:focus-visible {
   outline: none;
@@ -1001,16 +1049,6 @@ body.sidebar-resize-active * {
   flex-direction: column;
   position: relative;
   background: var(--bg);
-  border-radius: 0;
-  transition:
-    margin 0.18s ease,
-    border-radius 0.18s ease;
-}
-.main.sidebar-framed {
-  margin: 0;
-  overflow: hidden;
-  border-left: 1px solid var(--border-strong);
-  border-radius: 16px 0 0 16px;
 }
 .main-titlebar {
   gap: 6px;

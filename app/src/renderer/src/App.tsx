@@ -19,7 +19,7 @@ import { request } from './api'
 import { Sidebar } from './Sidebar'
 import { Thread } from './Thread'
 import { Composer } from './Composer'
-import { IconClose, IconSidebar } from './icons'
+import { IconClose, IconSidebarToggle } from './icons'
 import { titleFrom } from './format'
 import { ButtonTooltip } from './ButtonTooltip'
 import { Settings } from './Settings'
@@ -1008,7 +1008,7 @@ export function App() {
         onDeleteTask={deleteTask}
       />
       <main
-        className={`main${activeView === 'settings' ? ' settings-open' : ''}${sidebarOpen ? ' sidebar-framed' : ''}`}
+        className={`main${activeView === 'settings' ? ' settings-open' : ''}`}
       >
         <header
           className={`titlebar main-titlebar${!sidebarOpen && isMac ? ' with-traffic-lights' : ''}`}
@@ -1021,7 +1021,7 @@ export function App() {
               title="Open sidebar"
               aria-label="Open sidebar"
             >
-              <IconSidebar size={18} />
+              <IconSidebarToggle open={false} size={18} />
             </button>
           )}
           <div className="main-title">

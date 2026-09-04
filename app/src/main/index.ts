@@ -187,7 +187,9 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
+  // In development, quit with the window: a lingering windowless process keeps
+  // stale main code alive and later hot-loads renderer code it has no handlers for.
+  if (process.platform !== 'darwin' || !app.isPackaged) app.quit()
 })
 
 app.on('before-quit', () => {

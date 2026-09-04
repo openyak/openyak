@@ -1,0 +1,497 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenYak v2 架构</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Nunito+Sans:ital,opsz,wght@0,6..12,400;0,6..12,600;0,6..12,700;1,6..12,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+  :root {
+    --bg: #fffdf1;
+    --bg-2: #f4f3e8;
+    --bg-box: #fff9e8;
+    --bg-code: #f1ead7;
+    --text: #101314;
+    --text-2: #3f4544;
+    --text-3: #727b78;
+    --line: rgba(17, 19, 20, 0.16);
+    --line-strong: rgba(17, 19, 20, 0.38);
+    --brand: #0177aa;
+    --brand-soft: rgba(1, 119, 170, 0.12);
+    --yellow: #ffeda3;
+    --yellow-ink: #6b5200;
+    --mint: #9fdcca;
+    --mint-ink: #0f5a47;
+    --shadow: 3px 3px 0 rgba(17, 19, 20, 0.12);
+    --font: 'Nunito Sans', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+    --display: 'Lilita One', 'Nunito Sans', -apple-system, sans-serif;
+    --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #212121;
+      --bg-2: #171717;
+      --bg-box: #2a2a2a;
+      --bg-code: #171717;
+      --text: #f4f3e8;
+      --text-2: #c9c7bb;
+      --text-3: #8f948f;
+      --line: rgba(255, 255, 255, 0.16);
+      --line-strong: rgba(255, 255, 255, 0.36);
+      --brand: #3aa0d6;
+      --brand-soft: rgba(58, 160, 214, 0.16);
+      --yellow: #5a4a12;
+      --yellow-ink: #ffeda3;
+      --mint: #1e4d41;
+      --mint-ink: #9fdcca;
+      --shadow: 3px 3px 0 rgba(0, 0, 0, 0.45);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #212121;
+    --bg-2: #171717;
+    --bg-box: #2a2a2a;
+    --bg-code: #171717;
+    --text: #f4f3e8;
+    --text-2: #c9c7bb;
+    --text-3: #8f948f;
+    --line: rgba(255, 255, 255, 0.16);
+    --line-strong: rgba(255, 255, 255, 0.36);
+    --brand: #3aa0d6;
+    --brand-soft: rgba(58, 160, 214, 0.16);
+    --yellow: #5a4a12;
+    --yellow-ink: #ffeda3;
+    --mint: #1e4d41;
+    --mint-ink: #9fdcca;
+    --shadow: 3px 3px 0 rgba(0, 0, 0, 0.45);
+  }
+
+  body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 15px; line-height: 1.65; }
+  .page { max-width: 1040px; margin: 0 auto; padding: 40px 24px 80px; }
+
+  header { display: grid; gap: 10px; padding-bottom: 28px; border-bottom: 1px solid var(--line); margin-bottom: 36px; }
+  .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-3); }
+  h1 { font-family: var(--display); font-weight: 400; font-size: 44px; line-height: 1.05; margin: 0; letter-spacing: .01em; text-wrap: balance; }
+  h1 .yak { color: var(--brand); }
+  .lede { max-width: 66ch; color: var(--text-2); margin: 0; font-size: 16px; }
+  .lede code, p code, td code, li code { font-family: var(--mono); font-size: .88em; background: var(--bg-code); padding: 1px 5px; border-radius: 4px; }
+
+  section { margin-bottom: 52px; }
+  h2 { font-family: var(--display); font-weight: 400; font-size: 26px; margin: 0 0 6px; letter-spacing: .01em; }
+  .sub { color: var(--text-2); margin: 0 0 18px; max-width: 72ch; }
+
+  figure { margin: 0; border: 1px solid var(--line-strong); background: var(--bg-2); box-shadow: var(--shadow); padding: 18px 18px 12px; overflow-x: auto; }
+  figure svg { display: block; width: 100%; height: auto; min-width: 640px; color: var(--text); font-family: var(--font); }
+  figcaption { font-size: 13px; color: var(--text-3); margin-top: 12px; max-width: 80ch; }
+
+  /* SVG vocabulary */
+  .col { fill: none; stroke: var(--line-strong); stroke-dasharray: 5 4; }
+  .col-title { font-family: var(--display); font-size: 15px; fill: currentColor; letter-spacing: .02em; }
+  .box { fill: var(--bg-box); stroke: var(--line-strong); }
+  .box-ghost { fill: none; stroke: var(--line-strong); stroke-dasharray: 3 3; }
+  .box-yellow { fill: var(--yellow); stroke: var(--line-strong); }
+  .box-brand { fill: var(--brand-soft); stroke: var(--brand); }
+  .t { font-size: 12.5px; font-weight: 700; fill: currentColor; }
+  .s { font-size: 11px; fill: var(--text-2); }
+  .m { font-family: var(--mono); font-size: 10.5px; fill: var(--text-2); }
+  .mt { font-family: var(--mono); font-size: 12px; font-weight: 600; fill: currentColor; }
+  .chip { fill: var(--bg-code); stroke: var(--line); }
+  .chip-t { font-family: var(--mono); font-size: 10.5px; fill: currentColor; }
+  .arrow { stroke: currentColor; stroke-width: 1.2; fill: none; }
+  .arrow-brand { stroke: var(--brand); stroke-width: 1.8; fill: none; }
+  .lbl { font-size: 10.5px; fill: var(--text-2); }
+  .lbl-brand { font-family: var(--mono); font-size: 10.5px; fill: var(--brand); font-weight: 600; }
+  .lane { stroke: var(--line-strong); stroke-dasharray: 2 4; }
+  .note { fill: var(--yellow); stroke: var(--line-strong); }
+  .note-t { font-size: 10.5px; fill: var(--yellow-ink); }
+  .mini { font-size: 10px; fill: var(--text-3); }
+
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+  th { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); font-weight: 600; }
+  td:first-child { font-family: var(--mono); font-size: 13px; white-space: nowrap; }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); background: var(--bg-2); }
+
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; }
+  .card { border: 1px solid var(--line-strong); background: var(--bg-box); padding: 16px 18px; box-shadow: var(--shadow); }
+  .card h3 { font-family: var(--display); font-weight: 400; font-size: 18px; margin: 0 0 8px; }
+  .card ul { margin: 0; padding-left: 18px; color: var(--text-2); }
+  .card li { margin: 4px 0; }
+  pre { font-family: var(--mono); font-size: 12.5px; background: var(--bg-code); padding: 12px 14px; overflow-x: auto; margin: 0; border: 1px solid var(--line); }
+
+  .tag { display: inline-block; font-family: var(--mono); font-size: 11px; padding: 1px 7px; border: 1px solid var(--line-strong); margin-right: 6px; }
+  .tag.y { background: var(--yellow); color: var(--yellow-ink); }
+  .tag.m { background: var(--mint); color: var(--mint-ink); }
+  .tag.b { background: var(--brand-soft); color: var(--brand); border-color: var(--brand); }
+</style>
+</head>
+<body>
+
+<div class="page">
+<header>
+  <div class="eyebrow">openyak · v2.0.0-alpha.0 · 截至 2026-09-03 的 main 分支</div>
+  <h1><span class="yak">OpenYak</span> v2 架构</h1>
+  <p class="lede">一个 Electron 壳、一个 Rust 核心、两个随应用打包的 ACP 适配器。OpenYak 自己只做三件事：<strong>聊天界面、对话记录存储、ACP 客户端</strong>。模型、工具、权限、登录全部属于 agent。</p>
+</header>
+
+<section>
+  <h2>1 · 进程与边界</h2>
+  <p class="sub">三类进程，两道 stdio 边界。蓝色箭头是跨进程协议；每一道边界都是"一行一个 JSON"的 JSON-RPC 2.0。</p>
+  <figure>
+    <svg viewBox="0 0 1210 600" role="img" aria-label="OpenYak 三类进程：Electron 应用（Renderer、preload、Main）通过 stdio JSON-RPC 与 Rust 核心 openyak-core 通信；核心再通过 ACP over stdio 驱动 claude-agent-acp 与 codex-acp 两个适配器">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+        </marker>
+        <marker id="ahb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="#0177aa"/>
+        </marker>
+      </defs>
+
+      <!-- Column A: Electron app -->
+      <rect class="col" x="20" y="44" width="340" height="540"/>
+      <text class="col-title" x="20" y="30">app/ · Electron + React</text>
+
+      <rect class="box" x="36" y="70" width="308" height="150"/>
+      <text class="t" x="48" y="90">Main 进程 · index.ts / core-client.ts</text>
+      <text class="s" x="48" y="110">spawn openyak-core（--data-dir、--adapters）</text>
+      <text class="s" x="48" y="128">IPC：core:request · core:notification</text>
+      <text class="s" x="48" y="146">　　　core:permission-request / -response</text>
+      <text class="s" x="48" y="164">选目录/文件对话框 · 只开 https 外链 · 主题</text>
+      <text class="s" x="48" y="182">PATH 取自登录 shell，agent 才找得到 git 等工具</text>
+      <text class="s" x="48" y="200">把两个适配器的启动命令交给 core</text>
+
+      <rect class="box" x="36" y="260" width="308" height="60"/>
+      <text class="t" x="48" y="280">preload · contextBridge → window.openyak</text>
+      <text class="m" x="48" y="298">request · onNotification · onPermissionRequest</text>
+      <text class="m" x="48" y="312">pickDirectory · pickFiles · setTheme</text>
+
+      <rect class="box" x="36" y="360" width="308" height="210"/>
+      <text class="t" x="48" y="380">Renderer · React 19（沙箱：无 Node）</text>
+      <rect class="chip" x="48" y="392" width="64" height="20"/><text class="chip-t" x="80" y="406" text-anchor="middle">App.tsx</text>
+      <rect class="chip" x="118" y="392" width="64" height="20"/><text class="chip-t" x="150" y="406" text-anchor="middle">Sidebar</text>
+      <rect class="chip" x="188" y="392" width="64" height="20"/><text class="chip-t" x="220" y="406" text-anchor="middle">Thread</text>
+      <rect class="chip" x="258" y="392" width="72" height="20"/><text class="chip-t" x="294" y="406" text-anchor="middle">Composer</text>
+      <rect class="chip" x="48" y="418" width="64" height="20"/><text class="chip-t" x="80" y="432" text-anchor="middle">Message</text>
+      <rect class="chip" x="118" y="418" width="84" height="20"/><text class="chip-t" x="160" y="432" text-anchor="middle">ModelPicker</text>
+      <rect class="chip" x="208" y="418" width="96" height="20"/><text class="chip-t" x="256" y="432" text-anchor="middle">ProjectPicker</text>
+      <rect class="chip" x="48" y="444" width="64" height="20"/><text class="chip-t" x="80" y="458" text-anchor="middle">Settings</text>
+      <rect class="chip" x="118" y="444" width="52" height="20"/><text class="chip-t" x="144" y="458" text-anchor="middle">Menu</text>
+      <text class="s" x="48" y="486">App.tsx 持有全部状态：项目、任务、消息流、</text>
+      <text class="s" x="48" y="503">agent 状态与选项、待回答的权限请求</text>
+      <text class="s" x="48" y="524">api.ts 薄封装 → window.openyak.request</text>
+      <text class="s" x="48" y="542">messagePresentation · attachmentDrafts · theme</text>
+      <text class="s" x="48" y="560">只和 core 说话，不含任何 agent 逻辑</text>
+
+      <!-- A internal arrows -->
+      <line class="arrow" x1="190" y1="360" x2="190" y2="320" marker-end="url(#ah)" marker-start="url(#ah)"/>
+      <text class="lbl" x="200" y="344">window.openyak</text>
+      <line class="arrow" x1="190" y1="260" x2="190" y2="220" marker-end="url(#ah)" marker-start="url(#ah)"/>
+      <text class="lbl" x="200" y="244">ipcRenderer.invoke / on</text>
+
+      <!-- Column B: core -->
+      <rect class="col" x="470" y="44" width="320" height="540"/>
+      <text class="col-title" x="470" y="30">core/ · openyak-core（Rust · tokio）</text>
+
+      <rect class="box" x="486" y="70" width="288" height="150"/>
+      <text class="t" x="498" y="90">rpc.rs · JSON-RPC dispatch</text>
+      <text class="m" x="498" y="110">project.list/create/update/delete</text>
+      <text class="m" x="498" y="126">task.list/create/rename/delete</text>
+      <text class="m" x="498" y="142">chat.history/send/edit/retry/cancel</text>
+      <text class="m" x="498" y="158">agent.list/connect/disconnect/set_config</text>
+      <text class="m" x="498" y="174">permission.respond</text>
+      <text class="s" x="498" y="200">每个请求一个 tokio task；写库后立即返回</text>
+
+      <rect class="box-brand" x="486" y="250" width="288" height="130"/>
+      <text class="t" x="498" y="270">agents.rs · AgentPool</text>
+      <text class="s" x="498" y="290">每个 (Task, Agent) 一个 Connection + 子进程</text>
+      <text class="s" x="498" y="308">session/load 失败 → session/new，cwd = Project 目录</text>
+      <text class="s" x="498" y="326">session/update → chat.update；权限请求原样转发</text>
+      <text class="s" x="498" y="344">set_config 30s 超时；cancel；Announce 重发状态</text>
+      <text class="s" x="498" y="362">会话选项 (model / effort / mode) 不解释，只透传</text>
+
+      <rect class="box-yellow" x="486" y="405" width="288" height="50"/>
+      <text class="t" x="498" y="425">handoff.rs · build_prompt</text>
+      <text class="s" x="498" y="443">cursor 之后错过的回合 → &lt;handoff&gt; 块前置</text>
+
+      <rect class="box" x="486" y="480" width="288" height="98"/>
+      <text class="t" x="498" y="500">store.rs · SQLite（openyak.db）</text>
+      <text class="m" x="498" y="518">projects · tasks · messages(parts JSON)</text>
+      <text class="m" x="498" y="534">agent_cursors · agent_sessions</text>
+      <text class="m" x="498" y="550">agent_config  — 键都是 (task_id, agent)</text>
+      <text class="s" x="498" y="570">id 为 ULID，时间为 RFC 3339</text>
+
+      <!-- B internal arrows -->
+      <line class="arrow" x1="630" y1="220" x2="630" y2="250" marker-end="url(#ah)"/>
+      <text class="lbl" x="640" y="240">Job（user, assistant 消息 id）</text>
+      <line class="arrow" x1="630" y1="380" x2="630" y2="405" marker-end="url(#ah)"/>
+      <text class="lbl" x="640" y="397">发送前组装</text>
+      <line class="arrow" x1="630" y1="455" x2="630" y2="480" marker-end="url(#ah)"/>
+      <text class="lbl" x="640" y="472">读 transcript 与 cursor</text>
+
+      <!-- A <-> B protocol arrows -->
+      <line class="arrow-brand" x1="344" y1="105" x2="486" y2="105" marker-end="url(#ahb)"/>
+      <text class="lbl-brand" x="415" y="98" text-anchor="middle">请求 → 应答</text>
+      <line class="arrow-brand" x1="486" y1="150" x2="344" y2="150" marker-end="url(#ahb)"/>
+      <text class="lbl-brand" x="415" y="143" text-anchor="middle">通知 chat.update</text>
+      <text class="lbl-brand" x="415" y="164" text-anchor="middle">chat.done · agent.*</text>
+      <line class="arrow-brand" x1="486" y1="200" x2="344" y2="200" marker-end="url(#ahb)"/>
+      <text class="lbl-brand" x="415" y="193" text-anchor="middle">permission.request</text>
+      <text class="lbl" x="415" y="220" text-anchor="middle">stdin/stdout · NDJSON</text>
+      <text class="lbl" x="415" y="234" text-anchor="middle">JSON-RPC 2.0</text>
+
+      <!-- Column C: adapters -->
+      <rect class="col" x="900" y="44" width="290" height="540"/>
+      <text class="col-title" x="900" y="30">Agents · ACP 适配器（随 app 打包）</text>
+
+      <rect class="box" x="916" y="80" width="258" height="120"/>
+      <text class="t" x="928" y="100">claude · claude-agent-acp 0.73</text>
+      <text class="m" x="928" y="118">@agentclientprotocol/claude-agent-acp</text>
+      <text class="s" x="928" y="138">内含 Claude Agent SDK，即 Claude Code 本体</text>
+      <text class="s" x="928" y="156">由 Electron 自带 Node 运行</text>
+      <text class="m" x="928" y="172">ELECTRON_RUN_AS_NODE=1</text>
+      <text class="s" x="928" y="190">复用本机已有的 Claude Code 登录</text>
+
+      <rect class="box" x="916" y="230" width="258" height="120"/>
+      <text class="t" x="928" y="250">codex · codex-acp 1.8</text>
+      <text class="m" x="928" y="268">@agentclientprotocol/codex-acp</text>
+      <text class="s" x="928" y="288">内含 Codex 本体</text>
+      <text class="s" x="928" y="306">同样由 Electron 的 Node 运行</text>
+      <text class="s" x="928" y="324">登录：~/.codex/auth.json</text>
+      <text class="s" x="928" y="342">缺失时 agent.list 返回 hint 提示 codex login</text>
+
+      <rect class="box-ghost" x="916" y="390" width="258" height="180"/>
+      <text class="t" x="928" y="410">Agent 自己负责，OpenYak 不做</text>
+      <text class="s" x="928" y="432">· 模型、API key、登录态</text>
+      <text class="s" x="928" y="450">· 工具、shell、文件访问</text>
+      <text class="s" x="928" y="468">· 权限引擎与沙箱（提示原样转发给用户）</text>
+      <text class="s" x="928" y="486">· agent loop 本身</text>
+      <text class="s" x="928" y="504">· 会话选项的含义（model / effort / mode）</text>
+      <text class="s" x="928" y="530">OpenYak 不持有任何凭据，</text>
+      <text class="s" x="928" y="548">不维护 allowlist，不做安全决策</text>
+
+      <!-- B <-> C ACP bus -->
+      <path class="arrow-brand" d="M774 315 H845 V140 H916" marker-end="url(#ahb)" marker-start="url(#ahb)"/>
+      <path class="arrow-brand" d="M845 315 V290 H916" marker-end="url(#ahb)"/>
+      <text class="lbl-brand" x="845" y="338" text-anchor="middle">ACP · stdio</text>
+      <text class="lbl" x="845" y="352" text-anchor="middle">session/new · load</text>
+      <text class="lbl" x="845" y="366" text-anchor="middle">prompt · update</text>
+      <text class="lbl" x="845" y="380" text-anchor="middle">request_permission</text>
+      <text class="lbl" x="845" y="394" text-anchor="middle">set_config_option</text>
+    </svg>
+    <figcaption>图 1 · Main 进程启动 core 并把两个适配器的启动命令以 <code>--adapters</code> 传入；core 在需要时才为每个 (Task, Agent) 拉起一个适配器子进程。Renderer 在沙箱里，只能通过 preload 暴露的 <code>window.openyak</code> 说话。</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>2 · 领域模型</h2>
+  <p class="sub">术语来自 <code>CONTEXT.md</code>，是仓库的规范词表。Agent 是按<strong>每条消息</strong>选的，不是按任务选的；"Agent session" 是实现细节，不出现在界面文案里。</p>
+  <figure>
+    <svg viewBox="0 0 1000 250" role="img" aria-label="领域模型：Project 包含 Task，Task 拥有唯一一个 Chat，Chat 由 Message 组成，Message 由 Part 组成；每条 assistant Message 记录产生它的 Agent；每个 (Task, Agent) 对拥有一个内部的 Agent session，保存 session_id、cursor 与 config">
+      <defs>
+        <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+        </marker>
+      </defs>
+      <!-- chain -->
+      <rect class="box" x="20" y="40" width="150" height="70"/>
+      <text class="mt" x="95" y="64" text-anchor="middle">Project</text>
+      <text class="s" x="95" y="84" text-anchor="middle">磁盘上的一个目录</text>
+      <text class="s" x="95" y="100" text-anchor="middle">agent 的工作目录</text>
+
+      <line class="arrow" x1="170" y1="75" x2="225" y2="75" marker-end="url(#ah2)"/>
+      <text class="lbl" x="197" y="66" text-anchor="middle">包含 0..n</text>
+
+      <rect class="box" x="225" y="40" width="150" height="70"/>
+      <text class="mt" x="300" y="64" text-anchor="middle">Task</text>
+      <text class="s" x="300" y="84" text-anchor="middle">有边界的一件工作</text>
+      <text class="s" x="300" y="100" text-anchor="middle">project_id 可为空</text>
+
+      <line class="arrow" x1="375" y1="75" x2="430" y2="75" marker-end="url(#ah2)"/>
+      <text class="lbl" x="402" y="66" text-anchor="middle">恰好 1 个</text>
+
+      <rect class="box-yellow" x="430" y="40" width="150" height="70"/>
+      <text class="mt" x="505" y="64" text-anchor="middle">Chat</text>
+      <text class="s" x="505" y="84" text-anchor="middle">规范、agent 中立的记录</text>
+      <text class="s" x="505" y="100" text-anchor="middle">由 core 保存，归用户</text>
+
+      <line class="arrow" x1="580" y1="75" x2="635" y2="75" marker-end="url(#ah2)"/>
+      <text class="lbl" x="607" y="66" text-anchor="middle">0..n</text>
+
+      <rect class="box" x="635" y="40" width="150" height="70"/>
+      <text class="mt" x="710" y="64" text-anchor="middle">Message</text>
+      <text class="s" x="710" y="84" text-anchor="middle">user / assistant 一轮</text>
+      <text class="s" x="710" y="100" text-anchor="middle">记录是哪个 Agent 答的</text>
+
+      <line class="arrow" x1="785" y1="75" x2="840" y2="75" marker-end="url(#ah2)"/>
+      <text class="lbl" x="812" y="66" text-anchor="middle">1..n</text>
+
+      <rect class="box" x="840" y="40" width="140" height="70"/>
+      <text class="mt" x="910" y="64" text-anchor="middle">Part</text>
+      <text class="s" x="910" y="84" text-anchor="middle">text · thought · tool_call</text>
+      <text class="s" x="910" y="100" text-anchor="middle">error · image · file</text>
+
+      <!-- agent & session -->
+      <rect class="box-brand" x="635" y="160" width="150" height="60"/>
+      <text class="mt" x="710" y="184" text-anchor="middle">Agent</text>
+      <text class="s" x="710" y="204" text-anchor="middle">claude / codex 适配器</text>
+      <line class="arrow" x1="710" y1="160" x2="710" y2="110" marker-end="url(#ah2)"/>
+      <text class="lbl" x="718" y="140">按每条消息选择</text>
+
+      <rect class="box-ghost" x="225" y="160" width="355" height="60"/>
+      <text class="mt" x="402" y="184" text-anchor="middle">Agent session ＝ (Task, Agent)</text>
+      <text class="s" x="402" y="204" text-anchor="middle">session_id · last_seen cursor · 已接受的 config 值</text>
+      <line class="arrow" x1="300" y1="160" x2="300" y2="110" marker-end="url(#ah2)"/>
+      <line class="arrow" x1="580" y1="190" x2="635" y2="190" marker-end="url(#ah2)"/>
+      <text class="mini" x="30" y="190">内部概念，</text>
+      <text class="mini" x="30" y="204">界面不展示</text>
+    </svg>
+    <figcaption>图 2 · 一个 Task 只有一个 Chat，但可以被多个 Agent 轮流服务。core 为每个 (Task, Agent) 对记住三样东西：agent 那边的 session id、它看到 Chat 的第几条（cursor）、用户为它选过的选项。</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>3 · 一条消息的旅程（含 handoff）</h2>
+  <p class="sub">这是"换 agent 不丢上下文"的机制所在。每个 agent 只保留自己那边的上下文，OpenYak 不试图共享；它靠 Chat 记录 + 每对 (Task, Agent) 的 cursor，在发送时把对方错过的回合补给它。</p>
+  <figure>
+    <svg viewBox="0 0 1000 640" role="img" aria-label="chat.send 时序：应用发送 chat.send，rpc 写入用户消息与 assistant 占位并立即返回 id，交给 Connection；Connection 恢复或新建 ACP 会话，按 cursor 组装带 handoff 块的 prompt，发送 session/prompt；适配器流式返回 session/update 变成 chat.update；权限请求经 core 转发给应用并回传答案；结束时写入状态与耗时并推进 cursor，发出 chat.done">
+      <defs>
+        <marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+        </marker>
+        <marker id="ah3b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="#0177aa"/>
+        </marker>
+      </defs>
+      <!-- lane heads -->
+      <rect class="box" x="50" y="20" width="150" height="34"/>
+      <text class="t" x="125" y="42" text-anchor="middle">App（Renderer→Main）</text>
+      <rect class="box" x="320" y="20" width="130" height="34"/>
+      <text class="t" x="385" y="42" text-anchor="middle">core · rpc.rs</text>
+      <rect class="box-brand" x="570" y="20" width="150" height="34"/>
+      <text class="t" x="645" y="42" text-anchor="middle">core · Connection</text>
+      <rect class="box" x="810" y="20" width="150" height="34"/>
+      <text class="t" x="885" y="42" text-anchor="middle">Agent 适配器（ACP）</text>
+      <line class="lane" x1="125" y1="54" x2="125" y2="620"/>
+      <line class="lane" x1="385" y1="54" x2="385" y2="620"/>
+      <line class="lane" x1="645" y1="54" x2="645" y2="620"/>
+      <line class="lane" x1="885" y1="54" x2="885" y2="620"/>
+
+      <!-- 1 chat.send -->
+      <line class="arrow" x1="125" y1="90" x2="385" y2="90" marker-end="url(#ah3)"/>
+      <text class="lbl" x="255" y="83" text-anchor="middle">chat.send {task_id, agent, text, attachments?}</text>
+      <!-- 2 note -->
+      <rect class="note" x="300" y="106" width="200" height="34"/>
+      <text class="note-t" x="400" y="120" text-anchor="middle">写入 user Message 与 assistant 占位</text>
+      <text class="note-t" x="400" y="134" text-anchor="middle">（status = streaming）</text>
+      <!-- 3 return -->
+      <line class="arrow" x1="385" y1="160" x2="125" y2="160" marker-end="url(#ah3)" stroke-dasharray="4 3"/>
+      <text class="lbl" x="255" y="153" text-anchor="middle">立即返回 {user_message_id, assistant_message_id}</text>
+      <!-- 4 job -->
+      <line class="arrow" x1="385" y1="190" x2="645" y2="190" marker-end="url(#ah3)"/>
+      <text class="lbl" x="515" y="183" text-anchor="middle">Job（若 (Task, Agent) 未连接，先拉起子进程）</text>
+      <!-- 5 session -->
+      <line class="arrow" x1="645" y1="222" x2="885" y2="222" marker-end="url(#ah3)"/>
+      <text class="lbl" x="765" y="215" text-anchor="middle">session/load(上次 session_id)</text>
+      <line class="arrow" x1="645" y1="252" x2="885" y2="252" marker-end="url(#ah3)"/>
+      <text class="lbl" x="765" y="245" text-anchor="middle">失败则 session/new(cwd = Project)，cursor 归零</text>
+      <!-- 6 handoff note -->
+      <rect class="note" x="540" y="270" width="210" height="48"/>
+      <text class="note-t" x="645" y="285" text-anchor="middle">build_prompt：cursor 之后的回合</text>
+      <text class="note-t" x="645" y="299" text-anchor="middle">渲染成 &lt;handoff&gt; 块 + 正文 + 附件块</text>
+      <text class="note-t" x="645" y="313" text-anchor="middle">cursor 推进到本条 prompt</text>
+      <!-- 7 prompt -->
+      <line class="arrow-brand" x1="645" y1="338" x2="885" y2="338" marker-end="url(#ah3b)"/>
+      <text class="lbl-brand" x="765" y="331" text-anchor="middle">session/prompt</text>
+      <!-- 8 updates -->
+      <line class="arrow" x1="885" y1="370" x2="645" y2="370" marker-end="url(#ah3)"/>
+      <text class="lbl" x="765" y="363" text-anchor="middle">session/update × N（text · thought · tool_call）</text>
+      <line class="arrow" x1="645" y1="400" x2="125" y2="400" marker-end="url(#ah3)"/>
+      <text class="lbl" x="385" y="393" text-anchor="middle">chat.update {message_id, part_index, part}　文本整段累积，不是 delta</text>
+      <!-- 9 permission -->
+      <line class="arrow" x1="885" y1="432" x2="645" y2="432" marker-end="url(#ah3)"/>
+      <text class="lbl" x="765" y="425" text-anchor="middle">request_permission（选项原样带上）</text>
+      <line class="arrow-brand" x1="645" y1="462" x2="125" y2="462" marker-end="url(#ah3b)"/>
+      <text class="lbl-brand" x="385" y="455" text-anchor="middle">permission.request　← core→app 的唯一"请求"</text>
+      <line class="arrow" x1="125" y1="492" x2="645" y2="492" marker-end="url(#ah3)"/>
+      <text class="lbl" x="385" y="485" text-anchor="middle">用户点选 → permission.respond {option_id | null}（经 rpc 解锁等待中的 Connection）</text>
+      <line class="arrow" x1="645" y1="522" x2="885" y2="522" marker-end="url(#ah3)"/>
+      <text class="lbl" x="765" y="515" text-anchor="middle">允许 / 拒绝 / 取消</text>
+      <!-- 10 finish -->
+      <line class="arrow" x1="885" y1="554" x2="645" y2="554" marker-end="url(#ah3)"/>
+      <text class="lbl" x="765" y="547" text-anchor="middle">prompt 结束（stop reason）</text>
+      <rect class="note" x="540" y="566" width="210" height="34"/>
+      <text class="note-t" x="645" y="580" text-anchor="middle">status = done · 写 duration_ms</text>
+      <text class="note-t" x="645" y="594" text-anchor="middle">cursor 移过这条回复</text>
+      <line class="arrow" x1="645" y1="616" x2="125" y2="616" marker-end="url(#ah3)"/>
+      <text class="lbl" x="385" y="609" text-anchor="middle">chat.done {status: done | error | cancelled, duration_ms}</text>
+    </svg>
+    <figcaption>图 3 · 新会话的第一条 prompt 会带上整段历史，之后每条只带对方错过的部分，所以来回切换 agent 保持连贯又不浪费上下文。prompt 在 Connection 发送时才组装，保证反映它真正进入的那个 session。<code>chat.edit</code> / <code>chat.retry</code> 走同一条路，但会先丢弃后续记录并强制新建 session，防止被丢弃的上下文泄漏。</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>4 · 代码地图</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>路径</th><th>职责</th><th>规模</th></tr></thead>
+    <tbody>
+      <tr><td>core/src/main.rs</td><td>入口。解析 <code>--data-dir</code> / <code>--adapters</code>，打开 SQLite，起 stdout 写线程，逐行读 stdin 分发；持有待回答的权限请求表。启动前移除 <code>CLAUDECODE</code> 环境变量，避免 Claude Code 误判"嵌套会话"。</td><td>182 行</td></tr>
+      <tr><td>core/src/rpc.rs</td><td>所有 app→core 方法的参数结构与处理；<code>chat.send/edit/retry</code> 写库后交给 AgentPool。</td><td>469 行</td></tr>
+      <tr><td>core/src/agents.rs</td><td>AgentPool、每对 (Task, Agent) 的 Connection：拉起适配器、恢复/新建 ACP 会话、流式转发、权限往返、会话选项的捕获与回放、取消与超时。核心里最重的一块。</td><td>1591 行</td></tr>
+      <tr><td>core/src/handoff.rs</td><td>纯函数：按 cursor 取错过的回合，渲染 <code>&lt;handoff&gt;</code> 块并拼出最终 prompt。</td><td>232 行</td></tr>
+      <tr><td>core/src/store.rs</td><td>SQLite 表结构、迁移、Project/Task/Message/Part 类型与全部读写。</td><td>962 行</td></tr>
+      <tr><td>app/src/main/</td><td>Electron 主进程：spawn core、IPC 桥接、系统对话框、主题、外链白名单。<code>core-client.ts</code> 是 stdio JSON-RPC 客户端。</td><td>317 行</td></tr>
+      <tr><td>app/src/preload/</td><td>contextBridge 暴露 <code>window.openyak</code>；把拖入文件解析成磁盘路径。</td><td>68 行</td></tr>
+      <tr><td>app/src/shared/protocol.ts</td><td>app 与 core 契约的 TypeScript 类型，与 <code>docs/core-protocol.md</code> 对应。</td><td>185 行</td></tr>
+      <tr><td>app/src/renderer/</td><td>React 界面。<code>App.tsx</code> 是状态中枢；Sidebar（项目/任务列表）、Thread（消息流）、Composer（输入与附件）、Message、ModelPicker（agent 选项）、Settings。</td><td>约 5.3k 行</td></tr>
+      <tr><td>docs/</td><td>architecture.md（进程模型与 handoff）、core-protocol.md（app⇄core 契约）、message-lifecycle.md（消息操作的产品契约与回归清单）。</td><td></td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section>
+  <h2>5 · 存储、构建与运行</h2>
+  <div class="grid2">
+    <div class="card">
+      <h3>SQLite · openyak.db</h3>
+      <ul>
+        <li><span class="tag">projects</span> id · name · path</li>
+        <li><span class="tag">tasks</span> id · project_id（可空）· title · updated_at</li>
+        <li><span class="tag">messages</span> task_id · role · agent · parts（JSON）· status · duration_ms</li>
+        <li><span class="tag b">agent_cursors</span> (task, agent) → last_seen_message_index</li>
+        <li><span class="tag b">agent_sessions</span> (task, agent) → session_id</li>
+        <li><span class="tag b">agent_config</span> (task, agent, config_id) → value</li>
+      </ul>
+      <p style="margin:10px 0 0;color:var(--text-3);font-size:13px">位置：Electron userData 目录。无项目的聊天使用同目录下的 <code>projectless/</code> 作为工作目录。</p>
+    </div>
+    <div class="card">
+      <h3>构建与检查</h3>
+<pre>npm run dev     # cargo build --release core → electron-vite dev
+npm run build   # 同上，产出 app/out
+npm run check   # cargo test + node --test + tsc + eslint</pre>
+      <p style="margin:10px 0 0;color:var(--text-2);font-size:13px">运行时版本由 <code>mise.toml</code> 钉死：Node 26、Rust 1.90。开发态 Main 进程从 <code>core/target/release/</code> 找二进制，打包后从 <code>resourcesPath</code>；<code>OPENYAK_CORE_BIN</code> 可覆盖。</p>
+    </div>
+    <div class="card">
+      <h3>v2 明确不做</h3>
+      <ul>
+        <li>内置工具、provider API key、Computer Use、办公文档流水线</li>
+        <li>插件、远程访问、自己的权限引擎</li>
+        <li>自动在 agent 之间路由（目前按每条消息手选）</li>
+      </ul>
+      <p style="margin:10px 0 0;color:var(--text-3);font-size:13px">v1 完整保留在 <code>legacy/v1</code> 分支。</p>
+    </div>
+    <div class="card">
+      <h3>薄在哪里</h3>
+      <ul>
+        <li>权限提示：agent 问什么，用户就看到什么；答案原样回传</li>
+        <li>会话选项：agent 通过 ACP 广播什么，界面就显示什么；core 记住已接受的值，新会话时回放</li>
+        <li>适配器与其 Node 运行时随 app 打包，用户只需保留自己的登录</li>
+      </ul>
+    </div>
+  </div>
+</section>
+</div>
+</body>
+</html>

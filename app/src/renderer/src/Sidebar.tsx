@@ -21,7 +21,7 @@ import {
   IconFolder,
   IconMore,
   IconPlus,
-  IconSidebar,
+  IconSidebarToggle,
   IconSettings,
   IconSort,
   IconTrash,
@@ -531,7 +531,7 @@ export function Sidebar({
             aria-label="Close sidebar"
             tabIndex={open ? 0 : -1}
           >
-            <IconSidebar size={18} />
+            <IconSidebarToggle open size={18} />
           </button>
         </div>
 

@@ -4,7 +4,6 @@ import spriteUrl from './assets/openai-icons.svg?url'
 type Props = SVGProps<SVGSVGElement> & { size?: number }
 
 type OfficialIconName =
-  | 'SidebarOpenLeft'
   | 'ComposeEditSquare'
   | 'Folder'
   | 'MagnifyingGlassSearch'
@@ -72,7 +71,41 @@ function icon(name: OfficialIconName, viewBox?: string) {
 }
 
 // Preserve the app's icon API while sourcing every glyph from OpenAI Apps SDK UI.
-export const IconSidebar = icon('SidebarOpenLeft')
+/**
+ * Sidebar toggle: a panel outline at rest; on hover a chevron surfaces inside the
+ * content pane pointing the way the sidebar will move (left = collapse, right = expand).
+ * The chevron rotates between the two states so the flip reads as one motion.
+ */
+export function IconSidebarToggle({
+  open,
+  size = 18,
+  className,
+  ...rest
+}: Props & { open: boolean }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.75}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      focusable="false"
+      className={['icon', 'icon-sidebar-toggle', open ? 'is-open' : 'is-closed', className]
+        .filter(Boolean)
+        .join(' ')}
+      aria-hidden="true"
+      {...rest}
+    >
+      <rect x="3" y="4.5" width="18" height="15" rx="3" />
+      <path d="M9.5 4.5v15" />
+      <path className="icon-sidebar-toggle-chevron" d="M16.25 9.75 14 12l2.25 2.25" />
+    </svg>
+  )
+}
 export const IconEdit = icon('ComposeEditSquare')
 export const IconFolder = icon('Folder', '0 0 20 20')
 export const IconSearch = icon('MagnifyingGlassSearch')
