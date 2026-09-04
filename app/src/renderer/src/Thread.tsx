@@ -212,7 +212,6 @@ export function Thread({
               <div key={m.id} className="thread-message" data-message-id={m.id}>
                 <MessageItem
                   message={m}
-                  agentName={m.role === 'assistant' && m.agent ? name(m.agent) : null}
                   busy={busy}
                   latest={index === messages.length - 1}
                   editing={editingMessage?.id === m.id}

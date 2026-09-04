@@ -59,8 +59,6 @@ import {
 
 interface Props {
   message: Message
-  /** Display name of the agent that produced an assistant message. */
-  agentName: string | null
   busy: boolean
   latest: boolean
   editing: boolean
@@ -85,7 +83,6 @@ type FilePart = Extract<Part, { type: 'file' }>
 
 export function MessageItem({
   message,
-  agentName,
   busy,
   latest,
   editing,
@@ -165,19 +162,20 @@ export function MessageItem({
   const streaming = message.status === 'streaming'
   const { workParts, visibleParts } = partitionAssistantParts(parts, streaming)
   const showWorkStatus = shouldShowWorkStatus(workParts, streaming)
+  const showThinking = streaming && visibleParts.length === 0 && !hasActiveTool(parts)
   const copyableText = visibleParts
     .filter((part): part is TextPart => part.type === 'text')
     .map((part) => part.text)
     .join('\n\n')
   return (
     <div className={`msg msg-assistant status-${message.status}`}>
-      {agentName && <div className="msg-agent">{agentName}</div>}
       <div className="msg-body">
         {showWorkStatus && (
           <WorkDetails
             message={message}
             parts={workParts}
             active={streaming && visibleParts.length === 0}
+            thinking={showThinking}
           />
         )}
         {visibleParts.map((part, index) => {
@@ -191,7 +189,6 @@ export function MessageItem({
             />
           )
         })}
-        {streaming && visibleParts.length === 0 && !hasActiveTool(parts) && <ThinkingActivity />}
         {message.status === 'cancelled' && <div className="msg-note">Stopped</div>}
         {!streaming && (
           <div className="msg-actions">
@@ -719,10 +716,12 @@ function WorkDetails({
   message,
   parts,
   active,
+  thinking,
 }: {
   message: Message
   parts: Part[]
   active?: boolean
+  thinking?: boolean
 }) {
   const streaming = message.status === 'streaming'
   const [liveDuration, setLiveDuration] = useState(() => elapsedSince(message.created_at))
@@ -752,6 +751,7 @@ function WorkDetails({
         <div className="work-details-summary" role="status" aria-live="polite">
           {summary}
         </div>
+        {thinking && <ThinkingActivity />}
       </div>
     )
   }
@@ -796,6 +796,7 @@ function WorkDetails({
             </div>
           )
         })}
+        {thinking && <ThinkingActivity />}
       </AnimatedDisclosure>
     </div>
   )

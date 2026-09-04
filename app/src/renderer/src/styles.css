@@ -1491,11 +1491,6 @@ body.sidebar-resize-active * {
   flex-direction: column;
   gap: 6px;
 }
-.msg-agent {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-tertiary);
-}
 .msg-body {
   display: flex;
   flex-direction: column;

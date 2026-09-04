@@ -2,6 +2,11 @@ import { Fragment, useRef, useState } from 'react'
 import type { Agent, AgentConfigOption, AgentId, AgentStatus } from '../../shared/protocol'
 import { useDismiss } from './Menu'
 import { IconBolt, IconCheck, IconChevronDown, IconChevronRight } from './icons'
+import {
+  displayedCurrentModel,
+  displayedModelChoices,
+  isDefaultModelChoice,
+} from './modelPresentation'
 
 type SelectOption = Extract<AgentConfigOption, { type: 'select' }>
 type BooleanOption = Extract<AgentConfigOption, { type: 'boolean' }>
@@ -40,10 +45,8 @@ export function displayName(name: string): string {
 
 const current = (o: SelectOption) => o.options.find((v) => v.value === o.current_value)
 const currentName = (o: SelectOption) => displayName(current(o)?.name ?? o.current_value)
-
-/** The vendor's "Default" entry keeps its blurb and gets a rule under it. */
-const isDefaultChoice = (value: string, name: string) =>
-  value === 'default' || /^default\b/i.test(name)
+const currentModelName = (agent: AgentId, option: SelectOption) =>
+  displayName(displayedCurrentModel(agent, option)?.name ?? option.current_value)
 
 /**
  * One pill for "who answers and how hard they think". The card shows the current model
@@ -87,7 +90,7 @@ export function ModelPicker({
 
   const title = (
     <>
-      <span>{model ? currentName(model) : agentName(agent)}</span>
+      <span>{model ? currentModelName(agent, model) : agentName(agent)}</span>
       {effort && <span className="mp-accent">{currentName(effort)}</span>}
     </>
   )
@@ -104,7 +107,7 @@ export function ModelPicker({
         aria-haspopup="dialog"
         aria-expanded={open}
         disabled={busy}
-        aria-label={`Model and effort: ${model ? currentName(model) : agentName(agent)}${effort ? `, ${currentName(effort)}` : ''}${fast ? `, fast mode ${fastEnabled ? 'on' : 'off'}` : ''}`}
+        aria-label={`Model and effort: ${model ? currentModelName(agent, model) : agentName(agent)}${effort ? `, ${currentName(effort)}` : ''}${fast ? `, fast mode ${fastEnabled ? 'on' : 'off'}` : ''}`}
         onClick={() => {
           setView('main')
           setOpen((o) => !o)
@@ -197,15 +200,16 @@ export function ModelPicker({
                   <div key={a.id} className="mp-agent">
                     <div className="mp-agent-name">{a.name}</div>
                     {m ? (
-                      m.options.map((o) => {
-                        const isDefault = isDefaultChoice(o.value, o.name)
+                      displayedModelChoices(a.id, m).map((o) => {
+                        const isDefault = isDefaultModelChoice(o)
+                        const displayedCurrentValue = displayedCurrentModel(a.id, m)?.value
                         return (
                           <Fragment key={o.value}>
                             <ModelItem
                               label={isDefault ? 'Default' : displayName(o.name)}
                               description={isDefault ? o.description : undefined}
                               title={o.description}
-                              checked={isCurrent && o.value === m.current_value}
+                              checked={isCurrent && o.value === displayedCurrentValue}
                               disabled={o.disabled}
                               onSelect={() => pick(o.value)}
                             />
