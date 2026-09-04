@@ -51,6 +51,7 @@ const SIDEBAR_WIDTH_KEY = 'openyak.sidebar.width'
 const SIDEBAR_DEFAULT_WIDTH = 260
 const SIDEBAR_MIN_WIDTH = 220
 const SIDEBAR_MAX_WIDTH = 480
+const isMac = navigator.platform.startsWith('Mac')
 
 function clampSidebarWidth(value: number) {
   return Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, Math.round(value)))
@@ -519,7 +520,9 @@ export function Sidebar({
       style={{ '--sidebar': `${sidebarWidth}px` } as CSSProperties}
     >
       <div className="sidebar-inner">
-        <div className="titlebar sidebar-titlebar">
+        <div
+          className={`titlebar sidebar-titlebar${isMac ? ' with-traffic-lights' : ''}`}
+        >
           <button
             type="button"
             className="icon-btn no-drag"
@@ -532,18 +535,50 @@ export function Sidebar({
           </button>
         </div>
 
-        <div className="sidebar-scroll" onScroll={hideSidebarPreview}>
-          <div className="brand">OpenYak</div>
+        <div
+          className={`sidebar-scroll${settingsOpen ? ' sidebar-settings-navigation' : ''}`}
+          onScroll={hideSidebarPreview}
+        >
+          {settingsOpen ? (
+            <button
+              type="button"
+              className="nav-item sidebar-back-to-app"
+              data-tooltip-ignore="true"
+              onClick={() => {
+                hideSidebarPreview()
+                onBackToApp()
+              }}
+            >
+              <IconChevronRight size={16} className="sidebar-back-icon" />
+              <span className="nav-label">Back to app</span>
+            </button>
+          ) : (
+            <>
+              <div className="sidebar-brand-row">
+                <div className="brand">OpenYak</div>
+                <button
+                  type="button"
+                  className="icon-btn sidebar-settings-trigger"
+                  onClick={() => {
+                    hideSidebarPreview()
+                    onOpenSettings()
+                  }}
+                  title="Settings"
+                  aria-label="Open settings"
+                >
+                  <IconSettings size={16} />
+                </button>
+              </div>
 
-          <button
-            type="button"
-            className={`nav-item${draft && draftProjectId === null ? ' selected' : ''}`}
-            data-tooltip-ignore="true"
-            onClick={onNewChat}
-          >
-            <IconEdit size={16} />
-            <span className="nav-label">New chat</span>
-          </button>
+              <button
+                type="button"
+                className={`nav-item${draft && draftProjectId === null ? ' selected' : ''}`}
+                data-tooltip-ignore="true"
+                onClick={onNewChat}
+              >
+                <IconEdit size={16} />
+                <span className="nav-label">New chat</span>
+              </button>
 
           {projectlessTasks.length > 0 && (
             <>
@@ -828,29 +863,13 @@ export function Sidebar({
             </div>
           ))}
 
-          {projects.length === 0 && (
-            <p className="sidebar-hint">Projects are optional. Add one to give agents a folder.</p>
+              {projects.length === 0 && (
+                <p className="sidebar-hint">
+                  Projects are optional. Add one to give agents a folder.
+                </p>
+              )}
+            </>
           )}
-        </div>
-
-        <div className="sidebar-footer">
-          <button
-            type="button"
-            className={`nav-item${settingsOpen ? ' sidebar-back-to-app' : ''}`}
-            data-tooltip-ignore="true"
-            onClick={() => {
-              hideSidebarPreview()
-              if (settingsOpen) onBackToApp()
-              else onOpenSettings()
-            }}
-          >
-            {settingsOpen ? (
-              <IconChevronRight size={16} className="sidebar-back-icon" />
-            ) : (
-              <IconSettings size={16} />
-            )}
-            <span className="nav-label">{settingsOpen ? 'Back to app' : 'Settings'}</span>
-          </button>
         </div>
 
         {itemContextMenu && (

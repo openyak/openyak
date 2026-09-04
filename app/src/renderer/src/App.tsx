@@ -1008,7 +1008,7 @@ export function App() {
         onDeleteTask={deleteTask}
       />
       <main
-        className={`main${activeView === 'settings' ? ' settings-open' : ''}${sidebarOpen && activeView === 'chat' ? ' sidebar-framed' : ''}`}
+        className={`main${activeView === 'settings' ? ' settings-open' : ''}${sidebarOpen ? ' sidebar-framed' : ''}`}
       >
         <header
           className={`titlebar main-titlebar${!sidebarOpen && isMac ? ' with-traffic-lights' : ''}`}
@@ -1045,7 +1045,7 @@ export function App() {
             onThemeChange={updateTheme}
           />
         ) : (
-          <>
+          <div className={`chat-view${draft ? ' is-draft' : ''}`}>
             <Thread
               key={`thread-${taskId ?? NO_TASK}`}
               messages={messages}
@@ -1090,7 +1090,7 @@ export function App() {
                 onCancel={cancel}
               />
             )}
-          </>
+          </div>
         )}
 
         {notice && (

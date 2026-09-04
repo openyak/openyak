@@ -303,8 +303,11 @@ body.sidebar-resize-active * {
   flex-direction: column;
 }
 .sidebar-titlebar {
-  justify-content: flex-end;
-  padding: 0 20px 0 12px;
+  justify-content: flex-start;
+  padding: 0 12px;
+}
+.sidebar-titlebar.with-traffic-lights {
+  padding-left: 84px;
 }
 .sidebar-scroll {
   flex: 1;
@@ -312,10 +315,12 @@ body.sidebar-resize-active * {
   overflow-y: auto;
   padding: 0 10px 16px;
 }
-.sidebar-footer {
-  flex: none;
-  padding: 8px 10px 12px;
-  border-top: 1px solid var(--border);
+.sidebar-settings-navigation {
+  padding-top: 8px;
+  overflow: hidden;
+}
+.sidebar-settings-navigation .sidebar-back-to-app {
+  background: transparent;
 }
 .sidebar-back-to-app {
   background: var(--bg-selected);
@@ -327,13 +332,25 @@ body.sidebar-resize-active * {
   transform: rotate(180deg);
 }
 
+.sidebar-brand-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px 14px;
+}
 .brand {
+  flex: 1;
+  min-width: 0;
   font-family: var(--font-display);
   font-size: 20px;
   font-weight: 600;
   letter-spacing: 0.01em;
   color: var(--brand);
-  padding: 6px 10px 14px;
+}
+.sidebar-settings-trigger {
+  width: 28px;
+  height: 28px;
+  color: var(--text-secondary);
 }
 
 .nav-item {
@@ -1013,13 +1030,13 @@ body.sidebar-resize-active * {
 /* Settings */
 
 .main.settings-open {
-  background: var(--bg-sidebar);
+  background: var(--bg);
 }
 .settings-page {
   min-height: 0;
   flex: 1;
   overflow-y: auto;
-  background: var(--bg-sidebar);
+  background: var(--bg);
 }
 .settings-content {
   width: 100%;
@@ -1220,6 +1237,41 @@ body.sidebar-resize-active * {
 }
 
 /* Thread */
+
+.chat-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.chat-view.is-draft {
+  justify-content: center;
+  padding-bottom: min(10vh, 96px);
+}
+.chat-view.is-draft .thread-shell {
+  flex: 0 0 auto;
+}
+.chat-view.is-draft .thread {
+  height: auto;
+  overflow: visible;
+}
+.chat-view.is-draft .hero {
+  padding: 0 24px 26px;
+}
+.chat-view.is-draft .composer-area {
+  padding-bottom: 0;
+}
+.chat-view.is-draft .composer-above {
+  position: relative;
+  margin: 0 12px -20px;
+  padding: 8px 4px;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--bg-composer) 44%, var(--bg));
+}
+.chat-view.is-draft .composer {
+  position: relative;
+  z-index: 1;
+}
 
 .thread-shell {
   flex: 1;
