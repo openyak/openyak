@@ -46,7 +46,6 @@ import {
   initialStreamingText,
   isContextCompaction,
   isToolActive,
-  normalizeThoughtText,
   partitionAssistantParts,
   shouldShowWorkStatus,
   shouldExposeToolOutput,
@@ -786,7 +785,7 @@ function WorkDetails({
               </div>
             )
           }
-          const content = part.type === 'thought' ? normalizeThoughtText(part.text) : part.text
+          const content = part.text
           if (!content) return null
           return (
             <div key={`${part.type}:${entry.partIndex}`} className="work-details-narrative md">

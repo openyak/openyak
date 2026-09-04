@@ -8,7 +8,7 @@ export interface AssistantPartPresentation {
 export type ToolPart = Extract<Part, { type: 'tool_call' }>
 export type WorkNarrativePart = Extract<
   Part,
-  { type: 'text' } | { type: 'thought' } | { type: 'error' }
+  { type: 'text' } | { type: 'error' }
 >
 
 export type ToolActivityKind =
@@ -153,16 +153,14 @@ export function buildWorkTimeline(parts: Part[]): WorkTimelineEntry[] {
       })
       return
     }
-    if (part.type === 'text' || part.type === 'thought' || part.type === 'error') {
+    // Native Codex uses reasoning only to derive the transient Thinking state; it
+    // does not render historical reasoning summaries as work timeline rows.
+    if (part.type === 'text' || part.type === 'error') {
       entries.push({ type: 'narrative', part, partIndex })
     }
   })
   flushTools()
   return entries
-}
-
-export function normalizeThoughtText(text: string): string {
-  return text.trim()
 }
 
 /** Reveal bursty provider deltas over a few frames without falling far behind. */

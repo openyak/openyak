@@ -9,7 +9,6 @@ import {
   isContextCompaction,
   hasActiveTool,
   initialStreamingText,
-  normalizeThoughtText,
   partitionAssistantParts,
   shouldExposeToolOutput,
   shouldShowWorkStatus,
@@ -153,8 +152,8 @@ test('thought-only work is folded into worked instead of creating another disclo
   })
 })
 
-test('thought content removes transport whitespace before Markdown rendering', () => {
-  assert.equal(normalizeThoughtText('\n\n**Separating commands**\n\n'), '**Separating commands**')
+test('reasoning summaries stay out of the Codex-style work timeline', () => {
+  assert.deepEqual(buildWorkTimeline([thought('\n\n**Separating commands**\n\n')]), [])
 })
 
 test('completed work summary reports elapsed time instead of step count', () => {
@@ -182,7 +181,6 @@ test('expanded work preserves chronology and groups only adjacent tools', () => 
   const run: Part = { ...tool('npm test', 'completed'), kind: 'execute' }
 
   assert.deepEqual(buildWorkTimeline([plan, readA, readB, update, run]), [
-    { type: 'narrative', part: plan, partIndex: 0 },
     {
       type: 'activity',
       activity: { kind: 'read', tools: [readA, readB], label: 'Read 2 files' },
