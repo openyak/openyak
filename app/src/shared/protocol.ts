@@ -46,8 +46,14 @@ export interface Message {
 }
 
 export type Part =
-  | { type: 'text'; text: string }
-  | { type: 'thought'; text: string }
+  | {
+      type: 'text'
+      text: string
+      /** Provider metadata such as Codex's commentary/final-answer phase. */
+      _meta?: Record<string, unknown>
+      message_id?: string
+    }
+  | { type: 'thought'; text: string; _meta?: Record<string, unknown>; message_id?: string }
   | {
       type: 'tool_call'
       id: string

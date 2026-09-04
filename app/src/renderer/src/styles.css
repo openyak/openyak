@@ -445,7 +445,7 @@ body.sidebar-resize-active * {
   border: 2px solid color-mix(in srgb, currentColor 34%, transparent);
   border-top-color: currentColor;
   border-radius: 50%;
-  animation: nav-working-spin 0.78s linear infinite;
+  animation: nav-working-spin 1.4s linear infinite;
 }
 .nav-task-row.is-working .nav-actions {
   pointer-events: none;
@@ -1711,7 +1711,7 @@ body.sidebar-resize-active * {
   border-bottom: 1px solid var(--border);
   color: var(--text-tertiary);
 }
-.work-details > summary,
+.work-details-toggle,
 .work-details-summary {
   min-height: 32px;
   width: fit-content;
@@ -1723,18 +1723,17 @@ body.sidebar-resize-active * {
   cursor: pointer;
   font-size: 13.5px;
   transition: color 0.12s ease;
+  color: inherit;
+  text-align: left;
 }
-.work-details > summary:hover,
-.work-details > summary:focus-visible {
+.work-details-toggle:hover,
+.work-details-toggle:focus-visible {
   color: var(--text-secondary);
 }
-.work-details > summary:focus-visible {
+.work-details-toggle:focus-visible {
   outline: 1px solid color-mix(in srgb, var(--blue) 42%, transparent);
   outline-offset: 3px;
   border-radius: 4px;
-}
-.work-details > summary::-webkit-details-marker {
-  display: none;
 }
 .work-details-summary {
   cursor: default;
@@ -1742,8 +1741,25 @@ body.sidebar-resize-active * {
 .work-details-caret {
   transition: transform 0.14s ease;
 }
-.work-details[open] .work-details-caret {
+.work-details.is-open .work-details-caret {
   transform: rotate(90deg);
+}
+.animated-disclosure {
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    height 200ms cubic-bezier(0.2, 0, 0, 1),
+    opacity 150ms ease;
+}
+.animated-disclosure.is-open {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animated-disclosure {
+    transition: none;
+  }
 }
 .work-details-body {
   display: flex;
@@ -1852,14 +1868,61 @@ body.sidebar-resize-active * {
   padding: 2px 0;
   color: var(--text-secondary);
   font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.tool-activity-row:disabled {
+  cursor: default;
+}
+.tool-activity-row:not(:disabled):hover {
+  color: var(--text);
 }
 .tool-activity-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.tool-activity-row.has-failure .tool-status-label {
+.tool-activity-title.activity-shimmer {
+  color: transparent;
+  background: linear-gradient(
+    100deg,
+    var(--text-secondary) 0%,
+    var(--text-secondary) 42%,
+    var(--text) 50%,
+    var(--text-secondary) 58%,
+    var(--text-secondary) 100%
+  );
+  background-size: 240% 100%;
+  background-position: 200% 0;
+  background-clip: text;
+  -webkit-background-clip: text;
+  animation: activity-shimmer 4s ease-in-out 600ms infinite;
+}
+@keyframes activity-shimmer {
+  0%,
+  15% {
+    background-position: 200% 0;
+  }
+  40%,
+  100% {
+    background-position: -200% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tool-activity-title.activity-shimmer {
+    color: inherit;
+    background: none;
+    animation: none;
+  }
+}
+.tool-activity.has-failure .tool-status-label {
   color: var(--danger);
+}
+.tool-activity-details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 0 5px 22px;
 }
 .tool-compaction.is-active .tool-icon {
   animation: pulse 1.2s ease-in-out infinite;

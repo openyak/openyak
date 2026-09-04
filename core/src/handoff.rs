@@ -54,7 +54,7 @@ fn render_parts(parts: &[Part]) -> String {
     parts
         .iter()
         .filter_map(|p| match p {
-            Part::Text { text } => Some(text.clone()),
+            Part::Text { text, .. } => Some(text.clone()),
             Part::Thought { .. } => None,
             Part::ToolCall { title, .. } => Some(format!("[tool: {title}]")),
             Part::Error { message } => Some(format!("[error: {message}]")),
@@ -86,7 +86,11 @@ mod tests {
             task_id: "t".into(),
             role: role.into(),
             agent: agent.map(Into::into),
-            parts: vec![Part::Text { text: text.into() }],
+            parts: vec![Part::Text {
+                text: text.into(),
+                meta: None,
+                message_id: None,
+            }],
             created_at: String::new(),
             status: "done".into(),
             duration_ms: None,
@@ -209,6 +213,8 @@ mod tests {
             0,
             Part::Thought {
                 text: "secret".into(),
+                meta: None,
+                message_id: None,
             },
         );
         m.parts.insert(

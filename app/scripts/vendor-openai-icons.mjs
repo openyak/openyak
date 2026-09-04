@@ -27,7 +27,7 @@ const ICON_NAMES = [
   'DotsHorizontal',
   'ChevronUpDown',
   'Delete',
-  'TerminalLg',
+  'Terminal',
   'FileBlank',
   'ChevronRight',
   'X',

@@ -1,4 +1,12 @@
-import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react'
+import {
+  memo,
+  useEffect,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type DragEvent,
+  type ReactNode,
+} from 'react'
 import Markdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
@@ -30,16 +38,22 @@ import {
   IconWarning,
 } from './icons'
 import {
-  groupWorkParts,
+  buildWorkTimeline,
+  cancelStreamingFrame,
   contextCompactionLabel,
+  describeToolGroup,
+  hasActiveTool,
+  initialStreamingText,
   isContextCompaction,
+  isToolActive,
   normalizeThoughtText,
   partitionAssistantParts,
   shouldShowWorkStatus,
   shouldExposeToolOutput,
   summarizeWorkDetails,
+  splitStableStreamingText,
+  streamingRevealStep,
   toolActivityKind,
-  workNarrativeParts,
   type WorkActivity,
   type ToolPart,
 } from './messagePresentation'
@@ -160,11 +174,25 @@ export function MessageItem({
     <div className={`msg msg-assistant status-${message.status}`}>
       {agentName && <div className="msg-agent">{agentName}</div>}
       <div className="msg-body">
-        {showWorkStatus && <WorkDetails message={message} parts={workParts} />}
-        {visibleParts.map((part, i) => (
-          <PartView key={i} part={part} live={streaming && i === visibleParts.length - 1} />
-        ))}
-        {streaming && visibleParts.length === 0 && <ThinkingActivity />}
+        {showWorkStatus && (
+          <WorkDetails
+            message={message}
+            parts={workParts}
+            active={streaming && visibleParts.length === 0}
+          />
+        )}
+        {visibleParts.map((part, index) => {
+          const originalIndex = parts.indexOf(part)
+          const key = part.type === 'tool_call' ? `tool:${part.id}` : `${part.type}:${originalIndex}`
+          return (
+            <PartView
+              key={key}
+              part={part}
+              live={streaming && index === visibleParts.length - 1}
+            />
+          )
+        })}
+        {streaming && visibleParts.length === 0 && !hasActiveTool(parts) && <ThinkingActivity />}
         {message.status === 'cancelled' && <div className="msg-note">Stopped</div>}
         {!streaming && (
           <div className="msg-actions">
@@ -430,22 +458,22 @@ function CopyAction({ text, label }: { text: string; label: string }) {
 function PartView({ part, live }: { part: Part; live: boolean }) {
   switch (part.type) {
     case 'text':
-      return (
-        <div className={`md${live ? ' md-live' : ''}`}>
-          <Markdown
-            remarkPlugins={[remarkGfm]}
-            rehypePlugins={[rehypeHighlight]}
-            components={components}
-          >
-            {part.text}
-          </Markdown>
-        </div>
-      )
+      return <StreamingMarkdown text={part.text} live={live} />
     case 'thought':
       // Keep streaming responsive without exposing the provider's private reasoning.
       return <ThinkingActivity />
     case 'tool_call':
-      return <ToolCall part={part} />
+      return (
+        <ActivityRow
+          activity={{
+            kind: toolActivityKind(part),
+            tools: [part],
+            label: isContextCompaction(part)
+              ? contextCompactionLabel(part)
+              : describeToolGroup([part]),
+          }}
+        />
+      )
     case 'error':
       return <div className="msg-error">{part.message}</div>
     case 'image':
@@ -453,6 +481,67 @@ function PartView({ part, live }: { part: Part; live: boolean }) {
       // Attachments belong to user messages; nothing to show on an assistant turn.
       return null
   }
+}
+
+const MarkdownFragment = memo(function MarkdownFragment({ text }: { text: string }) {
+  if (!text) return null
+  return (
+    <Markdown
+      remarkPlugins={[remarkGfm]}
+      rehypePlugins={[rehypeHighlight]}
+      components={components}
+    >
+      {text}
+    </Markdown>
+  )
+})
+
+const MarkdownContent = memo(function MarkdownContent({ text, live }: { text: string; live: boolean }) {
+  return (
+    <div className={`md${live ? ' md-live' : ''}`}>
+      <MarkdownFragment text={text} />
+    </div>
+  )
+})
+
+/** Smooth bursty deltas and keep completed Markdown blocks out of the hot render region. */
+function StreamingMarkdown({ text, live }: { text: string; live: boolean }) {
+  const initialText = initialStreamingText(text, live)
+  const [frameText, setFrameText] = useState(initialText)
+  const latestText = useRef(text)
+  const renderedText = useRef(initialText)
+  const frame = useRef<number | null>(null)
+
+  useEffect(() => {
+    latestText.current = text
+    if (renderedText.current === latestText.current) return
+    if (frame.current !== null) return
+    const renderFrame = () => {
+      const next = streamingRevealStep(renderedText.current, latestText.current)
+      renderedText.current = next
+      setFrameText(next)
+      if (next === latestText.current) frame.current = null
+      else frame.current = requestAnimationFrame(renderFrame)
+    }
+    frame.current = requestAnimationFrame(renderFrame)
+  }, [live, text])
+
+  useEffect(
+    () => () => {
+      cancelStreamingFrame(frame, cancelAnimationFrame)
+    },
+    [],
+  )
+
+  const visuallyStreaming = live || frameText !== text
+  if (!visuallyStreaming) return <MarkdownContent text={text} live={false} />
+  const { stable, tail } = splitStableStreamingText(frameText)
+  return (
+    <div className="md md-live">
+      <MarkdownFragment text={stable} />
+      <MarkdownFragment text={tail} />
+    </div>
+  )
 }
 
 function ThinkingActivity() {
@@ -547,14 +636,77 @@ function ToolCall({ part }: { part: ToolPart }) {
 }
 
 function ActivityRow({ activity }: { activity: WorkActivity }) {
+  const [open, setOpen] = useState(false)
   const failed = activity.tools.filter((tool) => tool.status === 'failed').length
+  const active = activity.tools.some(isToolActive)
+  const compaction = activity.kind === 'compaction'
+  const expandable = !compaction
   return (
-    <div className={`tool-activity-row${failed ? ' has-failure' : ''}`}>
-      <ToolIcon part={activity.tools[0]} size={15} />
-      <span className="tool-activity-title">{activity.label}</span>
-      {failed > 0 && (
-        <span className="tool-status-label">{failed === 1 ? '1 failed' : `${failed} failed`}</span>
+    <div className={`tool-activity${active ? ' is-active' : ''}${failed ? ' has-failure' : ''}`}>
+      <button
+        type="button"
+        className="tool-activity-row"
+        disabled={!expandable}
+        onClick={() => expandable && setOpen((value) => !value)}
+        aria-expanded={expandable ? open : undefined}
+      >
+        <ToolIcon part={activity.tools[0]} size={15} />
+        <span className={`tool-activity-title${active ? ' activity-shimmer' : ''}`}>
+          {activity.label}
+        </span>
+        {failed > 0 && (
+          <span className="tool-status-label">{failed === 1 ? '1 failed' : `${failed} failed`}</span>
+        )}
+        {expandable && (
+          <IconChevronRight size={12} className={`tool-caret${open ? ' open' : ''}`} />
+        )}
+      </button>
+      {expandable && (
+        <AnimatedDisclosure open={open} className="tool-activity-details">
+          {activity.tools.map((tool) => (
+            <ToolCall key={tool.id} part={tool} />
+          ))}
+        </AnimatedDisclosure>
       )}
+    </div>
+  )
+}
+
+function AnimatedDisclosure({
+  open,
+  className,
+  children,
+}: {
+  open: boolean
+  className: string
+  children: ReactNode
+}) {
+  const contentRef = useRef<HTMLDivElement>(null)
+  const [height, setHeight] = useState(0)
+
+  useEffect(() => {
+    const element = contentRef.current
+    if (!element) return
+    const update = () => setHeight(element.scrollHeight)
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
+
+  useEffect(() => {
+    if (contentRef.current) contentRef.current.inert = !open
+  }, [open])
+
+  return (
+    <div
+      className={`animated-disclosure${open ? ' is-open' : ''}`}
+      style={{ height: open ? height : 0 }}
+      aria-hidden={!open}
+    >
+      <div ref={contentRef} className={className}>
+        {children}
+      </div>
     </div>
   )
 }
@@ -564,10 +716,24 @@ function elapsedSince(createdAt: string): number {
   return Number.isFinite(startedAt) ? Math.max(0, Date.now() - startedAt) : 0
 }
 
-function WorkDetails({ message, parts }: { message: Message; parts: Part[] }) {
+function WorkDetails({
+  message,
+  parts,
+  active,
+}: {
+  message: Message
+  parts: Part[]
+  active?: boolean
+}) {
   const streaming = message.status === 'streaming'
   const [liveDuration, setLiveDuration] = useState(() => elapsedSince(message.created_at))
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(Boolean(active))
+  const [previousActive, setPreviousActive] = useState(Boolean(active))
+
+  if (Boolean(active) !== previousActive) {
+    setPreviousActive(Boolean(active))
+    setOpen(Boolean(active))
+  }
 
   useEffect(() => {
     if (!streaming) return
@@ -579,10 +745,9 @@ function WorkDetails({ message, parts }: { message: Message; parts: Part[] }) {
 
   const duration = streaming ? liveDuration : message.duration_ms
   const summary = summarizeWorkDetails(duration, streaming)
-  const activities = groupWorkParts(parts)
-  const narrative = workNarrativeParts(parts)
+  const timeline = buildWorkTimeline(parts)
 
-  if (activities.length === 0 && narrative.length === 0) {
+  if (timeline.length === 0) {
     return (
       <div className="work-details work-details-static">
         <div className="work-details-summary" role="status" aria-live="polite">
@@ -593,36 +758,45 @@ function WorkDetails({ message, parts }: { message: Message; parts: Part[] }) {
   }
 
   return (
-    <details
-      className="work-details"
-      open={open}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
-    >
-      <summary>
+    <div className={`work-details${open ? ' is-open' : ''}`}>
+      <button
+        type="button"
+        className="work-details-toggle"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+      >
         <span>{summary}</span>
         <IconChevronRight size={13} className="work-details-caret" />
-      </summary>
-      <div className="work-details-body">
-        {narrative.map((part, index) =>
-          part.type === 'error' ? (
-            <div key={`error:${index}`} className="msg-error">
-              {part.message}
-            </div>
-          ) : (
-            <div key={`${part.type}:${index}`} className="work-details-narrative md">
+      </button>
+      <AnimatedDisclosure open={open} className="work-details-body">
+        {timeline.map((entry) => {
+          if (entry.type === 'activity') {
+            return (
+              <ActivityRow
+                key={`activity:${entry.activity.tools.map((tool) => tool.id).join(':')}`}
+                activity={entry.activity}
+              />
+            )
+          }
+          const part = entry.part
+          if (part.type === 'error') {
+            return (
+              <div key={`error:${entry.partIndex}`} className="msg-error">
+                {part.message}
+              </div>
+            )
+          }
+          const content = part.type === 'thought' ? normalizeThoughtText(part.text) : part.text
+          if (!content) return null
+          return (
+            <div key={`${part.type}:${entry.partIndex}`} className="work-details-narrative md">
               <Markdown remarkPlugins={[remarkGfm]} components={components}>
-                {part.type === 'thought' ? normalizeThoughtText(part.text) : part.text}
+                {content}
               </Markdown>
             </div>
-          ),
-        )}
-        {activities.map((activity) => (
-          <ActivityRow
-            key={`${activity.kind}:${activity.tools.map((tool) => tool.id).join(':')}`}
-            activity={activity}
-          />
-        ))}
-      </div>
-    </details>
+          )
+        })}
+      </AnimatedDisclosure>
+    </div>
   )
 }

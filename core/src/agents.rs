@@ -83,7 +83,6 @@ pub fn is_known(id: &str) -> bool {
     spec(id).is_some()
 }
 
-
 /// A prompt to serve: the user Message to send and the assistant Message to stream into.
 pub struct Job {
     pub user_message_id: String,
@@ -1153,12 +1152,16 @@ impl Live {
     fn apply(&mut self, update: SessionUpdate) -> Option<usize> {
         match update {
             SessionUpdate::AgentMessageChunk(c) => {
+                let meta = c.meta;
+                let message_id = c.message_id.map(|id| id.0.to_string());
                 let text = chunk_text(c.content).filter(|t| !t.is_empty())?;
-                Some(self.append_text(text, false))
+                Some(self.append_text(text, false, meta, message_id))
             }
             SessionUpdate::AgentThoughtChunk(c) => {
+                let meta = c.meta;
+                let message_id = c.message_id.map(|id| id.0.to_string());
                 let text = chunk_text(c.content).filter(|t| !t.is_empty())?;
-                Some(self.append_text(text, true))
+                Some(self.append_text(text, true, meta, message_id))
             }
             SessionUpdate::ToolCall(tc) => Some(self.tool_call(tc)),
             SessionUpdate::ToolCallUpdate(u) => Some(self.tool_call_update(u)),
@@ -1166,10 +1169,31 @@ impl Live {
         }
     }
 
-    fn append_text(&mut self, delta: String, thought: bool) -> usize {
+    fn append_text(
+        &mut self,
+        delta: String,
+        thought: bool,
+        meta: Option<agent_client_protocol::schema::v1::Meta>,
+        message_id: Option<String>,
+    ) -> usize {
         if let Some(last) = self.parts.last_mut() {
             match (last, thought) {
-                (Part::Text { text }, false) | (Part::Thought { text }, true) => {
+                (
+                    Part::Text {
+                        text,
+                        meta: current_meta,
+                        message_id: current_message_id,
+                    },
+                    false,
+                )
+                | (
+                    Part::Thought {
+                        text,
+                        meta: current_meta,
+                        message_id: current_message_id,
+                    },
+                    true,
+                ) if *current_meta == meta && *current_message_id == message_id => {
                     text.push_str(&delta);
                     return self.parts.len() - 1;
                 }
@@ -1177,9 +1201,17 @@ impl Live {
             }
         }
         self.parts.push(if thought {
-            Part::Thought { text: delta }
+            Part::Thought {
+                text: delta,
+                meta,
+                message_id,
+            }
         } else {
-            Part::Text { text: delta }
+            Part::Text {
+                text: delta,
+                meta,
+                message_id,
+            }
         });
         self.parts.len() - 1
     }
@@ -1268,6 +1300,15 @@ mod tests {
         ContentChunk::new(ContentBlock::Text(TextContent::new(s)))
     }
 
+    fn phased_chunk(s: &str, phase: &str) -> ContentChunk {
+        ContentChunk::new(ContentBlock::Text(TextContent::new(s)))
+            .message_id("message-1")
+            .meta(agent_client_protocol::schema::v1::Meta::from_iter([(
+                "codex".into(),
+                serde_json::json!({ "phase": phase }),
+            )]))
+    }
+
     #[test]
     fn disabling_a_provider_drops_only_its_sessions() {
         let pool = AgentPool::default();
@@ -1323,7 +1364,9 @@ mod tests {
         assert_eq!(
             live.parts,
             vec![Part::Text {
-                text: "PONG".into()
+                text: "PONG".into(),
+                meta: None,
+                message_id: None,
             }]
         );
         assert_eq!(
@@ -1334,6 +1377,46 @@ mod tests {
             live.apply(SessionUpdate::AgentMessageChunk(chunk("!"))),
             Some(2)
         );
+    }
+
+    #[test]
+    fn text_chunks_preserve_phase_metadata_and_do_not_merge_across_phases() {
+        let mut live = Live::new("m".into());
+        assert_eq!(
+            live.apply(SessionUpdate::AgentMessageChunk(phased_chunk(
+                "Checking",
+                "commentary"
+            ))),
+            Some(0)
+        );
+        assert_eq!(
+            live.apply(SessionUpdate::AgentMessageChunk(phased_chunk(
+                " files",
+                "commentary"
+            ))),
+            Some(0)
+        );
+        assert_eq!(
+            live.apply(SessionUpdate::AgentMessageChunk(phased_chunk(
+                "Done.",
+                "final_answer"
+            ))),
+            Some(1)
+        );
+
+        assert_eq!(live.parts.len(), 2);
+        assert!(matches!(
+            &live.parts[0],
+            Part::Text { text, meta, .. }
+                if text == "Checking files"
+                    && meta.as_ref().and_then(|value| value.get("codex")).is_some()
+        ));
+        assert!(matches!(
+            &live.parts[1],
+            Part::Text { text, meta, .. }
+                if text == "Done."
+                    && meta.as_ref().and_then(|value| value.get("codex")).is_some()
+        ));
     }
 
     #[test]
@@ -1379,7 +1462,11 @@ mod tests {
     #[test]
     fn attachments_become_image_and_resource_link_blocks() {
         let parts = vec![
-            Part::Text { text: "see".into() },
+            Part::Text {
+                text: "see".into(),
+                meta: None,
+                message_id: None,
+            },
             Part::Image {
                 mime_type: "image/png".into(),
                 data: "QUJD".into(),

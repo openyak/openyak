@@ -159,10 +159,13 @@ export function Thread({
       if (userBeforeIt?.role === 'user') stick.current = true
     }
     if (stick.current) {
-      el.scrollTo({
-        top: el.scrollHeight,
-        behavior: firstContent ? 'auto' : 'smooth',
-      })
+      if (firstContent || !addedMessage) {
+        // Token chunks already arrive as small increments. Jumping to each new edge keeps
+        // them visually continuous; restarting smooth scrolling per chunk causes stutter.
+        el.scrollTop = el.scrollHeight
+      } else {
+        el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+      }
     }
     if (messages.length > 0) positioned.current = true
     previousCount.current = messages.length

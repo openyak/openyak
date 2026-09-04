@@ -448,7 +448,11 @@ async fn chat_retry(ctx: &Arc<Ctx>, p: ChatRetry) -> Result<Value, RpcError> {
 fn message_parts(text: String, attachments: Vec<Attachment>) -> Result<Vec<Part>, RpcError> {
     let mut parts = Vec::with_capacity(1 + attachments.len());
     if !text.trim().is_empty() {
-        parts.push(Part::Text { text });
+        parts.push(Part::Text {
+            text,
+            meta: None,
+            message_id: None,
+        });
     }
     parts.extend(attachments.into_iter().map(Attachment::into_part));
     if parts.is_empty() {

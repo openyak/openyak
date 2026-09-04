@@ -35,9 +35,17 @@ pub struct Task {
 pub enum Part {
     Text {
         text: String,
+        #[serde(rename = "_meta", default, skip_serializing_if = "Option::is_none")]
+        meta: Option<serde_json::Map<String, serde_json::Value>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_id: Option<String>,
     },
     Thought {
         text: String,
+        #[serde(rename = "_meta", default, skip_serializing_if = "Option::is_none")]
+        meta: Option<serde_json::Map<String, serde_json::Value>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_id: Option<String>,
     },
     ToolCall {
         id: String,
@@ -629,7 +637,11 @@ mod tests {
     use super::*;
 
     fn text(s: &str) -> Vec<Part> {
-        vec![Part::Text { text: s.into() }]
+        vec![Part::Text {
+            text: s.into(),
+            meta: None,
+            message_id: None,
+        }]
     }
 
     #[test]
@@ -815,7 +827,11 @@ mod tests {
             .insert_message(&t.id, "assistant", Some("claude"), &[], "streaming")
             .unwrap();
         let parts = vec![
-            Part::Thought { text: "hmm".into() },
+            Part::Thought {
+                text: "hmm".into(),
+                meta: None,
+                message_id: None,
+            },
             Part::ToolCall {
                 id: "tc1".into(),
                 title: "ls".into(),
@@ -829,6 +845,8 @@ mod tests {
             },
             Part::Text {
                 text: "hello".into(),
+                meta: None,
+                message_id: None,
             },
         ];
         s.finish_message(&a.id, &parts, "done", 61_000).unwrap();

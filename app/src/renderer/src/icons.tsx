@@ -24,7 +24,7 @@ type OfficialIconName =
   | 'DotsHorizontal'
   | 'ChevronUpDown'
   | 'Delete'
-  | 'TerminalLg'
+  | 'Terminal'
   | 'FileBlank'
   | 'ChevronRight'
   | 'X'
@@ -92,7 +92,7 @@ export const IconChip = icon('MemoryFilledSm')
 export const IconMore = icon('DotsHorizontal')
 export const IconSort = icon('ChevronUpDown')
 export const IconTrash = icon('Delete')
-export const IconTerminal = icon('TerminalLg')
+export const IconTerminal = icon('Terminal')
 export const IconFile = icon('FileBlank')
 export const IconChevronRight = icon('ChevronRight')
 export const IconClose = icon('X')

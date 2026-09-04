@@ -27,8 +27,8 @@ interface Message {
   duration_ms?: number | null;             // wall-clock assistant response time; null for user/legacy messages
 }
 type Part =
-  | { type: "text"; text: string }
-  | { type: "thought"; text: string }
+  | { type: "text"; text: string; _meta?: Record<string, unknown>; message_id?: string }
+  | { type: "thought"; text: string; _meta?: Record<string, unknown>; message_id?: string }
   | { type: "tool_call"; id: string; title: string; kind: string; status: string; output?: string; _meta?: Record<string, unknown> }
   | { type: "error"; message: string }
   | { type: "image"; mime_type: string; data: string }   // attachment on a user message, base64
