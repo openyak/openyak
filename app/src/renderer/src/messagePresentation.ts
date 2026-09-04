@@ -10,6 +10,7 @@ export type WorkNarrativePart = Extract<
   Part,
   { type: 'text' } | { type: 'error' }
 >
+export type WorkStatusPart = Extract<Part, { type: 'thought' }>
 
 export type ToolActivityKind =
   | 'read'
@@ -29,6 +30,7 @@ export interface WorkActivity {
 
 export type WorkTimelineEntry =
   | { type: 'narrative'; part: WorkNarrativePart; partIndex: number }
+  | { type: 'status'; part: WorkStatusPart; partIndex: number }
   | { type: 'activity'; activity: WorkActivity; partIndex: number }
 
 export function isContextCompaction(part: Part): boolean {
@@ -55,6 +57,15 @@ export function isToolActive(part: ToolPart): boolean {
 
 export function hasActiveTool(parts: Part[]): boolean {
   return parts.some((part) => part.type === 'tool_call' && isToolActive(part))
+}
+
+/** Only the newest live tool owns the activity treatment, even if older statuses arrive late. */
+export function latestActiveToolId(parts: Part[]): string | null {
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const part = parts[index]
+    if (part.type === 'tool_call' && isToolActive(part)) return part.id
+  }
+  return null
 }
 
 export function toolActivityKind(part: ToolPart): ToolActivityKind {
@@ -109,6 +120,13 @@ export function describeToolGroup(tools: ToolPart[]): string {
     .join(', ')
 }
 
+/** Active ACP tool titles are already concise, user-facing descriptions. */
+export function liveActivityLabel(tools: ToolPart[], activeToolId: string | null): string {
+  const activeTool = tools.find((tool) => tool.id === activeToolId)
+  const title = activeTool?.title.trim()
+  return title && title !== activeTool?.id ? title : describeToolGroup(tools)
+}
+
 /**
  * Build the disclosure in transport order. Codex groups only adjacent, groupable tool
  * events; prose, reasoning summaries, errors, and compaction markers are boundaries.
@@ -155,8 +173,10 @@ export function buildWorkTimeline(parts: Part[]): WorkTimelineEntry[] {
       })
       return
     }
-    // Native Codex uses reasoning only to derive the transient Thinking state; it
-    // does not render historical reasoning summaries as work timeline rows.
+    if (part.type === 'thought') {
+      if (part.text.trim()) entries.push({ type: 'status', part, partIndex })
+      return
+    }
     if (part.type === 'text' || part.type === 'error') {
       entries.push({ type: 'narrative', part, partIndex })
     }
@@ -227,6 +247,15 @@ export function summarizeWorkDetails(durationMs: number | null | undefined, stre
 
 export function shouldShowWorkStatus(workParts: Part[], streaming: boolean): boolean {
   return streaming || workParts.length > 0
+}
+
+/** "Thinking…" is a brief empty-state fallback, never a sibling of real activity. */
+export function shouldShowThinking(parts: Part[], streaming: boolean): boolean {
+  if (!streaming) return false
+  return !parts.some((part) => {
+    if (part.type === 'text' || part.type === 'thought') return Boolean(part.text.trim())
+    return part.type === 'tool_call' || part.type === 'error'
+  })
 }
 
 export function textPhase(part: Part): string | null {

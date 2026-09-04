@@ -1,8 +1,11 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron'
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
+import { writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { CoreClient, CoreError } from './core-client'
+import { saveDiagramSvg } from './save-diagram'
+import { saveImageAttachment } from './save-image'
 
 let win: BrowserWindow | null = null
 let core: CoreClient | null = null
@@ -161,6 +164,34 @@ ipcMain.handle('dialog:pick-files', async () => {
   }
   const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
   return r.canceled ? [] : r.filePaths
+})
+
+ipcMain.handle('diagram:save', async (_event, value: unknown) => {
+  const options: Electron.SaveDialogOptions = {
+    title: 'Save diagram',
+    defaultPath: 'diagram.svg',
+    filters: [{ name: 'SVG image', extensions: ['svg'] }],
+  }
+  return saveDiagramSvg(
+    value,
+    () => (win ? dialog.showSaveDialog(win, options) : dialog.showSaveDialog(options)),
+    (filePath, data) => writeFile(filePath, data, 'utf8'),
+  )
+})
+
+ipcMain.handle('image:save', async (_event, value: unknown) => {
+  return saveImageAttachment(
+    value,
+    (image) => {
+      const options: Electron.SaveDialogOptions = {
+        title: 'Save image',
+        defaultPath: image.suggestedName,
+        filters: [{ name: 'Image', extensions: [image.extension] }],
+      }
+      return win ? dialog.showSaveDialog(win, options) : dialog.showSaveDialog(options)
+    },
+    (filePath, data) => writeFile(filePath, data),
+  )
 })
 
 ipcMain.handle('shell:open-external', async (_event, value: unknown) => {

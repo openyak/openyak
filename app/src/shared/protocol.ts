@@ -213,6 +213,10 @@ export interface OpenYakApi {
   pickDirectory(): Promise<string | null>
   /** Files and/or folders chosen in the OS dialog; empty when cancelled. */
   pickFiles(): Promise<string[]>
+  /** Save a rendered Mermaid diagram using the native OS dialog. */
+  saveDiagram(svg: string): Promise<boolean>
+  /** Save a user-attached image using the native OS dialog. */
+  saveImage(image: { mimeType: string; data: string; suggestedName?: string }): Promise<boolean>
   /** Open a trusted HTTPS setup page in the user's default browser. */
   openExternal(url: string): Promise<void>
   /** Apply the user's theme to Electron chrome and the renderer. */

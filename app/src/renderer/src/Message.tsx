@@ -7,7 +7,7 @@ import {
   type DragEvent,
   type ReactNode,
 } from 'react'
-import Markdown, { type Components } from 'react-markdown'
+import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 import type { Attachment, Message, Part } from '../../shared/protocol'
@@ -19,6 +19,8 @@ import {
   toAttachment,
   type AttachmentDraft,
 } from './attachmentDrafts'
+import { markdownComponents } from './MarkdownBlocks'
+import { AttachmentImage } from './AttachmentImage'
 import {
   IconBookOpen,
   IconCheck,
@@ -42,11 +44,12 @@ import {
   cancelStreamingFrame,
   contextCompactionLabel,
   describeToolGroup,
-  hasActiveTool,
   initialStreamingText,
   isContextCompaction,
-  isToolActive,
+  latestActiveToolId,
+  liveActivityLabel,
   partitionAssistantParts,
+  shouldShowThinking,
   shouldShowWorkStatus,
   shouldExposeToolOutput,
   summarizeWorkDetails,
@@ -67,14 +70,6 @@ interface Props {
   onSubmitEdit: (message: Message, text: string, attachments: Attachment[]) => Promise<boolean>
   onRetry: (message: Message) => void
   onContinue: () => void
-}
-
-// Links open in the user's browser (the main process denies in-app navigation).
-const components: Components = {
-  a: ({ node, ...props }) => {
-    void node
-    return <a {...props} target="_blank" rel="noreferrer" />
-  },
 }
 
 type TextPart = Extract<Part, { type: 'text' }>
@@ -119,10 +114,11 @@ export function MessageItem({
                 {images.length > 0 && (
                   <div className="attach-images">
                     {images.map((p, i) => (
-                      <img
+                      <AttachmentImage
                         key={i}
-                        src={`data:${p.mime_type};base64,${p.data}`}
-                        alt={`Attached image ${i + 1}`}
+                        mimeType={p.mime_type}
+                        data={p.data}
+                        index={i}
                       />
                     ))}
                   </div>
@@ -162,7 +158,8 @@ export function MessageItem({
   const streaming = message.status === 'streaming'
   const { workParts, visibleParts } = partitionAssistantParts(parts, streaming)
   const showWorkStatus = shouldShowWorkStatus(workParts, streaming)
-  const showThinking = streaming && visibleParts.length === 0 && !hasActiveTool(parts)
+  const showThinking = shouldShowThinking(parts, streaming)
+  const activeToolId = streaming ? latestActiveToolId(parts) : null
   const copyableText = visibleParts
     .filter((part): part is TextPart => part.type === 'text')
     .map((part) => part.text)
@@ -186,6 +183,10 @@ export function MessageItem({
               key={key}
               part={part}
               live={streaming && index === visibleParts.length - 1}
+              active={
+                (part.type === 'tool_call' && part.id === activeToolId) ||
+                (part.type === 'thought' && activeToolId == null && index === visibleParts.length - 1)
+              }
             />
           )
         })}
@@ -451,16 +452,16 @@ function CopyAction({ text, label }: { text: string; label: string }) {
   )
 }
 
-function PartView({ part, live }: { part: Part; live: boolean }) {
+function PartView({ part, live, active }: { part: Part; live: boolean; active: boolean }) {
   switch (part.type) {
     case 'text':
       return <StreamingMarkdown text={part.text} live={live} />
     case 'thought':
-      // Keep streaming responsive without exposing the provider's private reasoning.
-      return <ThinkingActivity />
+      return <WorkStatus part={part} active={live && active} />
     case 'tool_call':
       return (
         <ActivityRow
+          active={active}
           activity={{
             kind: toolActivityKind(part),
             tools: [part],
@@ -488,7 +489,7 @@ const MarkdownFragment = memo(function MarkdownFragment({ text }: { text: string
     <Markdown
       remarkPlugins={[remarkGfm]}
       rehypePlugins={[rehypeHighlight]}
-      components={components}
+      components={markdownComponents}
     >
       {text}
     </Markdown>
@@ -547,6 +548,27 @@ function ThinkingActivity() {
   return (
     <div className="thinking" role="status" aria-live="polite">
       <span className="thinking-label">Thinking…</span>
+    </div>
+  )
+}
+
+function WorkStatus({
+  part,
+  active,
+}: {
+  part: Extract<Part, { type: 'thought' }>
+  active: boolean
+}) {
+  if (!part.text.trim()) return null
+  return (
+    <div
+      className={`work-details-status md${active ? ' activity-shimmer' : ''}`}
+      role={active ? 'status' : undefined}
+      aria-live={active ? 'polite' : undefined}
+    >
+      <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+        {part.text}
+      </Markdown>
     </div>
   )
 }
@@ -634,12 +656,14 @@ function ToolCall({ part }: { part: ToolPart }) {
   )
 }
 
-function ActivityRow({ activity }: { activity: WorkActivity }) {
+function ActivityRow({ activity, active }: { activity: WorkActivity; active: boolean }) {
   const [open, setOpen] = useState(false)
   const failed = activity.tools.filter((tool) => tool.status === 'failed').length
-  const active = activity.tools.some(isToolActive)
   const compaction = activity.kind === 'compaction'
   const expandable = !compaction
+  const label = active
+    ? liveActivityLabel(activity.tools, latestActiveToolId(activity.tools))
+    : activity.label
   return (
     <div className={`tool-activity${active ? ' is-active' : ''}${failed ? ' has-failure' : ''}`}>
       <button
@@ -651,7 +675,7 @@ function ActivityRow({ activity }: { activity: WorkActivity }) {
       >
         <ToolIcon part={activity.tools[0]} size={15} />
         <span className={`tool-activity-title${active ? ' activity-shimmer' : ''}`}>
-          {activity.label}
+          {label}
         </span>
         {failed > 0 && (
           <span className="tool-status-label">{failed === 1 ? '1 failed' : `${failed} failed`}</span>
@@ -747,6 +771,8 @@ function WorkDetails({
   const duration = streaming ? liveDuration : message.duration_ms
   const summary = summarizeWorkDetails(duration, streaming)
   const timeline = buildWorkTimeline(parts)
+  const activeToolId = streaming ? latestActiveToolId(parts) : null
+  const latestTimelineEntry = timeline[timeline.length - 1]
 
   if (timeline.length === 0) {
     return (
@@ -778,6 +804,20 @@ function WorkDetails({
               <ActivityRow
                 key={`activity:${entry.activity.tools.map((tool) => tool.id).join(':')}`}
                 activity={entry.activity}
+                active={entry.activity.tools.some((tool) => tool.id === activeToolId)}
+              />
+            )
+          }
+          if (entry.type === 'status') {
+            return (
+              <WorkStatus
+                key={`status:${entry.partIndex}`}
+                part={entry.part}
+                active={
+                  streaming &&
+                  activeToolId == null &&
+                  latestTimelineEntry === entry
+                }
               />
             )
           }
@@ -793,7 +833,7 @@ function WorkDetails({
           if (!content) return null
           return (
             <div key={`${part.type}:${entry.partIndex}`} className="work-details-narrative md">
-              <Markdown remarkPlugins={[remarkGfm]} components={components}>
+              <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                 {content}
               </Markdown>
             </div>

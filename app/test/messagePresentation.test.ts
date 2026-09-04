@@ -9,7 +9,10 @@ import {
   isContextCompaction,
   hasActiveTool,
   initialStreamingText,
+  latestActiveToolId,
+  liveActivityLabel,
   partitionAssistantParts,
+  shouldShowThinking,
   shouldExposeToolOutput,
   shouldShowWorkStatus,
   splitStableStreamingText,
@@ -187,8 +190,33 @@ test('thought-only work is folded into worked instead of creating another disclo
   })
 })
 
-test('reasoning summaries stay out of the Codex-style work timeline', () => {
-  assert.deepEqual(buildWorkTimeline([thought('\n\n**Separating commands**\n\n')]), [])
+test('reasoning summaries become Codex-style work status rows', () => {
+  assert.deepEqual(buildWorkTimeline([thought('\n\n**Separating commands**\n\n')]), [
+    {
+      type: 'status',
+      part: thought('\n\n**Separating commands**\n\n'),
+      partIndex: 0,
+    },
+  ])
+})
+
+test('generic thinking is only the empty-state fallback', () => {
+  assert.equal(shouldShowThinking([], true), true)
+  assert.equal(shouldShowThinking([thought('Planning the inspection')], true), false)
+  assert.equal(shouldShowThinking([tool('inspect', 'completed')], true), false)
+  assert.equal(shouldShowThinking([text('Checking the project.')], true), false)
+  assert.equal(shouldShowThinking([], false), false)
+})
+
+test('the latest active tool uses its provider title instead of a generic verb', () => {
+  const active: Part = {
+    ...tool('validate-dragging', 'in_progress'),
+    title: 'Verifying enlarged image dragging',
+  }
+  const fallback: Part = { ...tool('opaque-id', 'in_progress'), title: 'opaque-id' }
+
+  assert.equal(liveActivityLabel([active] as Extract<Part, { type: 'tool_call' }>[], 'validate-dragging'), 'Verifying enlarged image dragging')
+  assert.equal(liveActivityLabel([fallback] as Extract<Part, { type: 'tool_call' }>[], 'opaque-id'), 'Running a command')
 })
 
 test('completed work summary reports elapsed time instead of step count', () => {
@@ -208,6 +236,16 @@ test('working timer is visible before the first tool or thought arrives', () => 
   assert.equal(shouldShowWorkStatus([tool('inspect', 'completed')], false), true)
 })
 
+test('only the latest active tool drives the live activity effect', () => {
+  const older = tool('older-active', 'in_progress')
+  const completed = tool('completed', 'completed')
+  const latest = tool('latest-active', 'pending')
+
+  assert.equal(latestActiveToolId([older, completed, latest]), 'latest-active')
+  assert.equal(latestActiveToolId([older, completed]), 'older-active')
+  assert.equal(latestActiveToolId([completed]), null)
+})
+
 test('expanded work preserves chronology and groups only adjacent tools', () => {
   const plan = thought('Planning inspection')
   const readA: Part = { ...tool('Read Message.tsx', 'completed'), kind: 'read' }
@@ -216,6 +254,7 @@ test('expanded work preserves chronology and groups only adjacent tools', () => 
   const run: Part = { ...tool('npm test', 'completed'), kind: 'execute' }
 
   assert.deepEqual(buildWorkTimeline([plan, readA, readB, update, run]), [
+    { type: 'status', part: plan, partIndex: 0 },
     {
       type: 'activity',
       activity: { kind: 'read', tools: [readA, readB], label: 'Read 2 files' },

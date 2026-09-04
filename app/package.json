@@ -13,6 +13,8 @@
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "0.73.0",
     "@agentclientprotocol/codex-acp": "1.8.0",
+    "@phosphor-icons/react": "^2.1.10",
+    "mermaid": "^11.17.2",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",

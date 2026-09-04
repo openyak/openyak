@@ -46,6 +46,14 @@ const api: OpenYakApi = {
     return ipcRenderer.invoke('dialog:pick-files') as Promise<string[]>
   },
 
+  saveDiagram(svg: string): Promise<boolean> {
+    return ipcRenderer.invoke('diagram:save', svg) as Promise<boolean>
+  },
+
+  saveImage(image): Promise<boolean> {
+    return ipcRenderer.invoke('image:save', image) as Promise<boolean>
+  },
+
   openExternal(url: string): Promise<void> {
     return ipcRenderer.invoke('shell:open-external', url) as Promise<void>
   },
