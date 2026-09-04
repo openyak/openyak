@@ -18,16 +18,18 @@ assistant Message records which Agent produced it. _Avoid_: turn, post.
 **Part**: Atomic content unit in a Message — text, thought, tool call, error.
 _Avoid_: block, chunk.
 
-**Agent**: An external ACP adapter that serves a Chat (`claude`, `codex`). Chosen per
+**Agent**: An external agent runtime that serves a Chat (`claude`, `codex`). Chosen per
 Message. _Avoid_: model, provider, assistant, bot.
 
-**Agent session**: The ACP session core holds for one (Task, Agent) pair. Internal.
+**Agent session**: The provider session Core holds for one (Task, Agent, transport)
+pair. Native and ACP session IDs/cursors are isolated. Internal.
 _Avoid_: exposing this in UI copy.
 
 **Handoff**: The block of missed Chat turns core prepends when a Message goes to an Agent
 that has not seen them. _Avoid_: summary, context transfer.
 
-**Core**: The `openyak-core` Rust process: transcript store + ACP client. _Avoid_:
+**Core**: The `openyak-core` Rust process: transcript store + runtime host (native
+workers and ACP compatibility). _Avoid_:
 backend, server, daemon.
 
 **App**: The Electron + React shell. _Avoid_: frontend, client, UI layer.

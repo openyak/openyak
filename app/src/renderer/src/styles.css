@@ -4166,3 +4166,14 @@ body.sidebar-resize-active * {
     color: #ff8a75;
   }
 }
+/* Native runtime activity stays in the Chat column and inherits its typography. */
+.runtime-activity { margin: 12px 0; min-width: 0; }
+.runtime-activity details { border: 1px solid var(--border, #444); border-radius: 10px; padding: 10px 12px; }
+.runtime-activity summary { cursor: pointer; }
+.runtime-agent { margin-top: 8px; }
+.runtime-agent-status { opacity: .6; margin-left: 12px; font-size: .85em; }
+.runtime-agent-id { opacity: .6; overflow-wrap: anywhere; margin-top: 8px; font-size: .8em; }
+.runtime-activity pre { max-height: 300px; overflow: auto; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.runtime-log { margin: 12px 0; color: var(--text-muted); min-width: 0; font-size: 12px; }
+.runtime-log summary { cursor: pointer; padding: 6px 0; }
+.runtime-log pre { max-height: 300px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }

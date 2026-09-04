@@ -266,6 +266,17 @@ async fn handle(ctx: &Arc<Ctx>, method: &str, params: Value) -> Result<Value, Rp
             let p: TaskId = parse(params)?;
             json!(store.list_events(&p.task_id)?)
         }
+        "runtime.events" => {
+            let task_id = params
+                .get("task_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| RpcError::invalid_params("task_id is required"))?;
+            store.runtime_events(
+                task_id,
+                params.get("after").and_then(Value::as_i64).unwrap_or(0),
+                params.get("limit").and_then(Value::as_i64).unwrap_or(100),
+            )?
+        }
         "chat.send" => {
             let p: ChatSend = parse(params)?;
             chat_send(ctx, p).await?

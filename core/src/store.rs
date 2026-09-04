@@ -652,7 +652,7 @@ impl Store {
         self.with(|c| {
             c.prepare(
                 "SELECT id, task_id, agent, kind, data, created_at FROM agent_events \
-                 WHERE task_id = ?1 ORDER BY rowid",
+                 WHERE task_id = ?1 AND kind != 'provider.raw' ORDER BY rowid",
             )?
             .query_map([task_id], |r| {
                 let data: String = r.get(4)?;
@@ -666,6 +666,19 @@ impl Store {
                 })
             })?
             .collect()
+        })
+    }
+
+    /// Raw provider envelopes, paginated independently from rendered chat events.
+    pub fn runtime_events(&self, task_id: &str, after: i64, limit: i64) -> Result<Value> {
+        self.with(|c| {
+            let mut statement = c.prepare("SELECT rowid, data FROM agent_events WHERE task_id = ?1 AND kind = 'provider.raw' AND rowid > ?2 ORDER BY rowid LIMIT ?3")?;
+            let rows = statement.query_map(params![task_id, after, limit.clamp(1,200)], |r| {
+                Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?))
+            })?.collect::<rusqlite::Result<Vec<_>>>()?;
+            let next = rows.last().map(|(id,_)| *id).unwrap_or(after);
+            let events:Vec<Value> = rows.into_iter().map(|(_,s)| serde_json::from_str(&s).unwrap_or(Value::Null)).collect();
+            Ok(serde_json::json!({"events":events,"next_cursor":next}))
         })
     }
 
@@ -1199,6 +1212,40 @@ mod tests {
         let m = &s.list_messages(&t.id).unwrap()[0];
         assert_eq!(m.status, "cancelled");
         assert_eq!(m.parts, parts);
+    }
+
+    #[test]
+    fn native_event_pagination_is_task_scoped_and_independent_of_chat_events() {
+        let s = Store::in_memory().unwrap();
+        let a = s.create_task(None, "a").unwrap();
+        let b = s.create_task(None, "b").unwrap();
+        for (task, seq) in [(&a.id, 1), (&b.id, 2), (&a.id, 3)] {
+            s.insert_event(
+                task,
+                "codex",
+                "provider.raw",
+                serde_json::json!({"sequence":seq}),
+            )
+            .unwrap();
+        }
+        assert!(s.list_events(&a.id).unwrap().is_empty());
+        let page = s.runtime_events(&a.id, 0, 1).unwrap();
+        assert_eq!(page["events"], serde_json::json!([{"sequence":1}]));
+        let next = s
+            .runtime_events(&a.id, page["next_cursor"].as_i64().unwrap(), 100)
+            .unwrap();
+        assert_eq!(next["events"], serde_json::json!([{"sequence":3}]));
+        let empty = s
+            .runtime_events(&a.id, next["next_cursor"].as_i64().unwrap(), 100)
+            .unwrap();
+        assert_eq!(empty["events"], serde_json::json!([]));
+        assert_eq!(empty["next_cursor"], next["next_cursor"]);
+        s.begin_session(&a.id, "codex", "acp-id", true).unwrap();
+        s.set_cursor(&a.id, "codex", 8).unwrap();
+        s.begin_session(&a.id, "codex:native-v1", "native-id", true)
+            .unwrap();
+        assert_eq!(s.cursor(&a.id, "codex:native-v1").unwrap(), -1);
+        assert_eq!(s.cursor(&a.id, "codex").unwrap(), 8);
     }
 
     #[test]

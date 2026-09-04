@@ -1,4 +1,6 @@
 //! ACP agent pool: one adapter process + session per (task, agent), driven lazily.
+mod native;
+pub use native::RuntimeSpec;
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -125,6 +127,7 @@ pub struct SessionProfile {
 
 #[derive(Default)]
 pub struct AgentPool {
+    runtimes: HashMap<String, RuntimeSpec>,
     /// Adapter launch config per agent id, as handed to core by the app.
     adapters: HashMap<String, AcpAgentConfig>,
     /// ACP session additions per agent id, supplied by the desktop host.
@@ -138,6 +141,10 @@ const SET_CONFIG_TIMEOUT: Duration = Duration::from_secs(30);
 const SET_CONFIG_TIMED_OUT: &str = "agent did not answer in time";
 
 impl AgentPool {
+    pub fn with_runtimes(mut self, runtimes: HashMap<String, RuntimeSpec>) -> Self {
+        self.runtimes = runtimes;
+        self
+    }
     pub fn new(
         adapters: HashMap<String, AcpAgentConfig>,
         session_profiles: HashMap<String, SessionProfile>,
@@ -163,6 +170,15 @@ impl AgentPool {
         SPECS
             .iter()
             .map(|s| {
+                if let Some(runtime) = self.runtimes.get(s.id) {
+                    return AgentInfo {
+                        id: s.id,
+                        name: s.name,
+                        available: true,
+                        command: format!("{} {}", runtime.command, runtime.args.join(" ")),
+                        hint: None,
+                    };
+                }
                 let adapter = self.adapter(s.id);
                 let hint = match &adapter {
                     Some(_) => hint(s.id),
@@ -350,6 +366,7 @@ fn send_prompt(commands: &mpsc::UnboundedSender<Command>, job: Job) -> Result<()
 /// The streaming assistant Message for the prompt currently in flight.
 struct Live {
     message_id: String,
+    cursor_agent: Option<String>,
     parts: Vec<Part>,
     tools: HashMap<String, usize>,
     cancelled: bool,
@@ -572,6 +589,14 @@ fn client_capabilities() -> ClientCapabilities {
 }
 
 impl Connection {
+    fn new_live(&self, message_id: String) -> Live {
+        let mut live = Live::new(message_id);
+        if self.ctx.agents.runtimes.contains_key(&self.agent) {
+            live.cursor_agent = Some(format!("{}:native-v1", self.agent));
+        }
+        live
+    }
+
     fn status(&self, state: &str, detail: Option<String>) {
         let mut params = json!({ "task_id": self.task_id, "agent": self.agent, "state": state });
         if let Some(d) = detail {
@@ -589,51 +614,55 @@ impl Connection {
         info!(agent = %self.agent, task = %self.task_id, adapter = ?adapter, "starting agent");
         self.status("starting", None);
 
-        let result = match adapter {
-            Some(config) => {
-                let adapter =
-                    AcpAgent::new(config).with_debug(|line, dir| tracing::debug!(?dir, "{line}"));
-                let commands = &mut commands;
-                let cancels = &mut cancels;
-                let updates = self.clone();
-                let perms = self.clone();
-                let elicitations = self.clone();
-                Client
-                    .builder()
-                    .on_receive_notification(
-                        async move |n: AgentNotification, _cx| {
-                            match n {
-                                AgentNotification::SessionNotification(n) => {
-                                    updates.on_update(n.update)
+        let result = if let Some(runtime) = self.ctx.agents.runtimes.get(&self.agent) {
+            self.run_native(runtime, &mut commands, &mut cancels).await
+        } else {
+            match adapter {
+                Some(config) => {
+                    let adapter = AcpAgent::new(config)
+                        .with_debug(|line, dir| tracing::debug!(?dir, "{line}"));
+                    let commands = &mut commands;
+                    let cancels = &mut cancels;
+                    let updates = self.clone();
+                    let perms = self.clone();
+                    let elicitations = self.clone();
+                    Client
+                        .builder()
+                        .on_receive_notification(
+                            async move |n: AgentNotification, _cx| {
+                                match n {
+                                    AgentNotification::SessionNotification(n) => {
+                                        updates.on_update(n.update)
+                                    }
+                                    AgentNotification::ExtNotification(n) => updates.on_ext(n),
+                                    _ => {}
                                 }
-                                AgentNotification::ExtNotification(n) => updates.on_ext(n),
-                                _ => {}
-                            }
-                            Ok(())
-                        },
-                        agent_client_protocol::on_receive_notification!(),
-                    )
-                    .on_receive_request(
-                        async move |req: RequestPermissionRequest, responder, _cx| {
-                            perms.on_permission(req, responder);
-                            Ok(())
-                        },
-                        agent_client_protocol::on_receive_request!(),
-                    )
-                    .on_receive_request(
-                        async move |req: CreateElicitationRequest, responder, _cx| {
-                            elicitations.on_elicitation(req, responder);
-                            Ok(())
-                        },
-                        agent_client_protocol::on_receive_request!(),
-                    )
-                    .connect_with(adapter, async move |connection: ConnectionTo<Agent>| {
-                        self.serve(connection, commands, cancels).await
-                    })
-                    .await
-                    .map_err(|e| error_text(&e))
+                                Ok(())
+                            },
+                            agent_client_protocol::on_receive_notification!(),
+                        )
+                        .on_receive_request(
+                            async move |req: RequestPermissionRequest, responder, _cx| {
+                                perms.on_permission(req, responder);
+                                Ok(())
+                            },
+                            agent_client_protocol::on_receive_request!(),
+                        )
+                        .on_receive_request(
+                            async move |req: CreateElicitationRequest, responder, _cx| {
+                                elicitations.on_elicitation(req, responder);
+                                Ok(())
+                            },
+                            agent_client_protocol::on_receive_request!(),
+                        )
+                        .connect_with(adapter, async move |connection: ConnectionTo<Agent>| {
+                            self.serve(connection, commands, cancels).await
+                        })
+                        .await
+                        .map_err(|e| error_text(&e))
+                }
+                None => Err(format!("no adapter configured for {}", self.agent)),
             }
-            None => Err(format!("no adapter configured for {}", self.agent)),
         };
 
         let detail = result.err();
@@ -649,7 +678,7 @@ impl Connection {
         while let Ok(cmd) = commands.try_recv() {
             match cmd {
                 Command::Prompt(job) => {
-                    self.finish(Live::new(job.assistant_message_id), Err(reason.clone()))
+                    self.finish(self.new_live(job.assistant_message_id), Err(reason.clone()))
                 }
                 Command::SetConfig { reply, .. } => {
                     let _ = reply.send(Err(reason.clone()));
@@ -936,6 +965,10 @@ impl Connection {
     /// message. Assembled here rather than at `chat.send` so it reflects the session the
     /// prompt actually goes to (a fresh session has cursor -1 and gets the whole thread).
     fn build_prompt(&self, job: &Job) -> Result<Vec<ContentBlock>, String> {
+        self.build_prompt_for(job, &self.agent)
+    }
+
+    fn build_prompt_for(&self, job: &Job, cursor_agent: &str) -> Result<Vec<ContentBlock>, String> {
         let store = &self.ctx.store;
         let transcript = store
             .list_messages(&self.task_id)
@@ -945,16 +978,20 @@ impl Connection {
             .find(|m| m.id == job.user_message_id)
             .ok_or_else(|| "user message not found".to_string())?;
         let cursor = store
-            .cursor(&self.task_id, &self.agent)
+            .cursor(&self.task_id, cursor_agent)
             .map_err(|e| format!("{e:#}"))?;
         let text = handoff::build_prompt(&transcript, cursor, user);
-        store
-            .set_cursor(
-                &self.task_id,
-                &self.agent,
-                handoff::seen_through(&transcript, &user.id),
-            )
-            .map_err(|e| format!("{e:#}"))?;
+        // Native calls can fail before the provider accepts the input. A completed
+        // reply commits their cursor; an uncertain/failed turn is handed off next time.
+        if cursor_agent == self.agent {
+            store
+                .set_cursor(
+                    &self.task_id,
+                    cursor_agent,
+                    handoff::seen_through(&transcript, &user.id),
+                )
+                .map_err(|e| format!("{e:#}"))?;
+        }
         Ok(content_blocks(text, &user.parts))
     }
 
@@ -1220,9 +1257,10 @@ fn finish_message(
     match store.list_messages(task_id) {
         Ok(transcript) => {
             if let Some(index) = transcript.iter().position(|m| m.id == live.message_id) {
-                let seen = store.cursor(task_id, agent).unwrap_or(-1);
-                if index as i64 > seen {
-                    if let Err(e) = store.set_cursor(task_id, agent, index as i64) {
+                let cursor_agent = live.cursor_agent.as_deref().unwrap_or(agent);
+                let seen = store.cursor(task_id, cursor_agent).unwrap_or(-1);
+                if index as i64 > seen && (live.cursor_agent.is_none() || status == "done") {
+                    if let Err(e) = store.set_cursor(task_id, cursor_agent, index as i64) {
                         warn!("advance cursor: {e:#}");
                     }
                 }
@@ -1385,6 +1423,7 @@ impl Live {
         let now = Instant::now();
         Self {
             message_id,
+            cursor_agent: None,
             parts: Vec::new(),
             tools: HashMap::new(),
             cancelled: false,
@@ -2238,6 +2277,27 @@ mod tests {
         let v = permission_json("req-2", "task", "claude", &plain);
         assert_eq!(v["title"], "tc2");
         assert!(v.get("_meta").is_none());
+    }
+
+    #[test]
+    fn failed_native_turns_do_not_mark_unaccepted_input_as_seen() {
+        let (ctx, _rx) = test_ctx();
+        let t = ctx.store.create_task(None, "native failure").unwrap();
+        let reply = ctx
+            .store
+            .insert_message(&t.id, "assistant", Some("codex"), &[], "streaming")
+            .unwrap();
+        let mut live = Live::new(reply.id);
+        live.cursor_agent = Some("codex:native-v1".into());
+        finish_message(
+            &ctx,
+            &t.id,
+            "codex",
+            live,
+            Err("provider exited before accepting input".into()),
+        );
+        assert_eq!(ctx.store.cursor(&t.id, "codex:native-v1").unwrap(), -1);
+        assert_eq!(ctx.store.cursor(&t.id, "codex").unwrap(), -1);
     }
 
     #[test]

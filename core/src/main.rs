@@ -40,6 +40,9 @@ struct Args {
     /// The shape is protocol-native: `{ "claude": { "mcpServers": [], "_meta": {} } }`.
     #[arg(long)]
     session_profiles: Option<String>,
+    /// Native runtime workers, using OpenYak's host protocol rather than ACP.
+    #[arg(long)]
+    runtimes: Option<String>,
 }
 
 /// Everything shared between request handlers and agent connections.
@@ -144,6 +147,10 @@ async fn run() -> Result<()> {
         Some(json) => serde_json::from_str(json).context("parse --session-profiles")?,
         None => HashMap::new(),
     };
+    let runtimes = match &args.runtimes {
+        Some(json) => serde_json::from_str(json).context("parse --runtimes")?,
+        None => HashMap::new(),
+    };
 
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<String>();
     let writer = tokio::spawn(async move {
@@ -159,7 +166,7 @@ async fn run() -> Result<()> {
     let ctx = Arc::new(Ctx {
         store,
         out: Outbound(out_tx),
-        agents: AgentPool::new(adapters, session_profiles),
+        agents: AgentPool::new(adapters, session_profiles).with_runtimes(runtimes),
         projectless_dir: projectless_dir.to_string_lossy().into_owned(),
         permissions: Mutex::default(),
         elicitations: Mutex::default(),

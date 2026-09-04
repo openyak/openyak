@@ -142,8 +142,11 @@ export function App() {
   const [configs, setConfigs] = useState<Record<string, AgentConfigOption[]>>({})
   const [commands, setCommands] = useState<Record<string, AvailableCommand[]>>({})
   const [settingConfig, setSettingConfig] = useState<string | null>(null)
-  const [permission, setPermission] = useState<PendingPermission | null>(null)
-  const [elicitation, setElicitation] = useState<PendingElicitation | null>(null)
+  const [permissions, setPermissions] = useState<PendingPermission[]>([])
+  const [elicitations, setElicitations] = useState<PendingElicitation[]>([])
+  const [backgroundEvents, setBackgroundEvents] = useState<AgentEvent[]>([])
+  const permission = permissions.find(p => p.request.task_id === taskId) ?? null
+  const elicitation = elicitations.find(p => p.request.task_id === taskId) ?? null
   const [cancelling, setCancelling] = useState(false)
   const [editingMessage, setEditingMessage] = useState<Message | null>(null)
   const [workingTasks, setWorkingTasks] = useState<Set<string>>(() => new Set())
@@ -156,6 +159,12 @@ export function App() {
 
   // Latest values, readable from handlers and callbacks without re-creating them.
   const taskRef = useRef<string | null>(null)
+  const setPermission = useCallback((pending: PendingPermission | null) => {
+    setPermissions(previous => pending ? [...previous, pending] : previous.filter((_, index) => index !== previous.findIndex(q => q.request.task_id === taskRef.current)))
+  }, [])
+  const setElicitation = useCallback((pending: PendingElicitation | null) => {
+    setElicitations(previous => pending ? [...previous, pending] : previous.filter((_, index) => index !== previous.findIndex(q => q.request.task_id === taskRef.current)))
+  }, [])
   const agentRef = useRef<AgentId | null>(null)
   const optimisticSequence = useRef(0)
   const bootstrapped = useRef(false)
@@ -368,6 +377,7 @@ export function App() {
     request<AgentEvent[]>('chat.events', { task_id: taskId })
       .then((events) => {
         if (!live) return
+        setBackgroundEvents(previous => [...new Map([...events, ...previous].map(event => [event.id, event])).values()])
         for (const event of events) applyCommandEvent(event)
       })
       .catch(fail)
@@ -422,6 +432,12 @@ export function App() {
     const offNotification = window.openyak.onNotification((n) => {
       if (import.meta.env.DEV) console.log(`[rpc ⇠] ${n.method}`, JSON.stringify(n.params))
       switch (n.method) {
+        case 'runtime.request.closed': {
+          const id = (n.params as { request_id: string }).request_id
+          setPermissions(previous => previous.filter(p => p.request.request_id !== id))
+          setElicitations(previous => previous.filter(p => p.request.request_id !== id))
+          return
+        }
         case 'chat.update': {
           const u = n.params as ChatUpdate
           markTaskWorking(u.task_id, true)
@@ -441,6 +457,7 @@ export function App() {
         case 'chat.event': {
           const e = n.params as AgentEvent
           applyCommandEvent(e)
+          if (e.task_id === taskRef.current) setBackgroundEvents(previous => [...previous, e])
           if (import.meta.env.DEV) {
             console.log(`[chat.event] ${e.agent} ${e.kind}`, e.task_id)
           }
@@ -486,6 +503,8 @@ export function App() {
         }),
     )
     const offExit = window.openyak.onCoreExited((exit) => {
+      setPermissions([])
+      setElicitations([])
       setWorkingTasks(new Set())
       setCoreExited(
         `Core exited (code ${exit.code ?? '-'}, signal ${exit.signal ?? '-'}). Restart OpenYak.`,
@@ -497,7 +516,7 @@ export function App() {
       offElicitation()
       offExit()
     }
-  }, [applyCommandEvent, bumpTask, markTaskWorking])
+  }, [applyCommandEvent, bumpTask, markTaskWorking, setPermission, setElicitation])
 
   // Disabled providers remain visible in Settings but are neither started nor offered in
   // the composer. The next message uses an explicit choice, then chat history, then the
@@ -692,7 +711,7 @@ export function App() {
         throw err
       }
     },
-    [elicitation, fail, openDraft, permission],
+    [elicitation, fail, openDraft, permission, setPermission, setElicitation],
   )
 
   const deleteTask = useCallback(
@@ -745,7 +764,7 @@ export function App() {
         throw err
       }
     },
-    [elicitation, fail, markTaskWorking, openDraft, permission],
+    [elicitation, fail, markTaskWorking, openDraft, permission, setPermission, setElicitation],
   )
 
   const chooseAgent = useCallback(
@@ -1029,7 +1048,7 @@ export function App() {
       setCancelling(false)
       fail(err)
     })
-  }, [taskId, cancelling, elicitation, permission, fail])
+  }, [taskId, cancelling, elicitation, permission, fail, setPermission, setElicitation])
 
   const setConfig = useCallback(
     async (target: AgentId, configId: string, value: string | boolean) => {
@@ -1058,7 +1077,7 @@ export function App() {
       permission?.resolve({ option_id: optionId })
       setPermission(null)
     },
-    [permission],
+    [permission, setPermission],
   )
 
   const resolveElicitation = useCallback(
@@ -1066,7 +1085,7 @@ export function App() {
       elicitation?.resolve(response)
       setElicitation(null)
     },
-    [elicitation],
+    [elicitation, setElicitation],
   )
 
   const task = taskId
@@ -1222,6 +1241,8 @@ export function App() {
                   <div className="chat-stage">
                     <Thread
                       key={`thread-${taskId ?? NO_TASK}`}
+                      taskId={taskId}
+                      backgroundParts={backgroundEvents.filter(event => event.task_id === taskId).map(event => ({ type: 'event', kind: event.kind, data: event.data }))}
                       messages={messages}
                       agents={agents}
                       busy={streaming}

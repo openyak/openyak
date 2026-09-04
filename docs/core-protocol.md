@@ -1,5 +1,12 @@
 # Core protocol (app ⇄ core)
 
+Native runtime addition: `runtime.events({task_id, after?, limit?})` returns
+`{events, next_cursor}` containing original provider event envelopes, oldest first.
+`after` is an opaque numeric cursor (initially 0); `limit` is clamped to 1–200.
+`chat.events` excludes these raw envelopes. `runtime.request.closed` notifies the
+App that a queued permission/elicitation with `request_id` is no longer pending.
+See [Native Agent runtime](native-agent-runtime.md) for transport selection.
+
 The Electron main process spawns `openyak-core` and talks to it over **stdin/stdout,
 newline-delimited JSON-RPC 2.0**. One JSON object per line. Core writes nothing else
 to stdout; logs go to stderr.

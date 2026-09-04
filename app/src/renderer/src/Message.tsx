@@ -11,6 +11,7 @@ import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 import type { ArtifactReference, Attachment, Message, Part } from '../../shared/protocol'
+import { RuntimeActivity } from './RuntimeActivity'
 import {
   draftsFromFiles,
   draftsFromParts,
@@ -214,6 +215,7 @@ export function MessageItem({
             ))}
           </div>
         )}
+        <RuntimeActivity parts={parts} />
         {message.status === 'cancelled' && <div className="msg-note">Stopped</div>}
         {!streaming && (
           <div className="msg-actions">

@@ -1,5 +1,11 @@
 # OpenYak v2 architecture
 
+> Native runtime update: Codex App Server and Claude Agent SDK are now the default
+> conversation transports; ACP remains an explicit compatibility path. See
+> [Native Agent runtime](native-agent-runtime.md) for the current topology, ownership,
+> migration rules and verified limitations. ACP-specific sections below describe
+> the retained compatibility implementation.
+
 OpenYak v2 is a desktop workbench with one job: **Project → Task → Chat**, where the
 Chat is served by whichever agent you pick, and you can switch agents mid-task
 without losing the thread.

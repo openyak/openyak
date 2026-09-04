@@ -20,9 +20,8 @@ interface JsonRpcMessage {
 }
 
 /**
- * Thin client for the public Codex App Server protocol. ACP remains the conversation
- * transport; this connection supplies stable desktop-host inventory APIs that ACP
- * intentionally does not expose.
+ * Inventory-only client for public Codex host APIs. It never owns a conversation;
+ * the per-session native worker (or optional ACP adapter) owns that connection.
  */
 export class CodexHostClient {
   private child: ChildProcessWithoutNullStreams | null = null

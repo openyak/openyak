@@ -18,9 +18,14 @@ import type {
 import type { PendingElicitation, PendingPermission } from './App'
 import { ElicitationCard } from './ElicitationCard'
 import { MessageItem } from './Message'
+import { RuntimeLog } from './RuntimeLog'
+import { RuntimeActivity } from './RuntimeActivity'
+import type { Part } from '../../shared/protocol'
 import { IconArrowDown, IconHand } from './icons'
 
 interface Props {
+  taskId: string | null
+  backgroundParts: Part[]
   messages: Message[]
   agents: Agent[]
   busy: boolean
@@ -84,6 +89,8 @@ function messageSummary(message: Message, preserveLines = false): string {
 }
 
 export function Thread({
+  taskId,
+  backgroundParts,
   messages,
   agents,
   busy,
@@ -238,8 +245,11 @@ export function Thread({
                 />
               </div>
             ))}
+            <RuntimeActivity parts={backgroundParts} />
+            {taskId && <RuntimeLog key={taskId} taskId={taskId} />}
             {permission && (
               <PermissionCard
+                key={permission.request.request_id}
                 request={permission.request}
                 agentName={name(permission.request.agent)}
                 onChoose={onPermission}
@@ -247,6 +257,7 @@ export function Thread({
             )}
             {elicitation && (
               <ElicitationCard
+                key={elicitation.request.request_id}
                 request={elicitation.request}
                 agentName={name(elicitation.request.agent)}
                 onRespond={onElicitation}

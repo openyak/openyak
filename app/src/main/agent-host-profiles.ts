@@ -2,6 +2,16 @@ import type { NewSessionMeta } from '@agentclientprotocol/claude-agent-acp'
 
 type ClaudeOptions = NonNullable<NonNullable<NewSessionMeta['claudeCode']>['options']>
 
+// Shared by native and ACP entry points: switching transport must not lose host additions.
+export function claudeHostOptions() {
+  return {
+    tools: { type: 'preset' as const, preset: 'claude_code' as const },
+    skills: 'all' as const,
+    settings: { enableArtifact: true },
+    extraArgs: { chrome: null },
+  } satisfies ClaudeOptions
+}
+
 /**
  * Desktop-host additions for ACP sessions.
  *
@@ -11,12 +21,7 @@ type ClaudeOptions = NonNullable<NonNullable<NewSessionMeta['claudeCode']>['opti
  * follow the bundled Claude Code version automatically.
  */
 export function agentHostProfiles(): Record<string, unknown> {
-  const options = {
-    tools: { type: 'preset', preset: 'claude_code' },
-    skills: 'all',
-    settings: { enableArtifact: true },
-    extraArgs: { chrome: null },
-  } satisfies ClaudeOptions
+  const options = claudeHostOptions()
 
   const meta = {
     systemPrompt: {

@@ -32,6 +32,9 @@ let win: BrowserWindow | null = null
 let core: CoreClient | null = null
 const codexHost = new CodexHostClient()
 
+// Allows isolated desktop integration tests without touching the user's Chats.
+if (process.env.OPENYAK_DATA_DIR) app.setPath('userData', path.resolve(process.env.OPENYAK_DATA_DIR))
+
 protocol.registerSchemesAsPrivileged([artifactScheme(), projectFileScheme()])
 
 function grantFromArtifactPart(taskId: unknown, partValue: unknown): void {
@@ -122,11 +125,24 @@ function startCore(): CoreClient {
     JSON.stringify(adapters()),
     '--session-profiles',
     JSON.stringify(agentHostProfiles()),
+    '--runtimes',
+    JSON.stringify(process.env.OPENYAK_AGENT_TRANSPORT === 'acp' ? {} : Object.fromEntries(
+      ['codex', 'claude'].map(agent => [agent, {
+        command: process.execPath,
+        args: [path.join(__dirname, 'runtime-worker.js'), agent],
+        env: { ELECTRON_RUN_AS_NODE: '1' },
+      }]),
+    )),
   ]
   if (import.meta.env.DEV) console.log(`[main] spawning core: ${binary} ${args.join(' ')}`)
   const client = new CoreClient(binary, args)
+  const pendingRequests = new Map<string, () => void>()
 
   client.on('notification', (method: string, params: unknown) => {
+    if (method === 'runtime.request.closed') {
+      const id = (params as { request_id: string }).request_id
+      pendingRequests.get(id)?.()
+    }
     grantFromCoreNotification(method, params)
     win?.webContents.send('core:notification', { method, params })
   })
@@ -143,12 +159,17 @@ function startCore(): CoreClient {
         return
       }
       const key = String(id)
-      const onResponse = (_e: Electron.IpcMainEvent, payload: { key: string; result: unknown }) => {
-        if (payload.key !== key) return
+      const cleanup = () => {
         ipcMain.off('core:elicitation-response', onResponse)
+        pendingRequests.delete(key)
+      }
+      const onResponse = (_e: Electron.IpcMainEvent, payload: { key: string; result: unknown }) => {
+        if (payload.key !== key || _e.sender !== win?.webContents) return
+        cleanup()
         client.respond(id, payload.result ?? { action: 'cancel' })
       }
       ipcMain.on('core:elicitation-response', onResponse)
+      pendingRequests.set(key, cleanup)
       win.webContents.send('core:elicitation-request', { key, params })
       return
     }
@@ -157,16 +178,22 @@ function startCore(): CoreClient {
       return
     }
     const key = String(id)
-    const onResponse = (_e: Electron.IpcMainEvent, payload: { key: string; result: unknown }) => {
-      if (payload.key !== key) return
+    const cleanup = () => {
       ipcMain.off('core:permission-response', onResponse)
+      pendingRequests.delete(key)
+    }
+    const onResponse = (_e: Electron.IpcMainEvent, payload: { key: string; result: unknown }) => {
+      if (payload.key !== key || _e.sender !== win?.webContents) return
+      cleanup()
       client.respond(id, payload.result ?? { option_id: null })
     }
     ipcMain.on('core:permission-response', onResponse)
+    pendingRequests.set(key, cleanup)
     win.webContents.send('core:permission-request', { key, params })
   })
 
   client.on('exit', (code: number | null, signal: string | null) => {
+    for (const cleanup of pendingRequests.values()) cleanup()
     console.error(`[main] core exited: code=${code} signal=${signal}`)
     win?.webContents.send('core:exited', { code, signal })
   })

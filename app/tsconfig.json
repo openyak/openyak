@@ -11,6 +11,7 @@
     "noFallthroughCasesInSwitch": true,
     "skipLibCheck": true,
     "isolatedModules": true,
+    "allowImportingTsExtensions": true,
     "types": ["node", "electron-vite/node"]
   },
   "include": ["src", "electron.vite.config.ts"]
