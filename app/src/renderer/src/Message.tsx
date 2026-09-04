@@ -761,6 +761,7 @@ function WorkDetails({
       <button
         type="button"
         className="work-details-toggle"
+        data-tooltip-ignore="true"
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
       >
