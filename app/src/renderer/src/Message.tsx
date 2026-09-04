@@ -472,6 +472,9 @@ function PartView({ part, live }: { part: Part; live: boolean }) {
       )
     case 'error':
       return <div className="msg-error">{part.message}</div>
+    case 'event':
+      // Kept verbatim from the agent; nothing renders it yet.
+      return null
     case 'image':
     case 'file':
       // Attachments belong to user messages; nothing to show on an assistant turn.

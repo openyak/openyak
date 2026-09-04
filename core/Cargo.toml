@@ -9,7 +9,8 @@ name = "openyak-core"
 path = "src/main.rs"
 
 [dependencies]
-agent-client-protocol = "2.0.0"
+# `unstable_end_turn_token_usage` exposes `PromptResponse.usage`, which chat.done passes through.
+agent-client-protocol = { version = "2.0.0", features = ["unstable_end_turn_token_usage"] }
 anyhow = "1"
 chrono = "0.4"
 clap = { version = "4", features = ["derive"] }

@@ -139,6 +139,8 @@ export function buildWorkTimeline(parts: Part[]): WorkTimelineEntry[] {
       pendingTools.push(part)
       return
     }
+    // Stored-only event parts are not rows and must not split adjacent tools.
+    if (part.type === 'event') return
 
     flushTools()
     if (part.type === 'tool_call') {
@@ -237,9 +239,12 @@ export function textPhase(part: Part): string | null {
 
 /** Use provider phase metadata when available; otherwise retain the legacy live fallback. */
 export function partitionAssistantParts(
-  parts: Part[],
+  allParts: Part[],
   streaming: boolean,
 ): AssistantPartPresentation {
+  // Event parts (plan, usage, commands, …) are stored but not presented yet; they must not
+  // count as visible content or end the Thinking state.
+  const parts = allParts.filter((part) => part.type !== 'event')
   if (streaming) {
     const finalAnswerIndex = parts.findIndex((part) => textPhase(part) === 'final_answer')
     if (finalAnswerIndex >= 0) {

@@ -58,6 +58,7 @@ fn render_parts(parts: &[Part]) -> String {
             Part::Thought { .. } => None,
             Part::ToolCall { title, .. } => Some(format!("[tool: {title}]")),
             Part::Error { message } => Some(format!("[error: {message}]")),
+            Part::Event { .. } => None,
             Part::Image { .. } => Some("[image attached]".to_string()),
             Part::File { path, name } => Some(format!("[attached: {name} ({path})]")),
         })
@@ -94,6 +95,8 @@ mod tests {
             created_at: String::new(),
             status: "done".into(),
             duration_ms: None,
+            stop_reason: None,
+            usage: None,
         }
     }
 
@@ -225,14 +228,23 @@ mod tests {
                 kind: "execute".into(),
                 status: "completed".into(),
                 output: None,
+                content: None,
+                locations: None,
+                raw_input: None,
+                raw_output: None,
                 meta: None,
             },
         );
         m.parts.push(Part::Error {
             message: "boom".into(),
         });
+        m.parts.push(Part::Event {
+            kind: "usage_update".into(),
+            data: serde_json::json!({ "sessionUpdate": "usage_update", "used": 1, "size": 2 }),
+        });
         let rendered = render(&[&m]);
         assert!(rendered.contains("[assistant · codex] [tool: cargo test]\ndone\n[error: boom]"));
         assert!(!rendered.contains("secret"));
+        assert!(!rendered.contains("usage_update"));
     }
 }

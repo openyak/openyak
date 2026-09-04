@@ -3,6 +3,7 @@ import type {
   Agent,
   AgentConfig,
   AgentConfigOption,
+  AgentEvent,
   AgentId,
   AgentStatus,
   Attachment,
@@ -377,6 +378,14 @@ export function App() {
           if (d.task_id !== taskRef.current) return
           setCancelling(false)
           setMessages((prev) => applyDone(prev, d, agentRef.current))
+          return
+        }
+        case 'chat.event': {
+          // Stored by core; nothing renders it yet.
+          if (import.meta.env.DEV) {
+            const e = n.params as AgentEvent
+            console.log(`[chat.event] ${e.agent} ${e.kind}`, e.task_id)
+          }
           return
         }
         case 'agent.status': {
@@ -1154,6 +1163,8 @@ function applyDone(prev: Message[], d: ChatDone, agent: AgentId | null): Message
         created_at: new Date().toISOString(),
         status: d.status,
         duration_ms: d.duration_ms ?? null,
+        stop_reason: d.stop_reason ?? null,
+        usage: d.usage,
       },
     ]
   }
@@ -1164,7 +1175,14 @@ function applyDone(prev: Message[], d: ChatDone, agent: AgentId | null): Message
     d.status === 'error' && d.error && !hasError
       ? [...message.parts, { type: 'error' as const, message: d.error }]
       : message.parts
-  next[idx] = { ...message, status: d.status, parts, duration_ms: d.duration_ms ?? null }
+  next[idx] = {
+    ...message,
+    status: d.status,
+    parts,
+    duration_ms: d.duration_ms ?? null,
+    stop_reason: d.stop_reason ?? null,
+    usage: d.usage,
+  }
   return next
 }
 

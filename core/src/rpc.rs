@@ -262,6 +262,10 @@ async fn handle(ctx: &Arc<Ctx>, method: &str, params: Value) -> Result<Value, Rp
             let p: TaskId = parse(params)?;
             json!(store.list_messages(&p.task_id)?)
         }
+        "chat.events" => {
+            let p: TaskId = parse(params)?;
+            json!(store.list_events(&p.task_id)?)
+        }
         "chat.send" => {
             let p: ChatSend = parse(params)?;
             chat_send(ctx, p).await?

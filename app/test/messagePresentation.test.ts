@@ -19,6 +19,7 @@ import {
 
 const thought = (text: string): Part => ({ type: 'thought', text })
 const text = (value: string): Part => ({ type: 'text', text: value })
+const event = (kind: string): Part => ({ type: 'event', kind, data: { sessionUpdate: kind } })
 const phasedText = (value: string, phase: string): Part => ({
   type: 'text',
   text: value,
@@ -50,6 +51,40 @@ test('streaming keeps all accumulated temporary content visible until completion
     workParts: [],
     visibleParts: [commentary, previous[2], previous[4], current],
   })
+})
+
+test('stored-only event parts never count as visible content while streaming', () => {
+  const plan = thought('plan')
+  const usage = event('usage_update')
+  const inspect = tool('inspect', 'completed')
+
+  assert.deepEqual(partitionAssistantParts([usage, plan], true), {
+    workParts: [],
+    visibleParts: [plan],
+  })
+  assert.deepEqual(partitionAssistantParts([usage, inspect, event('plan')], true), {
+    workParts: [],
+    visibleParts: [inspect],
+  })
+})
+
+test('event parts are neither work rows nor a boundary between adjacent tools', () => {
+  const readA: Part = { ...tool('Read a.ts', 'completed'), kind: 'read' }
+  const readB: Part = { ...tool('Read b.ts', 'completed'), kind: 'read' }
+  const usage = event('usage_update')
+  const answer = text('Done.')
+
+  assert.deepEqual(partitionAssistantParts([readA, usage, readB, usage, answer], false), {
+    workParts: [readA, readB],
+    visibleParts: [answer],
+  })
+  assert.deepEqual(buildWorkTimeline([readA, usage, readB]), [
+    {
+      type: 'activity',
+      activity: { kind: 'read', tools: [readA, readB], label: 'Read 2 files' },
+      partIndex: 0,
+    },
+  ])
 })
 
 test('a completed tool stays visible until the next streaming activity arrives', () => {

@@ -1,18 +1,19 @@
 //! ACP agent pool: one adapter process + session per (task, agent), driven lazily.
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use agent_client_protocol::schema::v1::{
-    CancelNotification, ContentBlock, ImageContent, InitializeRequest, LoadSessionRequest,
-    NewSessionRequest, PermissionOption, PromptRequest, RequestPermissionOutcome,
-    RequestPermissionRequest, RequestPermissionResponse, ResourceLink, SelectedPermissionOutcome,
-    SessionConfigId, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
-    SessionConfigOptionValue, SessionConfigSelectOption, SessionConfigSelectOptions,
-    SessionConfigValueId, SessionId, SessionModeId, SessionModeState, SessionNotification,
-    SessionUpdate, SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason, TextContent,
-    ToolCall, ToolCallContent, ToolCallUpdate,
+    AgentNotification, CancelNotification, ContentBlock, ExtNotification, ImageContent,
+    InitializeRequest, LoadSessionRequest, NewSessionRequest, PermissionOption, PromptRequest,
+    PromptResponse, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
+    ResourceLink, SelectedPermissionOutcome, SessionConfigId, SessionConfigKind,
+    SessionConfigOption, SessionConfigOptionCategory, SessionConfigOptionValue,
+    SessionConfigSelectOption, SessionConfigSelectOptions, SessionConfigValueId, SessionId,
+    SessionModeId, SessionModeState, SessionUpdate, SetSessionConfigOptionRequest,
+    SetSessionModeRequest, StopReason, TextContent, ToolCall, ToolCallContent, ToolCallUpdate,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{AcpAgent, Agent, Client, ConnectionTo};
@@ -22,7 +23,7 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{info, warn};
 
 use crate::handoff;
-use crate::store::{new_id, Part};
+use crate::store::{new_id, Part, Store};
 use crate::Ctx;
 use agent_client_protocol::AcpAgentConfig;
 
@@ -209,6 +210,7 @@ impl AgentPool {
             cwd: cwd.to_string(),
             live: Arc::default(),
             options: Arc::default(),
+            loading: Arc::default(),
         };
         tokio::spawn(async move {
             conn.run(commands_rx, cancel_rx).await;
@@ -332,6 +334,8 @@ struct Live {
     tools: HashMap<String, usize>,
     cancelled: bool,
     started_at: Instant,
+    /// When the parts were last written to the store (see `Live::persist`).
+    last_persisted: Instant,
 }
 
 /// Id of the synthesized option for agents that only speak the older modes API.
@@ -532,6 +536,9 @@ struct Connection {
     cwd: String,
     live: Arc<Mutex<Option<Live>>>,
     options: Arc<Mutex<Options>>,
+    /// True while a `session/load` request is in flight: the transcript the agent replays
+    /// then is already held as Messages and is not stored again (see `on_update`).
+    loading: Arc<AtomicBool>,
 }
 
 type AcpResult<T> = Result<T, agent_client_protocol::Error>;
@@ -565,8 +572,14 @@ impl Connection {
                 Client
                     .builder()
                     .on_receive_notification(
-                        async move |n: SessionNotification, _cx| {
-                            updates.on_update(n.update);
+                        async move |n: AgentNotification, _cx| {
+                            match n {
+                                AgentNotification::SessionNotification(n) => {
+                                    updates.on_update(n.update)
+                                }
+                                AgentNotification::ExtNotification(n) => updates.on_ext(n),
+                                _ => {}
+                            }
                             Ok(())
                         },
                         agent_client_protocol::on_receive_notification!(),
@@ -681,7 +694,11 @@ impl Connection {
             });
         if let (true, Some(saved)) = (can_load, saved) {
             let load = LoadSessionRequest::new(SessionId::new(saved.clone()), self.cwd.clone());
-            match connection.send_request(load).block_task().await {
+            // Nothing between the two stores can return early, so the flag cannot stay set.
+            self.loading.store(true, Ordering::SeqCst);
+            let loaded = connection.send_request(load).block_task().await;
+            self.loading.store(false, Ordering::SeqCst);
+            match loaded {
                 Ok(resp) => {
                     info!(agent = %self.agent, task = %self.task_id, "resumed session");
                     self.lock_options().set(resp.config_options, resp.modes);
@@ -858,8 +875,7 @@ impl Connection {
         };
         match outcome {
             Ok(resp) => {
-                let cancelled = live.cancelled || resp.stop_reason == StopReason::Cancelled;
-                self.finish(live, Ok(cancelled));
+                self.finish(live, Ok(resp));
                 Ok(())
             }
             Err(e) => {
@@ -907,7 +923,7 @@ impl Connection {
         );
     }
 
-    fn finish(&self, live: Live, outcome: Result<bool, String>) {
+    fn finish(&self, live: Live, outcome: Result<PromptResponse, String>) {
         finish_message(&self.ctx, &self.task_id, &self.agent, live, outcome);
     }
 
@@ -924,18 +940,73 @@ impl Connection {
             update => {
                 let mut guard = self.live.lock().unwrap_or_else(|e| e.into_inner());
                 let Some(live) = guard.as_mut() else {
+                    drop(guard);
+                    // While `session/load` is in flight the agent replays its transcript as
+                    // message, thought and tool-call updates; core already holds those turns
+                    // as Messages, so they are not stored a second time. Anything else that
+                    // arrives during the load (the command list, usage) is kept as usual.
+                    if self.loading.load(Ordering::SeqCst)
+                        && matches!(
+                            update,
+                            SessionUpdate::UserMessageChunk(_)
+                                | SessionUpdate::AgentMessageChunk(_)
+                                | SessionUpdate::AgentThoughtChunk(_)
+                                | SessionUpdate::ToolCall(_)
+                                | SessionUpdate::ToolCallUpdate(_)
+                        )
+                    {
+                        tracing::debug!(
+                            agent = %self.agent, task = %self.task_id,
+                            "skipping transcript replayed by session/load"
+                        );
+                        return;
+                    }
+                    let (kind, data) = event_of(&update);
+                    self.store_event(&kind, data);
                     return;
                 };
                 if let Some(index) = live.apply(update) {
-                    emit_part(
-                        &self.ctx,
-                        &self.task_id,
-                        &live.message_id,
-                        index,
-                        &live.parts[index],
-                    );
+                    self.changed(live, index);
                 }
             }
+        }
+    }
+
+    /// An extension notification (`_vendor/...`) from the agent, kept like any other
+    /// update: as an event part of the streaming reply, or as an AgentEvent.
+    fn on_ext(&self, n: ExtNotification) {
+        let (kind, data) = ext_event(&n);
+        let mut guard = self.live.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(live) = guard.as_mut() else {
+            drop(guard);
+            self.store_event(&kind, data);
+            return;
+        };
+        let index = live.event(kind, data);
+        self.changed(live, index);
+    }
+
+    /// A part of the streaming reply changed: tell the app and write it through.
+    fn changed(&self, live: &mut Live, index: usize) {
+        emit_part(
+            &self.ctx,
+            &self.task_id,
+            &live.message_id,
+            index,
+            &live.parts[index],
+        );
+        live.persist(&self.ctx.store, index);
+    }
+
+    /// Keep and announce an update that arrived while no reply was streaming.
+    fn store_event(&self, kind: &str, data: Value) {
+        match self
+            .ctx
+            .store
+            .insert_event(&self.task_id, &self.agent, kind, data)
+        {
+            Ok(event) => self.ctx.out.notify("chat.event", json!(event)),
+            Err(e) => warn!("persist agent event: {e:#}"),
         }
     }
 
@@ -947,23 +1018,10 @@ impl Connection {
         let request_id = new_id();
         let (tx, rx) = oneshot::channel();
         self.ctx.register_permission(request_id.clone(), tx);
-        let title = req
-            .tool_call
-            .fields
-            .title
-            .clone()
-            .unwrap_or_else(|| req.tool_call.tool_call_id.0.to_string());
-        let options: Vec<_> = req.options.iter().map(option_json).collect();
         self.ctx.out.request(
             &request_id,
             "permission.request",
-            json!({
-                "request_id": request_id,
-                "task_id": self.task_id,
-                "agent": self.agent,
-                "title": title,
-                "options": options,
-            }),
+            permission_json(&request_id, &self.task_id, &self.agent, &req),
         );
         let ctx = self.ctx.clone();
         tokio::spawn(async move {
@@ -1024,27 +1082,47 @@ fn emit_part(ctx: &Ctx, task_id: &str, message_id: &str, index: usize, part: &Pa
 }
 
 /// Persist the assistant Message, advance the agent's cursor past it, and emit `chat.done`.
-/// `outcome` is `Ok(cancelled)` or `Err(error text)`.
+/// `outcome` is the agent's `PromptResponse` or `Err(error text)`.
 fn finish_message(
     ctx: &Ctx,
     task_id: &str,
     agent: &str,
     mut live: Live,
-    outcome: Result<bool, String>,
+    outcome: Result<PromptResponse, String>,
 ) {
     let duration_ms = live.started_at.elapsed().as_millis().min(i64::MAX as u128) as i64;
-    let (status, error) = match outcome {
-        Ok(false) => ("done", None),
-        Ok(true) => ("cancelled", None),
+    let (status, error) = match &outcome {
+        Ok(resp) if live.cancelled || resp.stop_reason == StopReason::Cancelled => {
+            ("cancelled", None)
+        }
+        Ok(_) => ("done", None),
         Err(e) => {
             let index = live.parts.len();
             live.parts.push(Part::Error { message: e.clone() });
             emit_part(ctx, task_id, &live.message_id, index, &live.parts[index]);
-            ("error", Some(e))
+            ("error", Some(e.clone()))
         }
     };
+    // The ACP stop reason, usage and meta are passed on as reported, whatever the status.
+    let (stop_reason, usage, meta) = match &outcome {
+        Ok(resp) => (
+            Some(enum_str(&resp.stop_reason)),
+            resp.usage
+                .as_ref()
+                .map(|u| serde_json::to_value(u).unwrap_or(Value::Null)),
+            resp.meta.clone(),
+        ),
+        Err(_) => (None, None, None),
+    };
     let store = &ctx.store;
-    if let Err(e) = store.finish_message(&live.message_id, &live.parts, status, duration_ms) {
+    if let Err(e) = store.finish_message(
+        &live.message_id,
+        &live.parts,
+        status,
+        duration_ms,
+        stop_reason.as_deref(),
+        usage.as_ref(),
+    ) {
         warn!("persist assistant message: {e:#}");
     }
     match store.list_messages(task_id) {
@@ -1069,11 +1147,53 @@ fn finish_message(
     if let Some(e) = error {
         params["error"] = json!(e);
     }
+    if let Some(s) = stop_reason {
+        params["stop_reason"] = json!(s);
+    }
+    if let Some(u) = usage {
+        params["usage"] = u;
+    }
+    if let Some(m) = meta {
+        params["_meta"] = json!(m);
+    }
     ctx.out.notify("chat.done", params);
 }
 
+/// The `permission.request` params: a title and the options for the app's prompt, plus the
+/// ACP `ToolCallUpdate` and the request's meta verbatim.
+fn permission_json(
+    request_id: &str,
+    task_id: &str,
+    agent: &str,
+    req: &RequestPermissionRequest,
+) -> Value {
+    let title = req
+        .tool_call
+        .fields
+        .title
+        .clone()
+        .unwrap_or_else(|| req.tool_call.tool_call_id.0.to_string());
+    let options: Vec<_> = req.options.iter().map(option_json).collect();
+    let mut params = json!({
+        "request_id": request_id,
+        "task_id": task_id,
+        "agent": agent,
+        "title": title,
+        "options": options,
+        "tool_call": serde_json::to_value(&req.tool_call).unwrap_or(Value::Null),
+    });
+    if let Some(m) = &req.meta {
+        params["_meta"] = json!(m);
+    }
+    params
+}
+
 fn option_json(o: &PermissionOption) -> Value {
-    json!({ "id": o.option_id.0, "label": o.name, "kind": enum_str(&o.kind) })
+    let mut v = json!({ "id": o.option_id.0, "label": o.name, "kind": enum_str(&o.kind) });
+    if let Some(m) = &o.meta {
+        v["_meta"] = json!(m);
+    }
+    v
 }
 
 fn enum_str<T: Serialize>(v: &T) -> String {
@@ -1137,27 +1257,60 @@ fn tool_output(content: &[ToolCallContent]) -> Option<String> {
     (!lines.is_empty()).then(|| lines.join("\n"))
 }
 
+/// ACP items as they came over the wire, for the verbatim fields of a tool call part.
+fn json_list<T: Serialize>(items: &[T]) -> Vec<Value> {
+    items
+        .iter()
+        .map(|i| serde_json::to_value(i).unwrap_or(Value::Null))
+        .collect()
+}
+
+/// An update kept verbatim as an event: its ACP `sessionUpdate` discriminator and the
+/// whole update object.
+fn event_of(update: &SessionUpdate) -> (String, Value) {
+    let data = serde_json::to_value(update).unwrap_or(Value::Null);
+    let kind = data
+        .get("sessionUpdate")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    (kind, data)
+}
+
+/// An extension notification kept verbatim: its wire method name (the crate strips the
+/// leading `_` when it routes the notification) and its params.
+fn ext_event(n: &ExtNotification) -> (String, Value) {
+    let data = serde_json::from_str(n.params.get()).unwrap_or(Value::Null);
+    (format!("_{}", n.method), data)
+}
+
+/// Text and thought parts are written through at most this often; tool calls and events
+/// always are (docs/core-protocol.md, "Fidelity rule").
+const PERSIST_TEXT_EVERY: Duration = Duration::from_secs(2);
+
 impl Live {
     fn new(message_id: String) -> Self {
+        let now = Instant::now();
         Self {
             message_id,
             parts: Vec::new(),
             tools: HashMap::new(),
             cancelled: false,
-            started_at: Instant::now(),
+            started_at: now,
+            last_persisted: now,
         }
     }
 
     /// Fold one ACP update into the parts; returns the index of the part that changed.
     fn apply(&mut self, update: SessionUpdate) -> Option<usize> {
         match update {
-            SessionUpdate::AgentMessageChunk(c) => {
+            SessionUpdate::AgentMessageChunk(c) if matches!(c.content, ContentBlock::Text(_)) => {
                 let meta = c.meta;
                 let message_id = c.message_id.map(|id| id.0.to_string());
                 let text = chunk_text(c.content).filter(|t| !t.is_empty())?;
                 Some(self.append_text(text, false, meta, message_id))
             }
-            SessionUpdate::AgentThoughtChunk(c) => {
+            SessionUpdate::AgentThoughtChunk(c) if matches!(c.content, ContentBlock::Text(_)) => {
                 let meta = c.meta;
                 let message_id = c.message_id.map(|id| id.0.to_string());
                 let text = chunk_text(c.content).filter(|t| !t.is_empty())?;
@@ -1165,7 +1318,32 @@ impl Live {
             }
             SessionUpdate::ToolCall(tc) => Some(self.tool_call(tc)),
             SessionUpdate::ToolCallUpdate(u) => Some(self.tool_call_update(u)),
-            _ => None,
+            // Everything else (plans, usage, session info, user chunks, chunks whose
+            // content is not text, …) is kept verbatim rather than dropped.
+            other => {
+                let (kind, data) = event_of(&other);
+                Some(self.event(kind, data))
+            }
+        }
+    }
+
+    fn event(&mut self, kind: String, data: Value) -> usize {
+        self.parts.push(Part::Event { kind, data });
+        self.parts.len() - 1
+    }
+
+    /// Write the parts so far, so a core that dies mid-reply leaves what it had received:
+    /// always after a tool call or event, at most every `PERSIST_TEXT_EVERY` after text.
+    fn persist(&mut self, store: &Store, index: usize) {
+        let now = Instant::now();
+        if matches!(self.parts[index], Part::Text { .. } | Part::Thought { .. })
+            && now.duration_since(self.last_persisted) < PERSIST_TEXT_EVERY
+        {
+            return;
+        }
+        self.last_persisted = now;
+        if let Err(e) = store.update_parts(&self.message_id, &self.parts) {
+            warn!("persist streaming parts: {e:#}");
         }
     }
 
@@ -1224,6 +1402,10 @@ impl Live {
             kind: enum_str(&tc.kind),
             status: enum_str(&tc.status),
             output: tool_output(&tc.content),
+            content: (!tc.content.is_empty()).then(|| json_list(&tc.content)),
+            locations: (!tc.locations.is_empty()).then(|| json_list(&tc.locations)),
+            raw_input: tc.raw_input,
+            raw_output: tc.raw_output,
             meta: tc.meta,
         };
         match self.tools.get(&id) {
@@ -1251,6 +1433,10 @@ impl Live {
                     kind: "other".into(),
                     status: "pending".into(),
                     output: None,
+                    content: None,
+                    locations: None,
+                    raw_input: None,
+                    raw_output: None,
                     meta: u.meta.clone(),
                 });
                 let i = self.parts.len() - 1;
@@ -1263,6 +1449,10 @@ impl Live {
             kind,
             status,
             output,
+            content,
+            locations,
+            raw_input,
+            raw_output,
             meta,
             ..
         } = &mut self.parts[index]
@@ -1280,8 +1470,22 @@ impl Live {
             if let Some(s) = f.status {
                 *status = enum_str(&s);
             }
-            if let Some(o) = f.content.as_deref().and_then(tool_output) {
-                *output = Some(o);
+            // A field the update carries replaces the stored one (ACP semantics); `output`
+            // keeps the derived text of the latest content that had any.
+            if let Some(c) = f.content {
+                if let Some(o) = tool_output(&c) {
+                    *output = Some(o);
+                }
+                *content = Some(json_list(&c));
+            }
+            if let Some(l) = f.locations {
+                *locations = Some(json_list(&l));
+            }
+            if let Some(i) = f.raw_input {
+                *raw_input = Some(i);
+            }
+            if let Some(o) = f.raw_output {
+                *raw_output = Some(o);
             }
         }
         index
@@ -1292,9 +1496,28 @@ impl Live {
 mod tests {
     use super::*;
     use agent_client_protocol::schema::v1::{
-        ContentChunk, SessionConfigBoolean, SessionConfigSelect, SessionMode, ToolCallStatus,
-        ToolCallUpdateFields, ToolKind,
+        AvailableCommand, AvailableCommandsUpdate, ContentChunk, Diff, Meta, PermissionOptionKind,
+        Plan, PlanEntry, PlanEntryPriority, PlanEntryStatus, SessionConfigBoolean,
+        SessionConfigSelect, SessionInfoUpdate, SessionMode, ToolCallLocation, ToolCallStatus,
+        ToolCallUpdateFields, ToolKind, Usage, UsageUpdate,
     };
+
+    /// A core context with an in-memory store; the receiver sees every line sent to the app.
+    fn test_ctx() -> (Arc<Ctx>, mpsc::UnboundedReceiver<String>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let ctx = Arc::new(Ctx {
+            store: Store::in_memory().unwrap(),
+            out: crate::rpc::Outbound(tx),
+            agents: AgentPool::default(),
+            projectless_dir: String::new(),
+            permissions: Mutex::default(),
+        });
+        (ctx, rx)
+    }
+
+    fn next_line(rx: &mut mpsc::UnboundedReceiver<String>) -> Value {
+        serde_json::from_str(&rx.try_recv().expect("a line for the app")).unwrap()
+    }
 
     fn chunk(s: &str) -> ContentChunk {
         ContentChunk::new(ContentBlock::Text(TextContent::new(s)))
@@ -1451,12 +1674,509 @@ mod tests {
                 kind: "execute".into(),
                 status: "completed".into(),
                 output: Some("a\nb".into()),
+                content: Some(vec![json!({
+                    "type": "content",
+                    "content": { "type": "text", "text": "a\nb" },
+                })]),
+                locations: None,
+                raw_input: None,
+                raw_output: None,
                 meta: Some(serde_json::Map::from_iter([(
                     "contextCompaction".into(),
                     serde_json::json!({ "phase": "complete" }),
                 )])),
             }
         );
+    }
+
+    #[test]
+    fn tool_calls_keep_diff_locations_and_raw_io_verbatim() {
+        let mut live = Live::new("m".into());
+        let tc = ToolCall::new("tc1", "edit main.rs")
+            .kind(ToolKind::Edit)
+            .content(vec![ToolCallContent::from(
+                Diff::new("/tmp/demo/main.rs", "fn main() {}").old_text("fn main() {\n}"),
+            )])
+            .locations(vec![ToolCallLocation::new("/tmp/demo/main.rs").line(1)])
+            .raw_input(json!({ "path": "/tmp/demo/main.rs" }));
+        let wire = serde_json::to_value(&tc).unwrap();
+        assert_eq!(live.apply(SessionUpdate::ToolCall(tc)), Some(0));
+        let Part::ToolCall {
+            output,
+            content,
+            locations,
+            raw_input,
+            raw_output,
+            ..
+        } = &live.parts[0]
+        else {
+            panic!("not a tool call: {:?}", live.parts[0]);
+        };
+        // The derived text is what it was; the ACP arrays are the wire JSON, diff included.
+        assert_eq!(output.as_deref(), Some("diff /tmp/demo/main.rs"));
+        assert_eq!(
+            content.as_deref(),
+            wire["content"].as_array().map(Vec::as_slice)
+        );
+        assert_eq!(content.as_ref().unwrap()[0]["type"], "diff");
+        assert_eq!(content.as_ref().unwrap()[0]["oldText"], "fn main() {\n}");
+        assert_eq!(content.as_ref().unwrap()[0]["newText"], "fn main() {}");
+        assert_eq!(
+            locations.as_deref(),
+            wire["locations"].as_array().map(Vec::as_slice)
+        );
+        assert_eq!(locations.as_ref().unwrap()[0]["line"], 1);
+        assert_eq!(raw_input, &Some(json!({ "path": "/tmp/demo/main.rs" })));
+        assert_eq!(raw_output, &None);
+
+        // An update replaces exactly the fields it carries.
+        let upd = ToolCallUpdate::new(
+            "tc1",
+            ToolCallUpdateFields::new()
+                .status(ToolCallStatus::Completed)
+                .content(vec![ToolCallContent::from(ContentBlock::Text(
+                    TextContent::new("ok"),
+                ))])
+                .raw_output(json!({ "ok": true })),
+        );
+        assert_eq!(live.apply(SessionUpdate::ToolCallUpdate(upd)), Some(0));
+        let Part::ToolCall {
+            status,
+            output,
+            content,
+            locations,
+            raw_input,
+            raw_output,
+            ..
+        } = &live.parts[0]
+        else {
+            panic!("not a tool call: {:?}", live.parts[0]);
+        };
+        assert_eq!(status, "completed");
+        assert_eq!(output.as_deref(), Some("ok"));
+        assert_eq!(
+            content,
+            &Some(vec![
+                json!({ "type": "content", "content": { "type": "text", "text": "ok" } })
+            ])
+        );
+        assert_eq!(locations.as_ref().unwrap()[0]["path"], "/tmp/demo/main.rs");
+        assert_eq!(raw_input, &Some(json!({ "path": "/tmp/demo/main.rs" })));
+        assert_eq!(raw_output, &Some(json!({ "ok": true })));
+        // The part survives a store round trip with the wire shape intact.
+        let json = serde_json::to_value(&live.parts[0]).unwrap();
+        assert_eq!(json["content"][0]["type"], "content");
+        assert_eq!(json["raw_output"]["ok"], true);
+        assert_eq!(serde_json::from_value::<Part>(json).unwrap(), live.parts[0]);
+    }
+
+    #[test]
+    fn every_other_update_becomes_an_event_part_in_order() {
+        let mut live = Live::new("m".into());
+        live.apply(SessionUpdate::AgentMessageChunk(chunk("hi")));
+        let plan = Plan::new(vec![PlanEntry::new(
+            "look",
+            PlanEntryPriority::High,
+            PlanEntryStatus::Pending,
+        )]);
+        let plan_wire = serde_json::to_value(SessionUpdate::Plan(plan.clone())).unwrap();
+        assert_eq!(live.apply(SessionUpdate::Plan(plan)), Some(1));
+        assert_eq!(
+            live.apply(SessionUpdate::UsageUpdate(UsageUpdate::new(10, 100))),
+            Some(2)
+        );
+        assert_eq!(
+            live.apply(SessionUpdate::SessionInfoUpdate(
+                SessionInfoUpdate::new().title(String::from("Renamed")),
+            )),
+            Some(3)
+        );
+        assert_eq!(
+            live.apply(SessionUpdate::UserMessageChunk(chunk("echo"))),
+            Some(4)
+        );
+        assert_eq!(
+            live.apply(SessionUpdate::AvailableCommandsUpdate(
+                AvailableCommandsUpdate::new(vec![AvailableCommand::new("init", "Start")]),
+            )),
+            Some(5)
+        );
+        // Text after an event starts a new part rather than merging across it.
+        assert_eq!(
+            live.apply(SessionUpdate::AgentMessageChunk(chunk("!"))),
+            Some(6)
+        );
+        let kinds: Vec<&str> = live
+            .parts
+            .iter()
+            .map(|p| match p {
+                Part::Event { kind, .. } => kind.as_str(),
+                Part::Text { .. } => "text",
+                _ => "?",
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                "text",
+                "plan",
+                "usage_update",
+                "session_info_update",
+                "user_message_chunk",
+                "available_commands_update",
+                "text",
+            ]
+        );
+        assert_eq!(
+            live.parts[1],
+            Part::Event {
+                kind: "plan".into(),
+                data: plan_wire,
+            }
+        );
+        assert_eq!(
+            live.parts[2],
+            Part::Event {
+                kind: "usage_update".into(),
+                data: json!({ "sessionUpdate": "usage_update", "used": 10, "size": 100 }),
+            }
+        );
+        assert!(matches!(
+            &live.parts[3],
+            Part::Event { data, .. } if data["title"] == "Renamed"
+        ));
+        assert!(matches!(
+            &live.parts[4],
+            Part::Event { data, .. } if data["content"]["text"] == "echo"
+        ));
+        assert!(matches!(
+            &live.parts[5],
+            Part::Event { data, .. } if data["availableCommands"][0]["name"] == "init"
+        ));
+    }
+
+    #[test]
+    fn non_text_chunks_become_events() {
+        let mut live = Live::new("m".into());
+        live.apply(SessionUpdate::AgentMessageChunk(chunk("see")));
+        let image = ContentChunk::new(ContentBlock::Image(ImageContent::new("QUJD", "image/png")));
+        assert_eq!(live.apply(SessionUpdate::AgentMessageChunk(image)), Some(1));
+        let link = ContentChunk::new(ContentBlock::ResourceLink(ResourceLink::new(
+            "notes.md",
+            "file:///tmp/notes.md",
+        )));
+        assert_eq!(live.apply(SessionUpdate::AgentThoughtChunk(link)), Some(2));
+        assert_eq!(
+            live.parts[1],
+            Part::Event {
+                kind: "agent_message_chunk".into(),
+                data: json!({
+                    "sessionUpdate": "agent_message_chunk",
+                    "content": { "type": "image", "data": "QUJD", "mimeType": "image/png" },
+                }),
+            }
+        );
+        assert!(matches!(
+            &live.parts[2],
+            Part::Event { kind, data }
+                if kind == "agent_thought_chunk" && data["content"]["uri"] == "file:///tmp/notes.md"
+        ));
+        // Text after them starts a new part; empty text chunks are still ignored.
+        assert_eq!(
+            live.apply(SessionUpdate::AgentMessageChunk(chunk("more"))),
+            Some(3)
+        );
+        assert_eq!(
+            live.apply(SessionUpdate::AgentMessageChunk(chunk(""))),
+            None
+        );
+    }
+
+    #[test]
+    fn extension_notifications_keep_their_wire_method_name() {
+        // The crate routes `_claude/sdkMessage` to us as method `claude/sdkMessage`.
+        let params = serde_json::value::RawValue::from_string(
+            r#"{"type":"system","subtype":"init"}"#.into(),
+        )
+        .unwrap();
+        let n = ExtNotification::new("claude/sdkMessage", Arc::from(params));
+        let (kind, data) = ext_event(&n);
+        assert_eq!(kind, "_claude/sdkMessage");
+        assert_eq!(data, json!({ "type": "system", "subtype": "init" }));
+
+        let mut live = Live::new("m".into());
+        assert_eq!(live.event(kind, data), 0);
+        assert!(matches!(&live.parts[0], Part::Event { kind, .. } if kind == "_claude/sdkMessage"));
+    }
+
+    #[test]
+    fn updates_outside_a_reply_are_stored_and_announced() {
+        let (ctx, mut rx) = test_ctx();
+        let p = ctx.store.create_project("demo", "/tmp/demo").unwrap();
+        let t = ctx.store.create_task(Some(&p.id), "chat").unwrap();
+        let conn = Connection {
+            ctx: ctx.clone(),
+            task_id: t.id.clone(),
+            agent: "claude".into(),
+            cwd: "/tmp/demo".into(),
+            live: Arc::default(),
+            options: Arc::default(),
+            loading: Arc::default(),
+        };
+        conn.on_update(SessionUpdate::AvailableCommandsUpdate(
+            AvailableCommandsUpdate::new(vec![AvailableCommand::new("init", "Start")]),
+        ));
+        let events = ctx.store.list_events(&t.id).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind, "available_commands_update");
+        assert_eq!(events[0].agent, "claude");
+        assert_eq!(events[0].data["availableCommands"][0]["name"], "init");
+        let line = next_line(&mut rx);
+        assert_eq!(line["method"], "chat.event");
+        assert_eq!(line["params"], json!(events[0]));
+
+        // An extension notification outside a reply lands there too.
+        let params = serde_json::value::RawValue::from_string(r#"{"n":1}"#.into()).unwrap();
+        conn.on_ext(ExtNotification::new("codex/status", Arc::from(params)));
+        let events = ctx.store.list_events(&t.id).unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[1].kind, "_codex/status");
+        assert_eq!(events[1].data, json!({ "n": 1 }));
+        assert_eq!(next_line(&mut rx)["method"], "chat.event");
+
+        // With a reply in flight the same updates become parts of it instead.
+        *conn.live.lock().unwrap() = Some(Live::new("m".into()));
+        conn.on_update(SessionUpdate::UsageUpdate(UsageUpdate::new(1, 2)));
+        let params = serde_json::value::RawValue::from_string(r#"{"n":2}"#.into()).unwrap();
+        conn.on_ext(ExtNotification::new("codex/status", Arc::from(params)));
+        assert_eq!(ctx.store.list_events(&t.id).unwrap().len(), 2);
+        let line = next_line(&mut rx);
+        assert_eq!(line["method"], "chat.update");
+        assert_eq!(line["params"]["part_index"], 0);
+        assert_eq!(line["params"]["part"]["kind"], "usage_update");
+        let line = next_line(&mut rx);
+        assert_eq!(line["params"]["part_index"], 1);
+        assert_eq!(line["params"]["part"]["kind"], "_codex/status");
+        assert_eq!(line["params"]["part"]["data"]["n"], 2);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn transcript_replayed_by_session_load_is_not_stored_again() {
+        let (ctx, mut rx) = test_ctx();
+        let p = ctx.store.create_project("demo", "/tmp/demo").unwrap();
+        let t = ctx.store.create_task(Some(&p.id), "chat").unwrap();
+        let conn = Connection {
+            ctx: ctx.clone(),
+            task_id: t.id.clone(),
+            agent: "claude".into(),
+            cwd: "/tmp/demo".into(),
+            live: Arc::default(),
+            options: Arc::default(),
+            loading: Arc::default(),
+        };
+
+        // While session/load is in flight, the replayed transcript is neither stored
+        // nor announced.
+        conn.loading.store(true, Ordering::SeqCst);
+        conn.on_update(SessionUpdate::AgentMessageChunk(chunk("replayed")));
+        conn.on_update(SessionUpdate::UserMessageChunk(chunk("asked")));
+        conn.on_update(SessionUpdate::ToolCall(ToolCall::new("tc1", "ls")));
+        assert!(ctx.store.list_events(&t.id).unwrap().is_empty());
+        assert!(rx.try_recv().is_err());
+
+        // Other updates that arrive during the load are still kept.
+        conn.on_update(SessionUpdate::AvailableCommandsUpdate(
+            AvailableCommandsUpdate::new(vec![AvailableCommand::new("init", "Start")]),
+        ));
+        let events = ctx.store.list_events(&t.id).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind, "available_commands_update");
+        let line = next_line(&mut rx);
+        assert_eq!(line["method"], "chat.event");
+        assert_eq!(line["params"], json!(events[0]));
+
+        // Once the load has resolved, a chunk outside a reply is stored as before.
+        conn.loading.store(false, Ordering::SeqCst);
+        conn.on_update(SessionUpdate::AgentMessageChunk(chunk("later")));
+        let events = ctx.store.list_events(&t.id).unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[1].kind, "agent_message_chunk");
+        assert_eq!(events[1].data["content"]["text"], "later");
+        assert_eq!(next_line(&mut rx)["method"], "chat.event");
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn permission_requests_carry_the_tool_call_and_meta() {
+        let req = RequestPermissionRequest::new(
+            "sess",
+            ToolCallUpdate::new(
+                "tc1",
+                ToolCallUpdateFields::new()
+                    .title("Write main.rs")
+                    .kind(ToolKind::Edit)
+                    .content(vec![ToolCallContent::from(Diff::new(
+                        "/tmp/demo/main.rs",
+                        "new",
+                    ))]),
+            ),
+            vec![
+                PermissionOption::new("allow", "Allow", PermissionOptionKind::AllowOnce)
+                    .meta(Meta::from_iter([("hotkey".into(), json!("y"))])),
+                PermissionOption::new("reject", "Reject", PermissionOptionKind::RejectOnce),
+            ],
+        )
+        .meta(Meta::from_iter([(
+            "claude".into(),
+            json!({ "suggestions": [] }),
+        )]));
+        let v = permission_json("req-1", "task", "claude", &req);
+        assert_eq!(v["request_id"], "req-1");
+        assert_eq!(v["task_id"], "task");
+        assert_eq!(v["agent"], "claude");
+        assert_eq!(v["title"], "Write main.rs");
+        assert_eq!(
+            v["options"][0],
+            json!({ "id": "allow", "label": "Allow", "kind": "allow_once", "_meta": { "hotkey": "y" } })
+        );
+        assert_eq!(
+            v["options"][1],
+            json!({ "id": "reject", "label": "Reject", "kind": "reject_once" })
+        );
+        assert_eq!(
+            v["tool_call"],
+            serde_json::to_value(&req.tool_call).unwrap()
+        );
+        assert_eq!(v["tool_call"]["toolCallId"], "tc1");
+        assert_eq!(v["tool_call"]["content"][0]["type"], "diff");
+        assert_eq!(v["tool_call"]["content"][0]["newText"], "new");
+        assert_eq!(v["_meta"], json!({ "claude": { "suggestions": [] } }));
+
+        let plain = RequestPermissionRequest::new(
+            "sess",
+            ToolCallUpdate::new("tc2", ToolCallUpdateFields::new()),
+            vec![],
+        );
+        let v = permission_json("req-2", "task", "claude", &plain);
+        assert_eq!(v["title"], "tc2");
+        assert!(v.get("_meta").is_none());
+    }
+
+    #[test]
+    fn chat_done_carries_stop_reason_and_usage() {
+        let (ctx, mut rx) = test_ctx();
+        let p = ctx.store.create_project("demo", "/tmp/demo").unwrap();
+        let t = ctx.store.create_task(Some(&p.id), "chat").unwrap();
+        let reply = || {
+            ctx.store
+                .insert_message(&t.id, "assistant", Some("codex"), &[], "streaming")
+                .unwrap()
+        };
+
+        let a = reply();
+        let mut live = Live::new(a.id.clone());
+        live.apply(SessionUpdate::AgentMessageChunk(chunk("partial")));
+        let usage = Usage::new(12, 10, 2);
+        let resp = PromptResponse::new(StopReason::MaxTokens)
+            .usage(usage.clone())
+            .meta(Meta::from_iter([("x".into(), json!(1))]));
+        finish_message(&ctx, &t.id, "codex", live, Ok(resp));
+        let m = ctx.store.list_messages(&t.id).unwrap().pop().unwrap();
+        assert_eq!(m.status, "done");
+        assert_eq!(m.stop_reason.as_deref(), Some("max_tokens"));
+        assert_eq!(m.usage, Some(serde_json::to_value(&usage).unwrap()));
+        assert_eq!(m.usage.as_ref().unwrap()["totalTokens"], 12);
+        let line = next_line(&mut rx);
+        assert_eq!(line["method"], "chat.done");
+        assert_eq!(line["params"]["message_id"], a.id);
+        assert_eq!(line["params"]["status"], "done");
+        assert_eq!(line["params"]["stop_reason"], "max_tokens");
+        assert_eq!(line["params"]["usage"]["totalTokens"], 12);
+        assert_eq!(line["params"]["_meta"]["x"], 1);
+        assert!(line["params"].get("error").is_none());
+
+        // Only `cancelled` changes the status; the fields are omitted when not reported.
+        let a = reply();
+        finish_message(
+            &ctx,
+            &t.id,
+            "codex",
+            Live::new(a.id.clone()),
+            Ok(PromptResponse::new(StopReason::Cancelled)),
+        );
+        let m = ctx.store.list_messages(&t.id).unwrap().pop().unwrap();
+        assert_eq!(m.status, "cancelled");
+        assert_eq!(m.stop_reason.as_deref(), Some("cancelled"));
+        assert_eq!(m.usage, None);
+        let line = next_line(&mut rx);
+        assert_eq!(line["params"]["status"], "cancelled");
+        assert_eq!(line["params"]["stop_reason"], "cancelled");
+        assert!(line["params"].get("usage").is_none());
+        assert!(line["params"].get("_meta").is_none());
+
+        // An error has none of them.
+        let a = reply();
+        finish_message(
+            &ctx,
+            &t.id,
+            "codex",
+            Live::new(a.id.clone()),
+            Err("boom".into()),
+        );
+        let m = ctx.store.list_messages(&t.id).unwrap().pop().unwrap();
+        assert_eq!(m.status, "error");
+        assert_eq!(m.stop_reason, None);
+        assert_eq!(next_line(&mut rx)["method"], "chat.update");
+        let line = next_line(&mut rx);
+        assert_eq!(line["params"]["status"], "error");
+        assert_eq!(line["params"]["error"], "boom");
+        assert!(line["params"].get("stop_reason").is_none());
+    }
+
+    #[test]
+    fn streaming_parts_are_persisted_as_they_arrive() {
+        let store = Store::in_memory().unwrap();
+        let p = store.create_project("demo", "/tmp/demo").unwrap();
+        let t = store.create_task(Some(&p.id), "chat").unwrap();
+        let a = store
+            .insert_message(&t.id, "assistant", Some("claude"), &[], "streaming")
+            .unwrap();
+        let stored = || store.list_messages(&t.id).unwrap().pop().unwrap();
+        let mut live = Live::new(a.id.clone());
+
+        // Text right after the start is not written yet (at most once per interval)…
+        let i = live
+            .apply(SessionUpdate::AgentMessageChunk(chunk("hel")))
+            .unwrap();
+        live.persist(&store, i);
+        assert!(stored().parts.is_empty());
+        // …a tool call always is, and carries the text along; the status stays streaming.
+        let i = live
+            .apply(SessionUpdate::ToolCall(ToolCall::new("tc1", "ls")))
+            .unwrap();
+        live.persist(&store, i);
+        assert_eq!(stored().parts.len(), 2);
+        assert_eq!(stored().status, "streaming");
+        // More text waits for the interval, then goes through.
+        let i = live
+            .apply(SessionUpdate::AgentMessageChunk(chunk("lo")))
+            .unwrap();
+        live.persist(&store, i);
+        assert_eq!(stored().parts.len(), 2);
+        live.last_persisted = Instant::now() - PERSIST_TEXT_EVERY;
+        live.persist(&store, i);
+        assert!(matches!(&stored().parts[2], Part::Text { text, .. } if text == "lo"));
+        // An event always goes through as well.
+        let i = live
+            .apply(SessionUpdate::UsageUpdate(UsageUpdate::new(1, 2)))
+            .unwrap();
+        live.persist(&store, i);
+        assert_eq!(stored().parts, live.parts);
+        // A core that died here leaves the parts; the next start marks the reply cancelled.
+        assert_eq!(store.reap_streaming().unwrap(), 1);
+        assert_eq!(stored().status, "cancelled");
+        assert_eq!(stored().parts, live.parts);
     }
 
     #[test]

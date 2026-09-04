@@ -52,13 +52,32 @@ pub enum Part {
         title: String,
         kind: String,
         status: String,
+        /// Derived from the text content blocks (and `diff <path>` for diffs); what the
+        /// renderer shows today.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         output: Option<String>,
+        /// ACP `ToolCallContent[]` verbatim; an update that carries content replaces it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        content: Option<Vec<Value>>,
+        /// ACP `ToolCallLocation[]` verbatim.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        locations: Option<Vec<Value>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        raw_input: Option<Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        raw_output: Option<Value>,
         #[serde(rename = "_meta", default, skip_serializing_if = "Option::is_none")]
         meta: Option<serde_json::Map<String, serde_json::Value>>,
     },
     Error {
         message: String,
+    },
+    /// Any other ACP session update or extension notification received during a reply,
+    /// verbatim: `kind` is the `sessionUpdate` discriminator (or the extension method
+    /// name), `data` the update object (docs/core-protocol.md, "Fidelity rule").
+    Event {
+        kind: String,
+        data: Value,
     },
     /// An image attached to a user Message, base64-encoded.
     Image {
@@ -83,6 +102,24 @@ pub struct Message {
     pub status: String,
     /// Wall-clock time spent producing an assistant response. Null for user and legacy messages.
     pub duration_ms: Option<i64>,
+    /// ACP stop reason of a finished assistant reply (end_turn, max_tokens, …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<String>,
+    /// ACP `PromptResponse.usage` verbatim, when the agent reported it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<Value>,
+}
+
+/// An ACP session update (or extension notification) that arrived while no reply was
+/// streaming for the (task, agent) pair, kept verbatim like an `Event` Part.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentEvent {
+    pub id: String,
+    pub task_id: String,
+    pub agent: String,
+    pub kind: String,
+    pub data: Value,
+    pub created_at: String,
 }
 
 pub fn new_id() -> String {
@@ -102,8 +139,12 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE TABLE IF NOT EXISTS messages (
     id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id),
     role TEXT NOT NULL, agent TEXT, parts TEXT NOT NULL, status TEXT NOT NULL,
-    created_at TEXT NOT NULL, duration_ms INTEGER);
+    created_at TEXT NOT NULL, duration_ms INTEGER, stop_reason TEXT, usage TEXT);
 CREATE INDEX IF NOT EXISTS messages_task ON messages(task_id);
+CREATE TABLE IF NOT EXISTS agent_events (
+    id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), agent TEXT NOT NULL,
+    kind TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS agent_events_task ON agent_events(task_id);
 CREATE TABLE IF NOT EXISTS agent_cursors (
     task_id TEXT NOT NULL, agent TEXT NOT NULL, last_seen_message_index INTEGER NOT NULL,
     PRIMARY KEY (task_id, agent));
@@ -165,6 +206,18 @@ fn migrate(conn: &Connection) -> Result<()> {
     if !has_duration_ms {
         conn.execute_batch("ALTER TABLE messages ADD COLUMN duration_ms INTEGER;")?;
     }
+
+    let message_columns: Vec<String> = conn
+        .prepare("PRAGMA table_info(messages)")?
+        .query_map([], |r| r.get::<_, String>(1))?
+        .filter_map(Result::ok)
+        .collect();
+    if !message_columns.iter().any(|name| name == "stop_reason") {
+        conn.execute_batch("ALTER TABLE messages ADD COLUMN stop_reason TEXT;")?;
+    }
+    if !message_columns.iter().any(|name| name == "usage") {
+        conn.execute_batch("ALTER TABLE messages ADD COLUMN usage TEXT;")?;
+    }
     Ok(())
 }
 
@@ -213,7 +266,12 @@ impl Store {
         self.with(|c| {
             const EMPTY: &str =
                 "SELECT id FROM tasks WHERE id NOT IN (SELECT task_id FROM messages)";
-            for table in ["agent_cursors", "agent_sessions", "agent_config"] {
+            for table in [
+                "agent_cursors",
+                "agent_sessions",
+                "agent_config",
+                "agent_events",
+            ] {
                 c.execute(
                     &format!("DELETE FROM {table} WHERE task_id IN ({EMPTY})"),
                     [],
@@ -302,6 +360,7 @@ impl Store {
                 "agent_cursors",
                 "agent_sessions",
                 "agent_config",
+                "agent_events",
                 "messages",
             ] {
                 c.execute(
@@ -397,6 +456,7 @@ impl Store {
                 "agent_cursors",
                 "agent_sessions",
                 "agent_config",
+                "agent_events",
                 "messages",
             ] {
                 c.execute(&format!("DELETE FROM {table} WHERE task_id = ?1"), [id])?;
@@ -409,11 +469,12 @@ impl Store {
     pub fn list_messages(&self, task_id: &str) -> Result<Vec<Message>> {
         self.with(|c| {
             c.prepare(
-                "SELECT id, task_id, role, agent, parts, status, created_at, duration_ms FROM messages \
-                 WHERE task_id = ?1 ORDER BY rowid",
+                "SELECT id, task_id, role, agent, parts, status, created_at, duration_ms, \
+                 stop_reason, usage FROM messages WHERE task_id = ?1 ORDER BY rowid",
             )?
             .query_map([task_id], |r| {
                 let parts: String = r.get(4)?;
+                let usage: Option<String> = r.get(9)?;
                 Ok(Message {
                     id: r.get(0)?,
                     task_id: r.get(1)?,
@@ -423,6 +484,8 @@ impl Store {
                     status: r.get(5)?,
                     created_at: r.get(6)?,
                     duration_ms: r.get(7)?,
+                    stop_reason: r.get(8)?,
+                    usage: usage.and_then(|u| serde_json::from_str(&u).ok()),
                 })
             })?
             .collect()
@@ -446,6 +509,8 @@ impl Store {
             created_at: now(),
             status: status.to_string(),
             duration_ms: None,
+            stop_reason: None,
+            usage: None,
         };
         let parts_json = serde_json::to_string(&m.parts)?;
         self.with(|c| {
@@ -471,18 +536,34 @@ impl Store {
         Ok(m)
     }
 
+    /// Write the parts of a streaming Message as received so far; its status is untouched.
+    pub fn update_parts(&self, id: &str, parts: &[Part]) -> Result<()> {
+        let parts_json = serde_json::to_string(parts)?;
+        self.with(|c| {
+            c.execute(
+                "UPDATE messages SET parts = ?1 WHERE id = ?2",
+                params![parts_json, id],
+            )
+        })?;
+        Ok(())
+    }
+
     pub fn finish_message(
         &self,
         id: &str,
         parts: &[Part],
         status: &str,
         duration_ms: i64,
+        stop_reason: Option<&str>,
+        usage: Option<&Value>,
     ) -> Result<()> {
         let parts_json = serde_json::to_string(parts)?;
+        let usage_json = usage.map(serde_json::to_string).transpose()?;
         self.with(|c| {
             c.execute(
-                "UPDATE messages SET parts = ?1, status = ?2, duration_ms = ?3 WHERE id = ?4",
-                params![parts_json, status, duration_ms, id],
+                "UPDATE messages SET parts = ?1, status = ?2, duration_ms = ?3, \
+                 stop_reason = ?4, usage = ?5 WHERE id = ?6",
+                params![parts_json, status, duration_ms, stop_reason, usage_json, id],
             )?;
             c.execute(
                 "UPDATE tasks SET updated_at = ?1 \
@@ -536,6 +617,55 @@ impl Store {
                     Err(e)
                 }
             }
+        })
+    }
+
+    /// Keep a session update that arrived while no reply was streaming for `(task, agent)`.
+    pub fn insert_event(
+        &self,
+        task_id: &str,
+        agent: &str,
+        kind: &str,
+        data: Value,
+    ) -> Result<AgentEvent> {
+        let e = AgentEvent {
+            id: new_id(),
+            task_id: task_id.to_string(),
+            agent: agent.to_string(),
+            kind: kind.to_string(),
+            data,
+            created_at: now(),
+        };
+        let data_json = serde_json::to_string(&e.data)?;
+        self.with(|c| {
+            c.execute(
+                "INSERT INTO agent_events (id, task_id, agent, kind, data, created_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![e.id, e.task_id, e.agent, e.kind, data_json, e.created_at],
+            )
+        })?;
+        Ok(e)
+    }
+
+    /// Out-of-reply events of a Task, oldest first.
+    pub fn list_events(&self, task_id: &str) -> Result<Vec<AgentEvent>> {
+        self.with(|c| {
+            c.prepare(
+                "SELECT id, task_id, agent, kind, data, created_at FROM agent_events \
+                 WHERE task_id = ?1 ORDER BY rowid",
+            )?
+            .query_map([task_id], |r| {
+                let data: String = r.get(4)?;
+                Ok(AgentEvent {
+                    id: r.get(0)?,
+                    task_id: r.get(1)?,
+                    agent: r.get(2)?,
+                    kind: r.get(3)?,
+                    data: serde_json::from_str(&data).unwrap_or(Value::Null),
+                    created_at: r.get(5)?,
+                })
+            })?
+            .collect()
         })
     }
 
@@ -784,7 +914,7 @@ mod tests {
             .insert_message(&b.id, "assistant", Some("codex"), &[], "streaming")
             .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(2));
-        s.finish_message(&reply.id, &text("done"), "done", 1_234)
+        s.finish_message(&reply.id, &text("done"), "done", 1_234, None, None)
             .unwrap();
         assert_eq!(s.list_tasks(Some(&p.id)).unwrap()[0].id, b.id);
         assert_eq!(s.list_messages(&b.id).unwrap()[0].duration_ms, Some(1_234));
@@ -838,6 +968,10 @@ mod tests {
                 kind: "execute".into(),
                 status: "completed".into(),
                 output: Some("a b".into()),
+                content: None,
+                locations: None,
+                raw_input: None,
+                raw_output: None,
                 meta: Some(serde_json::Map::from_iter([(
                     "contextCompaction".into(),
                     serde_json::json!({}),
@@ -849,7 +983,8 @@ mod tests {
                 message_id: None,
             },
         ];
-        s.finish_message(&a.id, &parts, "done", 61_000).unwrap();
+        s.finish_message(&a.id, &parts, "done", 61_000, None, None)
+            .unwrap();
         let history = s.list_messages(&t.id).unwrap();
         assert_eq!(history.len(), 2);
         assert_eq!(history[0].id, u.id);
@@ -976,5 +1111,139 @@ mod tests {
             ]
         );
         assert!(s.config_values("t", "claude").unwrap().is_empty());
+    }
+
+    #[test]
+    fn finished_messages_keep_stop_reason_and_usage() {
+        let s = Store::in_memory().unwrap();
+        let p = s.create_project("demo", "/tmp/demo").unwrap();
+        let t = s.create_task(Some(&p.id), "first").unwrap();
+        let a = s
+            .insert_message(&t.id, "assistant", Some("codex"), &[], "streaming")
+            .unwrap();
+        let usage = serde_json::json!({ "totalTokens": 12, "inputTokens": 10, "outputTokens": 2 });
+        s.finish_message(
+            &a.id,
+            &text("done"),
+            "done",
+            5,
+            Some("max_tokens"),
+            Some(&usage),
+        )
+        .unwrap();
+        let m = &s.list_messages(&t.id).unwrap()[0];
+        assert_eq!(m.stop_reason.as_deref(), Some("max_tokens"));
+        assert_eq!(m.usage, Some(usage));
+        let json = serde_json::to_value(m).unwrap();
+        assert_eq!(json["stop_reason"], "max_tokens");
+        assert_eq!(json["usage"]["totalTokens"], 12);
+        // Messages that never reported them do not carry the keys at all.
+        let u = s
+            .insert_message(&t.id, "user", Some("codex"), &text("hi"), "done")
+            .unwrap();
+        let json = serde_json::to_value(&u).unwrap();
+        assert!(json.get("stop_reason").is_none());
+        assert!(json.get("usage").is_none());
+    }
+
+    #[test]
+    fn old_databases_gain_stop_reason_and_usage() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL, created_at TEXT NOT NULL);
+             CREATE TABLE tasks (id TEXT PRIMARY KEY, project_id TEXT REFERENCES projects(id), title TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT '');
+             CREATE TABLE messages (id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), role TEXT NOT NULL, agent TEXT, parts TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, duration_ms INTEGER);
+             INSERT INTO projects VALUES ('p', 'demo', '/tmp/demo', '2026-01-01T00:00:00.000Z');
+             INSERT INTO tasks VALUES ('t', 'p', 'old', '2026-01-02T00:00:00.000Z', '2026-01-02T00:00:00.000Z');
+             INSERT INTO messages VALUES ('m', 't', 'assistant', 'codex', '[]', 'done', '2026-01-02T00:00:01.000Z', 7);",
+        )
+        .unwrap();
+        let s = Store::init(conn).unwrap();
+        let m = &s.list_messages("t").unwrap()[0];
+        assert_eq!(m.duration_ms, Some(7));
+        assert_eq!(m.stop_reason, None);
+        assert_eq!(m.usage, None);
+        s.finish_message("m", &[], "done", 7, Some("end_turn"), None)
+            .unwrap();
+        assert_eq!(
+            s.list_messages("t").unwrap()[0].stop_reason.as_deref(),
+            Some("end_turn")
+        );
+    }
+
+    #[test]
+    fn streaming_parts_are_written_before_finish_and_survive_reaping() {
+        let s = Store::in_memory().unwrap();
+        let p = s.create_project("demo", "/tmp/demo").unwrap();
+        let t = s.create_task(Some(&p.id), "first").unwrap();
+        let a = s
+            .insert_message(&t.id, "assistant", Some("claude"), &[], "streaming")
+            .unwrap();
+        let parts = vec![
+            Part::Text {
+                text: "so far".into(),
+                meta: None,
+                message_id: None,
+            },
+            Part::Event {
+                kind: "plan".into(),
+                data: serde_json::json!({ "sessionUpdate": "plan", "entries": [] }),
+            },
+        ];
+        s.update_parts(&a.id, &parts).unwrap();
+        let m = &s.list_messages(&t.id).unwrap()[0];
+        assert_eq!(m.parts, parts);
+        assert_eq!(m.status, "streaming");
+        // A core that died here leaves the parts behind, marked cancelled on the next start.
+        assert_eq!(s.reap_streaming().unwrap(), 1);
+        let m = &s.list_messages(&t.id).unwrap()[0];
+        assert_eq!(m.status, "cancelled");
+        assert_eq!(m.parts, parts);
+    }
+
+    #[test]
+    fn agent_events_list_oldest_first_and_go_with_the_task() {
+        let s = Store::in_memory().unwrap();
+        let p = s.create_project("demo", "/tmp/demo").unwrap();
+        let t = s.create_task(Some(&p.id), "first").unwrap();
+        let first = s
+            .insert_event(
+                &t.id,
+                "claude",
+                "available_commands_update",
+                serde_json::json!({ "availableCommands": [] }),
+            )
+            .unwrap();
+        let second = s
+            .insert_event(
+                &t.id,
+                "codex",
+                "_codex/thing",
+                serde_json::json!({ "x": 1 }),
+            )
+            .unwrap();
+        assert_eq!(s.list_events(&t.id).unwrap(), vec![first.clone(), second]);
+        assert_eq!(first.data["availableCommands"], serde_json::json!([]));
+        let json = serde_json::to_value(&first).unwrap();
+        assert_eq!(json["kind"], "available_commands_update");
+        assert_eq!(json["task_id"], t.id);
+        assert!(s.list_events("other").unwrap().is_empty());
+
+        // A draft Task (no messages) with events is still purged on open, and deleting a
+        // Task or Project takes the events along.
+        assert!(s.delete_task(&t.id).unwrap());
+        assert!(s.list_events(&t.id).unwrap().is_empty());
+        let t2 = s.create_task(Some(&p.id), "second").unwrap();
+        s.insert_event(&t2.id, "claude", "plan", serde_json::json!({}))
+            .unwrap();
+        assert_eq!(s.purge_empty_tasks().unwrap(), 1);
+        assert!(s.list_events(&t2.id).unwrap().is_empty());
+        let t3 = s.create_task(Some(&p.id), "third").unwrap();
+        s.insert_message(&t3.id, "user", Some("codex"), &text("hi"), "done")
+            .unwrap();
+        s.insert_event(&t3.id, "codex", "plan", serde_json::json!({}))
+            .unwrap();
+        assert!(s.delete_project(&p.id).unwrap());
+        assert!(s.list_events(&t3.id).unwrap().is_empty());
     }
 }

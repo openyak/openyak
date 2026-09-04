@@ -43,6 +43,10 @@ export interface Message {
   status: MessageStatus
   /** Wall-clock response time for assistant messages; absent on user and legacy messages. */
   duration_ms?: number | null
+  /** ACP StopReason of the reply: end_turn | max_tokens | max_turn_requests | refusal | cancelled. */
+  stop_reason?: string | null
+  /** ACP PromptResponse.usage verbatim, when the agent reports it. */
+  usage?: unknown
 }
 
 export type Part =
@@ -61,12 +65,35 @@ export type Part =
       kind: string
       status: string
       output?: string
+      /** ACP ToolCallContent[] verbatim (content | diff | terminal); replaced by an update that carries content. */
+      content?: unknown[]
+      /** ACP ToolCallLocation[] verbatim. */
+      locations?: unknown[]
+      /** ACP raw_input / raw_output verbatim. */
+      raw_input?: unknown
+      raw_output?: unknown
       _meta?: Record<string, unknown>
     }
   | { type: 'error'; message: string }
+  // Any other ACP session update or extension notification, verbatim; nothing renders it yet.
+  | { type: 'event'; kind: string; data: unknown }
   // Attachments on a user message. Images travel as base64; files by path.
   | { type: 'image'; mime_type: string; data: string }
   | { type: 'file'; path: string; name: string }
+
+/**
+ * An ACP session update (or extension notification) that arrived while no reply was
+ * streaming for the (task, agent) pair, e.g. the slash-command list sent when a session
+ * opens. Stored by core, listed with `chat.events`, announced with `chat.event`.
+ */
+export interface AgentEvent {
+  id: string
+  task_id: string
+  agent: AgentId
+  kind: string
+  data: unknown
+  created_at: string
+}
 
 /** What the app attaches to a message; becomes image/file Parts and ACP content blocks. */
 export type Attachment =
@@ -119,6 +146,10 @@ export interface ChatDone {
   status: 'done' | 'error' | 'cancelled'
   duration_ms?: number
   error?: string
+  /** ACP PromptResponse fields verbatim; status stays 'done' for max_tokens, max_turn_requests and refusal. */
+  stop_reason?: string
+  usage?: unknown
+  _meta?: Record<string, unknown>
 }
 
 export interface AgentStatus {
@@ -137,6 +168,7 @@ export interface AgentConfig {
 export type Notification =
   | { method: 'chat.update'; params: ChatUpdate }
   | { method: 'chat.done'; params: ChatDone }
+  | { method: 'chat.event'; params: AgentEvent }
   | { method: 'agent.status'; params: AgentStatus }
   | { method: 'agent.config'; params: AgentConfig }
   | { method: string; params: unknown }
@@ -147,6 +179,7 @@ export interface PermissionOption {
   id: string
   label: string
   kind: string
+  _meta?: Record<string, unknown>
 }
 
 export interface PermissionRequest {
@@ -155,6 +188,10 @@ export interface PermissionRequest {
   agent: AgentId
   title: string
   options: PermissionOption[]
+  /** The ACP ToolCallUpdate of the request verbatim: title, kind, status, content incl. diffs, locations, rawInput, rawOutput, _meta. */
+  tool_call: unknown
+  /** The request's own meta. */
+  _meta?: Record<string, unknown>
 }
 
 export interface PermissionResponse {
