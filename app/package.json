@@ -11,10 +11,12 @@
     "test": "node --test --experimental-strip-types test/*.test.ts"
   },
   "dependencies": {
-    "@agentclientprotocol/claude-agent-acp": "0.73.0",
-    "@agentclientprotocol/codex-acp": "1.8.0",
+    "@agentclientprotocol/claude-agent-acp": "0.74.0",
+    "@agentclientprotocol/codex-acp": "1.9.0",
     "@phosphor-icons/react": "^2.1.10",
+    "mammoth": "1.12.2",
     "mermaid": "^11.17.2",
+    "prism-react-renderer": "2.4.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",

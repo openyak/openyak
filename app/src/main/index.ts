@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, protocol, shell } from 'electron'
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
@@ -6,9 +6,62 @@ import path from 'node:path'
 import { CoreClient, CoreError } from './core-client'
 import { saveDiagramSvg } from './save-diagram'
 import { saveImageAttachment } from './save-image'
+import { agentHostProfiles } from './agent-host-profiles'
+import { CodexHostClient } from './codex-host'
+import { resolveProjectFile } from './project-file-host'
+import {
+  inspectProjectFilePreview,
+  installProjectFileProtocol,
+  projectFileScheme,
+} from './project-file-preview'
+import {
+  artifactScheme,
+  forgetArtifactGrants,
+  grantArtifactPath,
+  inspectArtifact,
+  installArtifactProtocol,
+  resolveArtifactPath,
+} from './artifact-host'
+import type {
+  CodexHostCapabilities,
+  CodexMcpServerSummary,
+  CodexSkillSummary,
+} from '../shared/protocol'
 
 let win: BrowserWindow | null = null
 let core: CoreClient | null = null
+const codexHost = new CodexHostClient()
+
+protocol.registerSchemesAsPrivileged([artifactScheme(), projectFileScheme()])
+
+function grantFromArtifactPart(taskId: unknown, partValue: unknown): void {
+  if (typeof taskId !== 'string' || partValue == null || typeof partValue !== 'object') return
+  const part = partValue as { type?: unknown; kind?: unknown; data?: unknown }
+  if (part.type !== 'event' || typeof part.kind !== 'string' || !part.kind.startsWith('artifact.')) return
+  if (part.data == null || typeof part.data !== 'object') return
+  const data = part.data as { artifact?: { path?: unknown }; artifacts?: Array<{ path?: unknown }> }
+  grantArtifactPath(taskId, data.artifact?.path)
+  for (const artifact of Array.isArray(data.artifacts) ? data.artifacts : []) {
+    grantArtifactPath(taskId, artifact.path)
+  }
+}
+
+function grantFromCoreNotification(method: string, params: unknown): void {
+  if (method !== 'chat.update' || params == null || typeof params !== 'object') return
+  const update = params as { task_id?: unknown; part?: unknown }
+  grantFromArtifactPart(update.task_id, update.part)
+}
+
+function grantFromHistory(result: unknown): void {
+  if (!Array.isArray(result)) return
+  for (const messageValue of result) {
+    if (messageValue == null || typeof messageValue !== 'object') continue
+    const message = messageValue as { task_id?: unknown; parts?: unknown[] }
+    for (const part of Array.isArray(message.parts) ? message.parts : []) {
+      grantFromArtifactPart(message.task_id, part)
+    }
+  }
+}
 
 function resolveCoreBinary(): string {
   if (process.env.OPENYAK_CORE_BIN) return process.env.OPENYAK_CORE_BIN
@@ -62,16 +115,44 @@ function startCore(): CoreClient {
   const dataDir = app.getPath('userData')
   const shPath = shellPath()
   if (shPath) process.env.PATH = shPath
-  const args = ['--data-dir', dataDir, '--adapters', JSON.stringify(adapters())]
+  const args = [
+    '--data-dir',
+    dataDir,
+    '--adapters',
+    JSON.stringify(adapters()),
+    '--session-profiles',
+    JSON.stringify(agentHostProfiles()),
+  ]
   if (import.meta.env.DEV) console.log(`[main] spawning core: ${binary} ${args.join(' ')}`)
   const client = new CoreClient(binary, args)
 
   client.on('notification', (method: string, params: unknown) => {
+    grantFromCoreNotification(method, params)
     win?.webContents.send('core:notification', { method, params })
   })
 
   client.on('request', (id: number | string, method: string, params: unknown) => {
-    if (method !== 'permission.request' || !win) {
+    if (!win) {
+      client.respondError(id, -32601, `Method not found: ${method}`)
+      return
+    }
+    if (method === 'elicitation.request') {
+      const request = params as { mode?: unknown; url?: unknown }
+      if (request.mode !== 'form' && request.mode !== 'url') {
+        client.respond(id, { action: 'cancel' })
+        return
+      }
+      const key = String(id)
+      const onResponse = (_e: Electron.IpcMainEvent, payload: { key: string; result: unknown }) => {
+        if (payload.key !== key) return
+        ipcMain.off('core:elicitation-response', onResponse)
+        client.respond(id, payload.result ?? { action: 'cancel' })
+      }
+      ipcMain.on('core:elicitation-response', onResponse)
+      win.webContents.send('core:elicitation-request', { key, params })
+      return
+    }
+    if (method !== 'permission.request') {
       client.respondError(id, -32601, `Method not found: ${method}`)
       return
     }
@@ -116,7 +197,7 @@ function createWindow(): void {
   })
 
   win.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url)
+    if (url.startsWith('https://')) void shell.openExternal(url)
     return { action: 'deny' }
   })
 
@@ -144,7 +225,12 @@ nativeTheme.on('updated', () => {
 ipcMain.handle('core:request', async (_e, method: string, params: unknown) => {
   if (!core) throw new Error('core is not running')
   try {
-    return await core.request(method, params)
+    const result = await core.request(method, params)
+    if (method === 'chat.history') grantFromHistory(result)
+    if (method === 'task.delete' && params != null && typeof params === 'object') {
+      forgetArtifactGrants((params as { task_id?: unknown }).task_id)
+    }
+    return result
   } catch (err) {
     // Errors crossing IPC lose their fields; flatten to a message string.
     if (err instanceof CoreError) throw new Error(`${err.message} (code ${err.code})`)
@@ -201,6 +287,119 @@ ipcMain.handle('shell:open-external', async (_event, value: unknown) => {
   await shell.openExternal(url.toString())
 })
 
+ipcMain.handle('file:resolve', (_event, root: unknown, reference: unknown) =>
+  resolveProjectFile(root, reference),
+)
+
+ipcMain.handle('file:inspect', (_event, root: unknown, reference: unknown) =>
+  inspectProjectFilePreview(root, reference),
+)
+
+ipcMain.handle('file:open', async (_event, root: unknown, reference: unknown) => {
+  const file = await resolveProjectFile(root, reference)
+  if (!file) throw new Error('File is not available in the active project')
+  const error = await shell.openPath(file.path)
+  if (error) throw new Error(error)
+})
+
+ipcMain.handle('file:reveal', async (_event, root: unknown, reference: unknown) => {
+  const file = await resolveProjectFile(root, reference)
+  if (!file) throw new Error('File is not available in the active project')
+  shell.showItemInFolder(file.path)
+})
+
+const record = (value: unknown): Record<string, unknown> =>
+  value != null && typeof value === 'object' ? (value as Record<string, unknown>) : {}
+
+const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : [])
+
+const artifactRoot = (value: unknown): string => {
+  if (value == null) return path.join(app.getPath('userData'), 'projectless')
+  if (typeof value !== 'string') throw new Error('Invalid artifact project')
+  return value
+}
+
+async function collectCodexPages(method: string, params: Record<string, unknown>): Promise<{ data: unknown[] }> {
+  const data: unknown[] = []
+  const cursors = new Set<string>()
+  let cursor: string | null = null
+  do {
+    const result = record(await codexHost.request(method, { ...params, cursor }))
+    data.push(...list(result.data))
+    cursor = typeof result.nextCursor === 'string' ? result.nextCursor : null
+    if (cursor && cursors.has(cursor)) throw new Error(`${method} returned a repeated cursor`)
+    if (cursor) cursors.add(cursor)
+  } while (cursor)
+  return { data }
+}
+
+ipcMain.handle('codex:capabilities', async (_event, projectPath: unknown) => {
+  const cwds = typeof projectPath === 'string' && projectPath ? [projectPath] : []
+  const calls = await Promise.allSettled([
+    codexHost.request('skills/list', { cwds, forceReload: true }),
+    collectCodexPages('mcpServerStatus/list', { detail: 'toolsAndAuthOnly' }),
+    codexHost.request('app/installed', { forceRefresh: false }),
+  ])
+  const errors = calls.flatMap((result) =>
+    result.status === 'rejected' ? [result.reason instanceof Error ? result.reason.message : String(result.reason)] : [],
+  )
+
+  const skillsResult = calls[0].status === 'fulfilled' ? record(calls[0].value) : {}
+  const skills: CodexSkillSummary[] = list(skillsResult.data).flatMap((entryValue) =>
+    list(record(entryValue).skills).map((skillValue) => {
+      const skill = record(skillValue)
+      return {
+        name: typeof skill.name === 'string' ? skill.name : '',
+        description: typeof skill.description === 'string' ? skill.description : '',
+        path: typeof skill.path === 'string' ? skill.path : '',
+        enabled: skill.enabled !== false,
+        pluginId: typeof skill.pluginId === 'string' ? skill.pluginId : null,
+      }
+    }),
+  )
+
+  const mcpResult = calls[1].status === 'fulfilled' ? record(calls[1].value) : {}
+  const mcpServers: CodexMcpServerSummary[] = list(mcpResult.data).map((serverValue) => {
+    const server = record(serverValue)
+    return {
+      name: typeof server.name === 'string' ? server.name : '',
+      pluginId: typeof server.pluginId === 'string' ? server.pluginId : null,
+      status: typeof server.runtimeStatus === 'string' ? server.runtimeStatus : 'notStarted',
+      toolCount: Object.keys(record(server.tools)).length,
+    }
+  })
+  const appsResult = calls[2].status === 'fulfilled' ? record(calls[2].value) : {}
+  const capability: CodexHostCapabilities = {
+    skills,
+    mcpServers,
+    appCount: list(appsResult.apps).length,
+    errors,
+  }
+  return capability
+})
+
+ipcMain.handle('codex:skill-enabled', async (_event, pathValue: unknown, enabled: unknown) => {
+  if (typeof pathValue !== 'string' || typeof enabled !== 'boolean') throw new Error('Invalid skill update')
+  const result = await codexHost.request<{ effectiveEnabled?: unknown }>('skills/config/write', {
+    path: pathValue,
+    enabled,
+  })
+  return result.effectiveEnabled === true
+})
+
+ipcMain.handle('artifact:inspect', (_event, task: unknown, root: unknown, artifact: unknown) =>
+  inspectArtifact(task, artifactRoot(root), artifact),
+)
+
+ipcMain.handle('artifact:open', async (_event, task: unknown, root: unknown, file: unknown) => {
+  const error = await shell.openPath(resolveArtifactPath(task, artifactRoot(root), file))
+  if (error) throw new Error(error)
+})
+
+ipcMain.handle('artifact:reveal', (_event, task: unknown, root: unknown, file: unknown) => {
+  shell.showItemInFolder(resolveArtifactPath(task, artifactRoot(root), file))
+})
+
 ipcMain.handle('theme:set', (_event, value: unknown) => {
   if (value !== 'system' && value !== 'light' && value !== 'dark') {
     throw new Error('Invalid theme preference')
@@ -209,6 +408,8 @@ ipcMain.handle('theme:set', (_event, value: unknown) => {
 })
 
 app.whenReady().then(() => {
+  installArtifactProtocol()
+  installProjectFileProtocol()
   core = startCore()
   createWindow()
 
@@ -225,4 +426,5 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   core?.kill()
+  codexHost.kill()
 })

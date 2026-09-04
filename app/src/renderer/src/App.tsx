@@ -7,12 +7,17 @@ import type {
   AgentId,
   AgentStatus,
   Attachment,
+  ArtifactReference,
+  AvailableCommand,
   ChatDone,
   ChatUpdate,
+  ElicitationRequest,
+  ElicitationResponse,
   Message,
   PermissionRequest,
   PermissionResponse,
   Project,
+  ProjectFileReference,
   Task,
   ThemePreference,
 } from '../../shared/protocol'
@@ -25,10 +30,30 @@ import { titleFrom } from './format'
 import { ButtonTooltip } from './ButtonTooltip'
 import { Settings } from './Settings'
 import { readThemePreference, THEME_KEY } from './theme'
+import { commandsFromEventData } from './commandPresentation'
+import { artifactsFromParts, shouldAutoPreviewArtifact } from './artifactPresentation'
+import { ProjectFileReferenceProvider } from './MarkdownBlocks'
+import { WorkbenchPanel } from './WorkbenchPanel'
+import {
+  activateWorkbenchTab,
+  activeTabForTask,
+  artifactTab,
+  closeWorkbenchTab,
+  emptyWorkbenchState,
+  openWorkbenchTab,
+  projectFileTab,
+  removeTaskWorkbenchTabs,
+  tabsForTask,
+} from './workbenchTabs'
 
 export interface PendingPermission {
   request: PermissionRequest
   resolve: (res: PermissionResponse | null) => void
+}
+
+export interface PendingElicitation {
+  request: ElicitationRequest
+  resolve: (res: ElicitationResponse | null) => void
 }
 
 function basename(p: string): string {
@@ -115,14 +140,19 @@ export function App() {
   const [agentChoice, setAgentChoice] = useState<Record<string, AgentId>>({})
   const [statuses, setStatuses] = useState<Record<string, AgentStatus>>({})
   const [configs, setConfigs] = useState<Record<string, AgentConfigOption[]>>({})
+  const [commands, setCommands] = useState<Record<string, AvailableCommand[]>>({})
   const [settingConfig, setSettingConfig] = useState<string | null>(null)
   const [permission, setPermission] = useState<PendingPermission | null>(null)
+  const [elicitation, setElicitation] = useState<PendingElicitation | null>(null)
   const [cancelling, setCancelling] = useState(false)
   const [editingMessage, setEditingMessage] = useState<Message | null>(null)
   const [workingTasks, setWorkingTasks] = useState<Set<string>>(() => new Set())
   const [coreExited, setCoreExited] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(readSidebar)
+  const [workbench, setWorkbench] = useState(emptyWorkbenchState)
+  const autoPreviewedArtifact = useRef<string | null>(null)
+  const previewRequestSequence = useRef(0)
 
   // Latest values, readable from handlers and callbacks without re-creating them.
   const taskRef = useRef<string | null>(null)
@@ -142,6 +172,14 @@ export function App() {
   }, [projects])
 
   const fail = useCallback((err: unknown) => setError(userErrorMessage(err)), [])
+
+  const applyCommandEvent = useCallback((event: AgentEvent) => {
+    if (event.kind !== 'available_commands_update') return
+    setCommands((current) => ({
+      ...current,
+      [pairKey(event.task_id, event.agent)]: commandsFromEventData(event.data),
+    }))
+  }, [])
 
   useEffect(() => {
     void window.openyak.setTheme(theme).catch(fail)
@@ -187,6 +225,11 @@ export function App() {
         ),
       )
       setConfigs((current) =>
+        Object.fromEntries(
+          Object.entries(current).filter(([key]) => !key.endsWith(`/${id}`)),
+        ),
+      )
+      setCommands((current) =>
         Object.fromEntries(
           Object.entries(current).filter(([key]) => !key.endsWith(`/${id}`)),
         ),
@@ -318,6 +361,21 @@ export function App() {
     }
   }, [taskId, fail])
 
+  // Session commands and skills are independent ACP events, not chat messages.
+  useEffect(() => {
+    if (!taskId) return
+    let live = true
+    request<AgentEvent[]>('chat.events', { task_id: taskId })
+      .then((events) => {
+        if (!live) return
+        for (const event of events) applyCommandEvent(event)
+      })
+      .catch(fail)
+    return () => {
+      live = false
+    }
+  }, [applyCommandEvent, fail, taskId])
+
   /** Move a task to the top of its project after activity, counting new messages. */
   const bumpTask = useCallback((id: string, added = 0) => {
     const now = new Date().toISOString()
@@ -381,9 +439,9 @@ export function App() {
           return
         }
         case 'chat.event': {
-          // Stored by core; nothing renders it yet.
+          const e = n.params as AgentEvent
+          applyCommandEvent(e)
           if (import.meta.env.DEV) {
-            const e = n.params as AgentEvent
             console.log(`[chat.event] ${e.agent} ${e.kind}`, e.task_id)
           }
           return
@@ -394,6 +452,11 @@ export function App() {
           if (s.state === 'exited') {
             // Options belong to the session that just went away.
             setConfigs((prev) => {
+              const next = { ...prev }
+              delete next[pairKey(s.task_id, s.agent)]
+              return next
+            })
+            setCommands((prev) => {
               const next = { ...prev }
               delete next[pairKey(s.task_id, s.agent)]
               return next
@@ -415,6 +478,13 @@ export function App() {
           setPermission({ request: req, resolve })
         }),
     )
+    const offElicitation = window.openyak.onElicitationRequest(
+      (req) =>
+        new Promise<ElicitationResponse | null>((resolve) => {
+          if (import.meta.env.DEV) console.log('[rpc ⇠] elicitation.request', JSON.stringify(req))
+          setElicitation({ request: req, resolve })
+        }),
+    )
     const offExit = window.openyak.onCoreExited((exit) => {
       setWorkingTasks(new Set())
       setCoreExited(
@@ -424,9 +494,10 @@ export function App() {
     return () => {
       offNotification()
       offPermission()
+      offElicitation()
       offExit()
     }
-  }, [bumpTask, markTaskWorking])
+  }, [applyCommandEvent, bumpTask, markTaskWorking])
 
   // Disabled providers remain visible in Settings but are neither started nor offered in
   // the composer. The next message uses an explicit choice, then chat history, then the
@@ -599,10 +670,15 @@ export function App() {
           for (const taskId of deletedIds) next.delete(taskId)
           return next
         })
+        setWorkbench((prev) => removeTaskWorkbenchTabs(prev, deletedIds))
 
         if (permission && deletedIds.has(permission.request.task_id)) {
           permission.resolve(null)
           setPermission(null)
+        }
+        if (elicitation && deletedIds.has(elicitation.request.task_id)) {
+          elicitation.resolve({ action: 'cancel' })
+          setElicitation(null)
         }
         if (!selectedWillClose) return
         taskRef.current = null
@@ -616,7 +692,7 @@ export function App() {
         throw err
       }
     },
-    [fail, openDraft, permission],
+    [elicitation, fail, openDraft, permission],
   )
 
   const deleteTask = useCallback(
@@ -648,9 +724,14 @@ export function App() {
           return next
         })
         markTaskWorking(id, false)
+        setWorkbench((prev) => removeTaskWorkbenchTabs(prev, new Set([id])))
         if (permission?.request.task_id === id) {
           permission.resolve(null)
           setPermission(null)
+        }
+        if (elicitation?.request.task_id === id) {
+          elicitation.resolve({ action: 'cancel' })
+          setElicitation(null)
         }
         if (!selectedWillClose) return
         taskRef.current = null
@@ -664,7 +745,7 @@ export function App() {
         throw err
       }
     },
-    [fail, markTaskWorking, openDraft, permission],
+    [elicitation, fail, markTaskWorking, openDraft, permission],
   )
 
   const chooseAgent = useCallback(
@@ -753,6 +834,10 @@ export function App() {
         if (permission) {
           permission.resolve(null)
           setPermission(null)
+        }
+        if (elicitation) {
+          elicitation.resolve({ action: 'cancel' })
+          setElicitation(null)
         }
         void request('chat.cancel', { task_id: id }).catch(fail)
       }
@@ -936,11 +1021,15 @@ export function App() {
       permission.resolve(null)
       setPermission(null)
     }
+    if (elicitation) {
+      elicitation.resolve({ action: 'cancel' })
+      setElicitation(null)
+    }
     request('chat.cancel', { task_id: taskId }).catch((err) => {
       setCancelling(false)
       fail(err)
     })
-  }, [taskId, cancelling, permission, fail])
+  }, [taskId, cancelling, elicitation, permission, fail])
 
   const setConfig = useCallback(
     async (target: AgentId, configId: string, value: string | boolean) => {
@@ -972,6 +1061,14 @@ export function App() {
     [permission],
   )
 
+  const resolveElicitation = useCallback(
+    (response: ElicitationResponse) => {
+      elicitation?.resolve(response)
+      setElicitation(null)
+    },
+    [elicitation],
+  )
+
   const task = taskId
     ? (Object.values(tasksByProject)
         .flat()
@@ -979,6 +1076,10 @@ export function App() {
     : null
   const draft = !task || isDraft(task)
   const draftProjectId = draft ? (task?.project_id ?? null) : null
+  const projectPath = task?.project_id
+    ? projects.find((project) => project.id === task.project_id)?.path ?? null
+    : null
+
   const optionsByAgent: Partial<Record<AgentId, AgentConfigOption[] | null>> = taskId
     ? Object.fromEntries(available.map((a) => [a.id, configs[pairKey(taskId, a.id)] ?? null]))
     : {}
@@ -990,6 +1091,80 @@ export function App() {
     : {}
   const streaming = messages.some((m) => m.status === 'streaming')
   const notice = coreExited ?? error
+
+  const previewArtifact = useCallback(async (reference: ArtifactReference) => {
+    if (!taskId) return
+    if (!reference.path) {
+      if (reference.url) await window.openyak.openExternal(reference.url).catch(fail)
+      return
+    }
+    const openingTaskId = taskId
+    const sequence = ++previewRequestSequence.current
+    try {
+      const preview = await window.openyak.inspectArtifact(openingTaskId, projectPath, reference)
+      setWorkbench((current) => openWorkbenchTab(
+        current,
+        artifactTab(openingTaskId, preview),
+        sequence === previewRequestSequence.current,
+      ))
+    } catch (err) {
+      fail(err)
+    }
+  }, [fail, projectPath, taskId])
+
+  const previewProjectFile = useCallback(async (reference: ProjectFileReference) => {
+    if (!projectPath || !taskId) return
+    const openingTaskId = taskId
+    const sequence = ++previewRequestSequence.current
+    try {
+      const preview = await window.openyak.inspectProjectFile(projectPath, reference)
+      setWorkbench((current) => openWorkbenchTab(
+        current,
+        projectFileTab(openingTaskId, preview),
+        sequence === previewRequestSequence.current,
+      ))
+    } catch (err) {
+      fail(err)
+    }
+  }, [fail, projectPath, taskId])
+
+  useEffect(() => {
+    if (!taskId) return
+    const declarations = messages.flatMap((message) =>
+      artifactsFromParts(message.parts).map((item) => ({
+        ...item,
+        key: `${taskId}:${message.id}:${item.key}`,
+      })),
+    )
+    const latest = declarations.findLast(({ artifact }) => shouldAutoPreviewArtifact(artifact))
+    if (!latest || autoPreviewedArtifact.current === latest.key) return
+    autoPreviewedArtifact.current = latest.key
+    void previewArtifact(latest.artifact)
+  }, [messages, previewArtifact, projectPath, taskId])
+
+  const mainTitlebar = (
+    <header
+      className={`titlebar main-titlebar${!sidebarOpen && isMac ? ' with-traffic-lights' : ''}`}
+    >
+      {!sidebarOpen && (
+        <button
+          type="button"
+          className="icon-btn no-drag"
+          onClick={toggleSidebar}
+          title="Open sidebar"
+          aria-label="Open sidebar"
+        >
+          <IconSidebarToggle open={false} size={18} />
+        </button>
+      )}
+      <div className="main-title">
+        {activeView === 'settings' ? 'Settings' : task && !draft ? task.title : 'New chat'}
+      </div>
+    </header>
+  )
+  const taskWorkbenchTabs = tabsForTask(workbench, taskId)
+  const activeWorkbenchTab = activeTabForTask(workbench, taskId)
+  const workbenchOpen = activeWorkbenchTab !== null
 
   return (
     <div className="app">
@@ -1019,87 +1194,111 @@ export function App() {
       <main
         className={`main${activeView === 'settings' ? ' settings-open' : ''}`}
       >
-        <header
-          className={`titlebar main-titlebar${!sidebarOpen && isMac ? ' with-traffic-lights' : ''}`}
-        >
-          {!sidebarOpen && (
-            <button
-              type="button"
-              className="icon-btn no-drag"
-              onClick={toggleSidebar}
-              title="Open sidebar"
-              aria-label="Open sidebar"
-            >
-              <IconSidebarToggle open={false} size={18} />
-            </button>
-          )}
-          <div className="main-title">
-            {activeView === 'settings' ? 'Settings' : task && !draft ? task.title : 'New chat'}
-          </div>
-        </header>
-
         {activeView === 'settings' ? (
-          <Settings
-            agents={agents}
-            enabled={enabledProviders}
-            defaultProvider={defaultProvider}
-            statusByAgent={providerStatusByAgent}
-            scanning={scanningProviders}
-            providerChangesLocked={workingTasks.size > 0}
-            theme={theme}
-            onEnabledChange={updateProviderEnabled}
-            onDefaultChange={updateDefaultProvider}
-            onRescan={() => void rescanProviders()}
-            onOpenSetup={openProviderSetup}
-            onThemeChange={updateTheme}
-          />
-        ) : (
-          <div className={`chat-view${draft ? ' is-draft' : ''}`}>
-            <Thread
-              key={`thread-${taskId ?? NO_TASK}`}
-              messages={messages}
+          <>
+            {mainTitlebar}
+            <Settings
               agents={agents}
-              busy={streaming}
-              permission={permission}
-              onPermission={resolvePermission}
-              editingMessage={editingMessage}
-              onEdit={setEditingMessage}
-              onCancelEdit={() => setEditingMessage(null)}
-              onSubmitEdit={editAndResend}
-              onRetry={(message) => void retry(message)}
-              onContinue={() => void send('Continue from where you stopped.', [])}
-              empty={
-                draft ? (
-                  <div className="hero">
-                    <h1>What should we get done?</h1>
-                  </div>
-                ) : null
-              }
+              enabled={enabledProviders}
+              defaultProvider={defaultProvider}
+              statusByAgent={providerStatusByAgent}
+              scanning={scanningProviders}
+              providerChangesLocked={workingTasks.size > 0}
+              theme={theme}
+              onEnabledChange={updateProviderEnabled}
+              onDefaultChange={updateDefaultProvider}
+              onRescan={() => void rescanProviders()}
+              onOpenSetup={openProviderSetup}
+              onThemeChange={updateTheme}
+              projectPath={projectPath}
             />
+          </>
+        ) : (
+          <ProjectFileReferenceProvider projectPath={projectPath} onOpen={previewProjectFile}>
+            <div className={`workspace-shell${workbenchOpen ? ' has-workbench' : ''}`}>
+              <section className="chat-workspace" aria-label="Chat">
+                {mainTitlebar}
+                <div className={`chat-view${draft ? ' is-draft' : ''}`}>
+                  <div className="chat-stage">
+                    <Thread
+                      key={`thread-${taskId ?? NO_TASK}`}
+                      messages={messages}
+                      agents={agents}
+                      busy={streaming}
+                      permission={permission}
+                      elicitation={elicitation}
+                      onPermission={resolvePermission}
+                      onElicitation={resolveElicitation}
+                      editingMessage={editingMessage}
+                      onEdit={setEditingMessage}
+                      onCancelEdit={() => setEditingMessage(null)}
+                      onSubmitEdit={editAndResend}
+                      onRetry={(message) => void retry(message)}
+                      onContinue={() => void send('Continue from where you stopped.', [])}
+                      onOpenArtifact={(path) => void previewArtifact(path)}
+                      empty={
+                        draft ? (
+                          <div className="hero">
+                            <h1>What should we get done?</h1>
+                          </div>
+                        ) : null
+                      }
+                    />
+                  </div>
 
-            {!editingMessage && (
-              <Composer
-                key={taskId ?? NO_TASK}
-                draft={draft}
-                hasChat={task !== null}
-                projects={projects}
-                draftProjectId={draftProjectId}
-                onChooseProject={selectProject}
-                onAddProject={addProject}
-                agents={composerAgents}
-                agent={agent}
-                onAgentChange={chooseAgent}
-                optionsByAgent={optionsByAgent}
-                statusByAgent={statusByAgent}
-                settingConfig={settingConfig}
-                onSetConfig={setConfig}
-                streaming={streaming}
-                cancelling={cancelling}
-                onSend={send}
-                onCancel={cancel}
-              />
-            )}
-          </div>
+                  {!editingMessage && (
+                    <Composer
+                      key={taskId ?? NO_TASK}
+                      draft={draft}
+                      hasChat={task !== null}
+                      projects={projects}
+                      draftProjectId={draftProjectId}
+                      onChooseProject={selectProject}
+                      onAddProject={addProject}
+                      agents={composerAgents}
+                      agent={agent}
+                      onAgentChange={chooseAgent}
+                      optionsByAgent={optionsByAgent}
+                      statusByAgent={statusByAgent}
+                      settingConfig={settingConfig}
+                      onSetConfig={setConfig}
+                      commands={agent && taskId ? commands[pairKey(taskId, agent)] ?? [] : []}
+                      streaming={streaming}
+                      cancelling={cancelling}
+                      onSend={send}
+                      onCancel={cancel}
+                    />
+                  )}
+                </div>
+              </section>
+              {activeWorkbenchTab && (
+                <WorkbenchPanel
+                  tabs={taskWorkbenchTabs}
+                  active={activeWorkbenchTab}
+                  projectName={projectPath ? basename(projectPath) : undefined}
+                  onSelect={(key) => setWorkbench((current) => activateWorkbenchTab(current, key))}
+                  onClose={(key) => setWorkbench((current) => closeWorkbenchTab(current, key))}
+                  onOpen={(tab) => {
+                    const operation = tab.kind === 'artifact'
+                      ? window.openyak.openArtifact(tab.taskId, projectPath, tab.preview.path)
+                      : window.openyak.openProjectFile(projectPath, tab.preview)
+                    void operation.catch(fail)
+                  }}
+                  onReveal={(tab) => {
+                    const operation = tab.kind === 'artifact'
+                      ? window.openyak.revealArtifact(tab.taskId, projectPath, tab.preview.path)
+                      : window.openyak.revealProjectFile(projectPath, tab.preview)
+                    void operation.catch(fail)
+                  }}
+                  onOpenPublished={(tab) => {
+                    if (tab.kind === 'artifact' && tab.preview.sourceUrl) {
+                      void window.openyak.openExternal(tab.preview.sourceUrl).catch(fail)
+                    }
+                  }}
+                />
+              )}
+            </div>
+          </ProjectFileReferenceProvider>
         )}
 
         {notice && (

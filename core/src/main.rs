@@ -1,6 +1,7 @@
 //! openyak-core: transcript store + ACP client, spoken to over stdio JSON-RPC.
 
 mod agents;
+mod artifacts;
 mod handoff;
 mod rpc;
 mod store;
@@ -11,13 +12,13 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use serde_json::Value;
+use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{error, warn};
 
 use agent_client_protocol::AcpAgentConfig;
-use agents::AgentPool;
+use agents::{AgentPool, SessionProfile};
 use rpc::Outbound;
 use store::Store;
 
@@ -35,6 +36,10 @@ struct Args {
     /// Agents not listed fall back to an adapter binary on PATH.
     #[arg(long)]
     adapters: Option<String>,
+    /// JSON map from agent id to ACP `session/new` / `session/load` additions.
+    /// The shape is protocol-native: `{ "claude": { "mcpServers": [], "_meta": {} } }`.
+    #[arg(long)]
+    session_profiles: Option<String>,
 }
 
 /// Everything shared between request handlers and agent connections.
@@ -45,6 +50,7 @@ pub struct Ctx {
     /// Neutral workspace used by Chats that are not attached to a Project.
     pub projectless_dir: String,
     permissions: Mutex<HashMap<String, oneshot::Sender<Option<String>>>>,
+    elicitations: Mutex<HashMap<String, oneshot::Sender<Value>>>,
 }
 
 impl Ctx {
@@ -71,6 +77,33 @@ impl Ctx {
             .remove(request_id);
         match tx {
             Some(tx) => tx.send(option_id).is_ok(),
+            None => false,
+        }
+    }
+
+    pub fn register_elicitation(&self, request_id: String, tx: oneshot::Sender<Value>) {
+        self.elicitations
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(request_id, tx);
+    }
+
+    pub fn forget_elicitation(&self, request_id: &str) {
+        self.elicitations
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(request_id);
+    }
+
+    /// Deliver an ACP elicitation response verbatim; false if the request is no longer pending.
+    pub fn resolve_elicitation(&self, request_id: &str, response: Value) -> bool {
+        let tx = self
+            .elicitations
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(request_id);
+        match tx {
+            Some(tx) => tx.send(response).is_ok(),
             None => false,
         }
     }
@@ -107,6 +140,10 @@ async fn run() -> Result<()> {
         Some(json) => serde_json::from_str(json).context("parse --adapters")?,
         None => HashMap::new(),
     };
+    let session_profiles: HashMap<String, SessionProfile> = match &args.session_profiles {
+        Some(json) => serde_json::from_str(json).context("parse --session-profiles")?,
+        None => HashMap::new(),
+    };
 
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<String>();
     let writer = tokio::spawn(async move {
@@ -122,9 +159,10 @@ async fn run() -> Result<()> {
     let ctx = Arc::new(Ctx {
         store,
         out: Outbound(out_tx),
-        agents: AgentPool::new(adapters),
+        agents: AgentPool::new(adapters, session_profiles),
         projectless_dir: projectless_dir.to_string_lossy().into_owned(),
         permissions: Mutex::default(),
+        elicitations: Mutex::default(),
     });
 
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
@@ -163,7 +201,7 @@ fn handle_line(ctx: &Arc<Ctx>, msg: Value) {
         }
         tokio::spawn(rpc::dispatch(ctx.clone(), id, method.to_string(), params));
     } else if msg.get("result").is_some() || msg.get("error").is_some() {
-        // A JSON-RPC response to a core → app request (permission.request).
+        // A JSON-RPC response to a core → app permission or elicitation request.
         let Some(request_id) = id.as_str() else {
             error!("response with non-string id: {msg}");
             return;
@@ -173,7 +211,14 @@ fn handle_line(ctx: &Arc<Ctx>, msg: Value) {
             .and_then(|r| r.get("option_id"))
             .and_then(Value::as_str)
             .map(str::to_string);
-        if !ctx.resolve_permission(request_id, option_id) {
+        if ctx.resolve_permission(request_id, option_id) {
+            return;
+        }
+        let elicitation = msg
+            .get("result")
+            .cloned()
+            .unwrap_or_else(|| json!({ "action": "cancel" }));
+        if !ctx.resolve_elicitation(request_id, elicitation) {
             warn!(request_id, "response for unknown request");
         }
     } else {

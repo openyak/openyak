@@ -10,6 +10,8 @@ import {
   hasActiveTool,
   initialStreamingText,
   latestActiveToolId,
+  latestLiveReasoning,
+  latestLiveToolId,
   liveActivityLabel,
   partitionAssistantParts,
   shouldShowThinking,
@@ -51,9 +53,28 @@ test('streaming keeps all accumulated temporary content visible until completion
   const current = tool('third', 'in_progress')
 
   assert.deepEqual(partitionAssistantParts([...previous, current], true), {
-    workParts: [],
-    visibleParts: [commentary, previous[2], previous[4], current],
+    workParts: [commentary, previous[2], previous[4], current],
+    visibleParts: [],
   })
+})
+
+test('Claude-style command bursts collapse into one live work activity', () => {
+  const commentary = text('I will inspect the repository first.')
+  const commands = Array.from({ length: 18 }, (_, index) =>
+    tool(`command-${index + 1}`, index === 17 ? 'in_progress' : 'completed'),
+  )
+
+  const presentation = partitionAssistantParts([commentary, ...commands], true)
+  assert.deepEqual(presentation, {
+    workParts: [commentary, ...commands],
+    visibleParts: [],
+  })
+  assert.deepEqual(
+    buildWorkTimeline(presentation.workParts).map((entry) =>
+      entry.type === 'activity' ? entry.activity.label : entry.type,
+    ),
+    ['narrative', 'Running 18 commands'],
+  )
 })
 
 test('stored-only event parts never count as visible content while streaming', () => {
@@ -62,12 +83,12 @@ test('stored-only event parts never count as visible content while streaming', (
   const inspect = tool('inspect', 'completed')
 
   assert.deepEqual(partitionAssistantParts([usage, plan], true), {
-    workParts: [],
-    visibleParts: [plan],
+    workParts: [plan],
+    visibleParts: [],
   })
   assert.deepEqual(partitionAssistantParts([usage, inspect, event('plan')], true), {
-    workParts: [],
-    visibleParts: [inspect],
+    workParts: [inspect],
+    visibleParts: [],
   })
 })
 
@@ -95,8 +116,8 @@ test('a completed tool stays visible until the next streaming activity arrives',
   const completed = tool('inspect', 'completed')
 
   assert.deepEqual(partitionAssistantParts([plan, completed], true), {
-    workParts: [],
-    visibleParts: [completed],
+    workParts: [completed],
+    visibleParts: [],
   })
 })
 
@@ -105,8 +126,8 @@ test('a new thought does not hide earlier streaming activity', () => {
   const currentThought = thought('checking the result')
 
   assert.deepEqual(partitionAssistantParts([completed, currentThought], true), {
-    workParts: [],
-    visibleParts: [completed, currentThought],
+    workParts: [completed, currentThought],
+    visibleParts: [],
   })
 })
 
@@ -115,8 +136,8 @@ test('streaming final text keeps temporary work visible until chat.done', () => 
   const answer = text('Final answer')
 
   assert.deepEqual(partitionAssistantParts([...work, answer], true), {
-    workParts: [],
-    visibleParts: [work[1], answer],
+    workParts: [work[1]],
+    visibleParts: [answer],
   })
 })
 
@@ -136,8 +157,8 @@ test('out-of-order tool updates do not remove earlier streaming content', () => 
   const completed = tool('parallel-b', 'completed')
 
   assert.deepEqual(partitionAssistantParts([thought('plan'), current, completed], true), {
-    workParts: [],
-    visibleParts: [current, completed],
+    workParts: [current, completed],
+    visibleParts: [],
   })
 })
 
@@ -152,8 +173,8 @@ test('streaming exposes at most the currently active thought indicator', () => {
       true,
     ),
     {
-      workParts: [],
-      visibleParts: [commentary, command, currentThought],
+      workParts: [commentary, command, currentThought],
+      visibleParts: [],
     },
   )
 })
@@ -190,14 +211,18 @@ test('thought-only work is folded into worked instead of creating another disclo
   })
 })
 
-test('reasoning summaries become Codex-style work status rows', () => {
-  assert.deepEqual(buildWorkTimeline([thought('\n\n**Separating commands**\n\n')]), [
-    {
-      type: 'status',
-      part: thought('\n\n**Separating commands**\n\n'),
-      partIndex: 0,
-    },
-  ])
+test('completed reasoning summaries stay out of the visible work timeline', () => {
+  assert.deepEqual(buildWorkTimeline([thought('\n\n**Separating commands**\n\n')]), [])
+})
+
+test('only a trailing live reasoning summary becomes a temporary status', () => {
+  const planning = thought('\n\n**Planning the inspection**')
+  const command = tool('inspect', 'completed')
+
+  assert.equal(latestLiveReasoning([planning], true), planning)
+  assert.equal(latestLiveReasoning([planning, event('usage_update')], true), planning)
+  assert.equal(latestLiveReasoning([planning, command], true), null)
+  assert.equal(latestLiveReasoning([planning], false), null)
 })
 
 test('generic thinking is only the empty-state fallback', () => {
@@ -208,15 +233,21 @@ test('generic thinking is only the empty-state fallback', () => {
   assert.equal(shouldShowThinking([], false), false)
 })
 
-test('the latest active tool uses its provider title instead of a generic verb', () => {
+test('the latest active semantic tool uses its provider title instead of a generic verb', () => {
   const active: Part = {
     ...tool('validate-dragging', 'in_progress'),
     title: 'Verifying enlarged image dragging',
+    kind: 'edit',
   }
   const fallback: Part = { ...tool('opaque-id', 'in_progress'), title: 'opaque-id' }
+  const shell: Part = {
+    ...tool('shell-command', 'in_progress'),
+    title: 'find . -type f | sort',
+  }
 
   assert.equal(liveActivityLabel([active] as Extract<Part, { type: 'tool_call' }>[], 'validate-dragging'), 'Verifying enlarged image dragging')
   assert.equal(liveActivityLabel([fallback] as Extract<Part, { type: 'tool_call' }>[], 'opaque-id'), 'Running a command')
+  assert.equal(liveActivityLabel([shell] as Extract<Part, { type: 'tool_call' }>[], 'shell-command'), 'Running a command')
 })
 
 test('completed work summary reports elapsed time instead of step count', () => {
@@ -246,6 +277,15 @@ test('only the latest active tool drives the live activity effect', () => {
   assert.equal(latestActiveToolId([completed]), null)
 })
 
+test('the latest completed tool keeps the live effect while the agent waits', () => {
+  const completed = tool('latest-command', 'completed')
+
+  assert.equal(latestLiveToolId([completed], true), 'latest-command')
+  assert.equal(latestLiveToolId([completed, event('usage_update')], true), 'latest-command')
+  assert.equal(latestLiveToolId([completed, thought('Reviewing the result')], true), null)
+  assert.equal(latestLiveToolId([completed], false), null)
+})
+
 test('expanded work preserves chronology and groups only adjacent tools', () => {
   const plan = thought('Planning inspection')
   const readA: Part = { ...tool('Read Message.tsx', 'completed'), kind: 'read' }
@@ -254,7 +294,6 @@ test('expanded work preserves chronology and groups only adjacent tools', () => 
   const run: Part = { ...tool('npm test', 'completed'), kind: 'execute' }
 
   assert.deepEqual(buildWorkTimeline([plan, readA, readB, update, run]), [
-    { type: 'status', part: plan, partIndex: 0 },
     {
       type: 'activity',
       activity: { kind: 'read', tools: [readA, readB], label: 'Read 2 files' },

@@ -75,7 +75,7 @@ export type Part =
       _meta?: Record<string, unknown>
     }
   | { type: 'error'; message: string }
-  // Any other ACP session update or extension notification, verbatim; nothing renders it yet.
+  // ACP/extension events. Normalized artifact.* events are rendered; other kinds stay opaque.
   | { type: 'event'; kind: string; data: unknown }
   // Attachments on a user message. Images travel as base64; files by path.
   | { type: 'image'; mime_type: string; data: string }
@@ -93,6 +93,103 @@ export interface AgentEvent {
   kind: string
   data: unknown
   created_at: string
+}
+
+/** ACP command advertised by the active agent. Skill commands conventionally start with `$`. */
+export interface AvailableCommand {
+  name: string
+  description: string
+  input?: { hint?: string }
+  _meta?: Record<string, unknown>
+}
+
+export interface CodexSkillSummary {
+  name: string
+  description: string
+  path: string
+  enabled: boolean
+  pluginId: string | null
+}
+
+export interface CodexMcpServerSummary {
+  name: string
+  pluginId: string | null
+  status: string
+  toolCount: number
+}
+
+export interface CodexHostCapabilities {
+  skills: CodexSkillSummary[]
+  mcpServers: CodexMcpServerSummary[]
+  appCount: number
+  errors: string[]
+}
+
+export interface ArtifactPreview {
+  path: string
+  name: string
+  extension: string
+  size: number
+  previewUrl: string
+  /** Text preview capped by the desktop host; null for binary files. */
+  content: string | null
+  truncated: boolean
+  /** Host-converted semantic HTML for document formats such as DOCX. */
+  renderedHtml?: string
+  /** Official published page, when the Agent supplied one. */
+  sourceUrl?: string
+  title?: string
+  artifactId?: string
+  version?: string
+}
+
+/** Provider-neutral reference carried by normalized `artifact.*` event Parts. */
+export interface ArtifactReference {
+  id?: string
+  path?: string
+  url?: string
+  title?: string
+  version?: string
+  contract?: string
+  audience?: string
+  live_subscription?: string
+  capabilities?: unknown
+}
+
+export interface ArtifactEventData {
+  schema_version: 1
+  tool_call_id: string
+  operation: string
+  artifact?: ArtifactReference | null
+  artifacts?: ArtifactReference[]
+  asset?: unknown
+  [key: string]: unknown
+}
+
+/** Provider-neutral file location written in assistant Markdown. */
+export interface ProjectFileReference {
+  path: string
+  line?: number
+  column?: number
+}
+
+export interface ResolvedProjectFile extends ProjectFileReference {
+  /** Canonical absolute path, validated to be inside the active project. */
+  path: string
+  relativePath: string
+  name: string
+  extension: string
+  size: number
+}
+
+export interface ProjectFilePreview extends ResolvedProjectFile {
+  /** Short-lived URL served by the desktop host for browser-renderable files. */
+  previewUrl: string
+  /** Null for binary files. Text is capped by the desktop host. */
+  content: string | null
+  truncated: boolean
+  /** Host-converted semantic HTML for document formats such as DOCX. */
+  renderedHtml?: string
 }
 
 /** What the app attaches to a message; becomes image/file Parts and ACP content blocks. */
@@ -198,6 +295,64 @@ export interface PermissionResponse {
   option_id: string | null
 }
 
+/** Primitive JSON Schema subset defined by ACP elicitation. Unknown extension fields pass through. */
+export interface ElicitationPropertySchema {
+  type?: 'string' | 'number' | 'integer' | 'boolean' | 'array'
+  title?: string
+  description?: string
+  default?: string | number | boolean | string[]
+  oneOf?: ElicitationEnumOption[]
+  enum?: Array<string | number>
+  items?: {
+    anyOf?: ElicitationEnumOption[]
+    enum?: Array<string | number>
+    [key: string]: unknown
+  }
+  _meta?: Record<string, unknown>
+  [key: string]: unknown
+}
+
+export interface ElicitationEnumOption {
+  const?: string | number
+  title?: string
+  description?: string
+  _meta?: Record<string, unknown>
+  [key: string]: unknown
+}
+
+interface ElicitationRequestBase {
+  request_id: string
+  task_id: string
+  agent: AgentId
+  message: string
+  sessionId?: string
+  toolCallId?: string
+  _meta?: Record<string, unknown>
+}
+
+export interface FormElicitationRequest extends ElicitationRequestBase {
+  mode: 'form'
+  requestedSchema: {
+    type: 'object'
+    properties?: Record<string, ElicitationPropertySchema>
+    required?: string[]
+    [key: string]: unknown
+  }
+}
+
+export interface UrlElicitationRequest extends ElicitationRequestBase {
+  mode: 'url'
+  url: string
+  elicitationId: string
+}
+
+export type ElicitationRequest = FormElicitationRequest | UrlElicitationRequest
+
+export type ElicitationResponse =
+  | { action: 'accept'; content?: Record<string, string | number | boolean | string[]> }
+  | { action: 'decline' }
+  | { action: 'cancel' }
+
 // Bridge exposed by the preload as window.openyak
 
 export interface CoreExit {
@@ -209,6 +364,7 @@ export interface OpenYakApi {
   request<T = unknown>(method: string, params?: unknown): Promise<T>
   onNotification(cb: (n: Notification) => void): () => void
   onPermissionRequest(cb: (req: PermissionRequest) => Promise<PermissionResponse | null>): () => void
+  onElicitationRequest(cb: (req: ElicitationRequest) => Promise<ElicitationResponse | null>): () => void
   onCoreExited(cb: (exit: CoreExit) => void): () => void
   pickDirectory(): Promise<string | null>
   /** Files and/or folders chosen in the OS dialog; empty when cancelled. */
@@ -219,6 +375,28 @@ export interface OpenYakApi {
   saveImage(image: { mimeType: string; data: string; suggestedName?: string }): Promise<boolean>
   /** Open a trusted HTTPS setup page in the user's default browser. */
   openExternal(url: string): Promise<void>
+  /** Resolve a Markdown candidate without granting access outside the active project. */
+  resolveProjectFile(
+    projectPath: string | null,
+    reference: ProjectFileReference,
+  ): Promise<ResolvedProjectFile | null>
+  inspectProjectFile(
+    projectPath: string | null,
+    reference: ProjectFileReference,
+  ): Promise<ProjectFilePreview>
+  openProjectFile(projectPath: string | null, reference: ProjectFileReference): Promise<void>
+  revealProjectFile(projectPath: string | null, reference: ProjectFileReference): Promise<void>
+  /** Inventory from the public Codex App Server used by the official desktop host. */
+  codexCapabilities(projectPath?: string | null): Promise<CodexHostCapabilities>
+  setCodexSkillEnabled(path: string, enabled: boolean): Promise<boolean>
+  /** Validate a generated file against its project and create a short-lived preview URL. */
+  inspectArtifact(
+    taskId: string,
+    projectPath: string | null,
+    artifact: ArtifactReference,
+  ): Promise<ArtifactPreview>
+  openArtifact(taskId: string, projectPath: string | null, filePath: string): Promise<void>
+  revealArtifact(taskId: string, projectPath: string | null, filePath: string): Promise<void>
   /** Apply the user's theme to Electron chrome and the renderer. */
   setTheme(theme: ThemePreference): Promise<void>
   /** On-disk path of a dropped or pasted File, or '' when it has none (clipboard images). */

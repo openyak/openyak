@@ -30,7 +30,6 @@ export interface WorkActivity {
 
 export type WorkTimelineEntry =
   | { type: 'narrative'; part: WorkNarrativePart; partIndex: number }
-  | { type: 'status'; part: WorkStatusPart; partIndex: number }
   | { type: 'activity'; activity: WorkActivity; partIndex: number }
 
 export function isContextCompaction(part: Part): boolean {
@@ -64,6 +63,34 @@ export function latestActiveToolId(parts: Part[]): string | null {
   for (let index = parts.length - 1; index >= 0; index -= 1) {
     const part = parts[index]
     if (part.type === 'tool_call' && isToolActive(part)) return part.id
+  }
+  return null
+}
+
+/**
+ * Keep the most recent tool visually live while the agent consumes its result. A newer
+ * thought, commentary, or error takes ownership immediately; event parts are display-only
+ * metadata and do not end the activity.
+ */
+export function latestLiveToolId(parts: Part[], streaming: boolean): string | null {
+  if (!streaming) return null
+  const activeToolId = latestActiveToolId(parts)
+  if (activeToolId) return activeToolId
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const part = parts[index]
+    if (part.type === 'event' || part.type === 'image' || part.type === 'file') continue
+    return part.type === 'tool_call' ? part.id : null
+  }
+  return null
+}
+
+/** Codex Desktop surfaces only the current reasoning summary as transient activity text. */
+export function latestLiveReasoning(parts: Part[], streaming: boolean): WorkStatusPart | null {
+  if (!streaming) return null
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const part = parts[index]
+    if (part.type === 'event' || part.type === 'image' || part.type === 'file') continue
+    return part.type === 'thought' && part.text.trim() ? part : null
   }
   return null
 }
@@ -120,11 +147,13 @@ export function describeToolGroup(tools: ToolPart[]): string {
     .join(', ')
 }
 
-/** Active ACP tool titles are already concise, user-facing descriptions. */
+/** Prefer semantic ACP titles, but keep raw shell commands inside the disclosure. */
 export function liveActivityLabel(tools: ToolPart[], activeToolId: string | null): string {
   const activeTool = tools.find((tool) => tool.id === activeToolId)
   const title = activeTool?.title.trim()
-  return title && title !== activeTool?.id ? title : describeToolGroup(tools)
+  return activeTool && toolActivityKind(activeTool) !== 'execute' && title && title !== activeTool.id
+    ? title
+    : describeToolGroup(tools)
 }
 
 /**
@@ -173,10 +202,8 @@ export function buildWorkTimeline(parts: Part[]): WorkTimelineEntry[] {
       })
       return
     }
-    if (part.type === 'thought') {
-      if (part.text.trim()) entries.push({ type: 'status', part, partIndex })
-      return
-    }
+    // Reasoning summaries are transient status, not durable activity rows.
+    if (part.type === 'thought') return
     if (part.type === 'text' || part.type === 'error') {
       entries.push({ type: 'narrative', part, partIndex })
     }
@@ -289,12 +316,20 @@ export function partitionAssistantParts(
       return { workParts: parts, visibleParts: [] }
     }
 
-    // Thought contents remain private. Keep one generic Thinking indicator only while
-    // the newest Part is still a thought; completed thought phases should not accumulate.
-    const visibleParts = parts.filter(
+    // Legacy providers do not identify final-answer text. Keep only their latest thought,
+    // then fold everything through the last work item into the same live disclosure. Text
+    // arriving after that item is the best available signal that the final answer started.
+    const legacyParts = parts.filter(
       (part, index) => part.type !== 'thought' || index === parts.length - 1,
     )
-    return { workParts: [], visibleParts }
+    const lastWorkIndex = legacyParts.findLastIndex(
+      (part) => part.type === 'tool_call' || part.type === 'thought' || part.type === 'error',
+    )
+    if (lastWorkIndex < 0) return { workParts: [], visibleParts: legacyParts }
+    return {
+      workParts: legacyParts.slice(0, lastWorkIndex + 1),
+      visibleParts: legacyParts.slice(lastWorkIndex + 1),
+    }
   }
 
   const lastWorkIndex = parts.findLastIndex(

@@ -7,8 +7,16 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import type { Agent, Attachment, Message, PermissionRequest } from '../../shared/protocol'
-import type { PendingPermission } from './App'
+import type {
+  Agent,
+  ArtifactReference,
+  Attachment,
+  ElicitationResponse,
+  Message,
+  PermissionRequest,
+} from '../../shared/protocol'
+import type { PendingElicitation, PendingPermission } from './App'
+import { ElicitationCard } from './ElicitationCard'
 import { MessageItem } from './Message'
 import { IconArrowDown, IconHand } from './icons'
 
@@ -17,13 +25,16 @@ interface Props {
   agents: Agent[]
   busy: boolean
   permission: PendingPermission | null
+  elicitation: PendingElicitation | null
   onPermission: (optionId: string | null) => void
+  onElicitation: (response: ElicitationResponse) => void
   editingMessage: Message | null
   onEdit: (message: Message) => void
   onCancelEdit: () => void
   onSubmitEdit: (message: Message, text: string, attachments: Attachment[]) => Promise<boolean>
   onRetry: (message: Message) => void
   onContinue: () => void
+  onOpenArtifact?: (artifact: ArtifactReference) => void
   /** Shown instead of the list while there are no messages. */
   empty: ReactNode
 }
@@ -77,13 +88,16 @@ export function Thread({
   agents,
   busy,
   permission,
+  elicitation,
   onPermission,
+  onElicitation,
   editingMessage,
   onEdit,
   onCancelEdit,
   onSubmitEdit,
   onRetry,
   onContinue,
+  onOpenArtifact,
   empty,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null)
@@ -220,6 +234,7 @@ export function Thread({
                   onSubmitEdit={onSubmitEdit}
                   onRetry={onRetry}
                   onContinue={onContinue}
+                  onOpenArtifact={onOpenArtifact}
                 />
               </div>
             ))}
@@ -228,6 +243,13 @@ export function Thread({
                 request={permission.request}
                 agentName={name(permission.request.agent)}
                 onChoose={onPermission}
+              />
+            )}
+            {elicitation && (
+              <ElicitationCard
+                request={elicitation.request}
+                agentName={name(elicitation.request.agent)}
+                onRespond={onElicitation}
               />
             )}
           </div>

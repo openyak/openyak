@@ -1,22 +1,35 @@
 export type Point = { x: number; y: number }
 export type ScrollPosition = { left: number; top: number }
 
-const INLINE_DIAGRAM_FALLBACK_WIDTH = 720
-const INLINE_DIAGRAM_MIN_SCALE = 0.78
-const INLINE_DIAGRAM_MAX_WIDTH = 3200
+export type DiagramSize = { width: number; height: number }
+export type InlineDiagramStyle = { width: string; maxWidth: '100%' }
 
-/** Keep Mermaid text near its authored size; wide diagrams scroll instead of shrinking to prose. */
-export function inlineDiagramMinWidth(svg: string): number {
+/** Read the intrinsic Mermaid canvas without interpreting diagram source or provider output. */
+export function diagramViewBoxSize(svg: string): DiagramSize | null {
   const match = svg.match(
-    /viewBox\s*=\s*["']\s*[-+]?\d*\.?\d+(?:e[-+]?\d+)?\s+[-+]?\d*\.?\d+(?:e[-+]?\d+)?\s+([-+]?\d*\.?\d+(?:e[-+]?\d+)?)\s+[-+]?\d*\.?\d+(?:e[-+]?\d+)?\s*["']/i,
+    /viewBox\s*=\s*["']\s*[-+]?\d*\.?\d+(?:e[-+]?\d+)?\s+[-+]?\d*\.?\d+(?:e[-+]?\d+)?\s+([-+]?\d*\.?\d+(?:e[-+]?\d+)?)\s+([-+]?\d*\.?\d+(?:e[-+]?\d+)?)\s*["']/i,
   )
-  const viewBoxWidth = match ? Number(match[1]) : Number.NaN
-  if (!Number.isFinite(viewBoxWidth) || viewBoxWidth <= 0) {
-    return INLINE_DIAGRAM_FALLBACK_WIDTH
-  }
-  return Math.min(
-    INLINE_DIAGRAM_MAX_WIDTH,
-    Math.max(INLINE_DIAGRAM_FALLBACK_WIDTH, Math.ceil(viewBoxWidth * INLINE_DIAGRAM_MIN_SCALE)),
+  const width = match ? Number(match[1]) : Number.NaN
+  const height = match ? Number(match[2]) : Number.NaN
+  return Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0
+    ? { width, height }
+    : null
+}
+
+/** Match Codex-style inline sizing: natural size when it fits, responsive shrink otherwise. */
+export function inlineDiagramStyle(svg: string): InlineDiagramStyle {
+  const size = diagramViewBoxSize(svg)
+  return { width: size ? `${size.width}px` : 'auto', maxWidth: '100%' }
+}
+
+/** Overflow is intrinsic, even though CSS fits the displayed SVG into the available width. */
+export function diagramOverflows(naturalWidth: number, availableWidth: number): boolean {
+  return (
+    Number.isFinite(naturalWidth) &&
+    Number.isFinite(availableWidth) &&
+    naturalWidth > 0 &&
+    availableWidth > 0 &&
+    naturalWidth > availableWidth + 1
   )
 }
 

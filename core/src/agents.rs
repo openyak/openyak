@@ -6,18 +6,21 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use agent_client_protocol::schema::v1::{
-    AgentNotification, CancelNotification, ContentBlock, ExtNotification, ImageContent,
-    InitializeRequest, LoadSessionRequest, NewSessionRequest, PermissionOption, PromptRequest,
-    PromptResponse, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
-    ResourceLink, SelectedPermissionOutcome, SessionConfigId, SessionConfigKind,
-    SessionConfigOption, SessionConfigOptionCategory, SessionConfigOptionValue,
-    SessionConfigSelectOption, SessionConfigSelectOptions, SessionConfigValueId, SessionId,
-    SessionModeId, SessionModeState, SessionUpdate, SetSessionConfigOptionRequest,
-    SetSessionModeRequest, StopReason, TextContent, ToolCall, ToolCallContent, ToolCallUpdate,
+    AgentNotification, CancelNotification, ClientCapabilities, ContentBlock,
+    CreateElicitationRequest, CreateElicitationResponse, ElicitationAction,
+    ElicitationCapabilities, ElicitationFormCapabilities, ElicitationUrlCapabilities,
+    ExtNotification, ImageContent, InitializeRequest, LoadSessionRequest, McpServer, Meta,
+    NewSessionRequest, PermissionOption, PromptRequest, PromptResponse, RequestPermissionOutcome,
+    RequestPermissionRequest, RequestPermissionResponse, ResourceLink, SelectedPermissionOutcome,
+    SessionConfigId, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
+    SessionConfigOptionValue, SessionConfigSelectOption, SessionConfigSelectOptions,
+    SessionConfigValueId, SessionId, SessionModeId, SessionModeState, SessionUpdate,
+    SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason, TextContent, ToolCall,
+    ToolCallContent, ToolCallUpdate,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{AcpAgent, Agent, Client, ConnectionTo};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{info, warn};
@@ -109,10 +112,23 @@ struct Handle {
     cancel: mpsc::UnboundedSender<()>,
 }
 
+/// Host-provided additions to every ACP session for one agent. Core keeps this
+/// protocol-native and does not know any provider-specific tool names or prompt text.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionProfile {
+    #[serde(default)]
+    mcp_servers: Vec<McpServer>,
+    #[serde(default, rename = "_meta")]
+    meta: Option<Meta>,
+}
+
 #[derive(Default)]
 pub struct AgentPool {
     /// Adapter launch config per agent id, as handed to core by the app.
     adapters: HashMap<String, AcpAgentConfig>,
+    /// ACP session additions per agent id, supplied by the desktop host.
+    session_profiles: HashMap<String, SessionProfile>,
     handles: Mutex<HashMap<(String, String), Handle>>,
     next_generation: Mutex<u64>,
 }
@@ -122,9 +138,13 @@ const SET_CONFIG_TIMEOUT: Duration = Duration::from_secs(30);
 const SET_CONFIG_TIMED_OUT: &str = "agent did not answer in time";
 
 impl AgentPool {
-    pub fn new(adapters: HashMap<String, AcpAgentConfig>) -> Self {
+    pub fn new(
+        adapters: HashMap<String, AcpAgentConfig>,
+        session_profiles: HashMap<String, SessionProfile>,
+    ) -> Self {
         Self {
             adapters,
+            session_profiles,
             ..Self::default()
         }
     }
@@ -543,6 +563,14 @@ struct Connection {
 
 type AcpResult<T> = Result<T, agent_client_protocol::Error>;
 
+fn client_capabilities() -> ClientCapabilities {
+    ClientCapabilities::new().elicitation(
+        ElicitationCapabilities::new()
+            .form(ElicitationFormCapabilities::new())
+            .url(ElicitationUrlCapabilities::new()),
+    )
+}
+
 impl Connection {
     fn status(&self, state: &str, detail: Option<String>) {
         let mut params = json!({ "task_id": self.task_id, "agent": self.agent, "state": state });
@@ -569,6 +597,7 @@ impl Connection {
                 let cancels = &mut cancels;
                 let updates = self.clone();
                 let perms = self.clone();
+                let elicitations = self.clone();
                 Client
                     .builder()
                     .on_receive_notification(
@@ -587,6 +616,13 @@ impl Connection {
                     .on_receive_request(
                         async move |req: RequestPermissionRequest, responder, _cx| {
                             perms.on_permission(req, responder);
+                            Ok(())
+                        },
+                        agent_client_protocol::on_receive_request!(),
+                    )
+                    .on_receive_request(
+                        async move |req: CreateElicitationRequest, responder, _cx| {
+                            elicitations.on_elicitation(req, responder);
                             Ok(())
                         },
                         agent_client_protocol::on_receive_request!(),
@@ -631,7 +667,10 @@ impl Connection {
         cancels: &mut mpsc::UnboundedReceiver<()>,
     ) -> AcpResult<()> {
         let init = connection
-            .send_request(InitializeRequest::new(ProtocolVersion::V1))
+            .send_request(
+                InitializeRequest::new(ProtocolVersion::V1)
+                    .client_capabilities(client_capabilities()),
+            )
             .block_task()
             .await?;
         let session_id = self
@@ -693,7 +732,12 @@ impl Connection {
                 None
             });
         if let (true, Some(saved)) = (can_load, saved) {
-            let load = LoadSessionRequest::new(SessionId::new(saved.clone()), self.cwd.clone());
+            let mut load = LoadSessionRequest::new(SessionId::new(saved.clone()), self.cwd.clone());
+            if let Some(profile) = self.ctx.agents.session_profiles.get(&self.agent) {
+                load = load
+                    .mcp_servers(profile.mcp_servers.clone())
+                    .meta(profile.meta.clone());
+            }
             // Nothing between the two stores can return early, so the flag cannot stay set.
             self.loading.store(true, Ordering::SeqCst);
             let loaded = connection.send_request(load).block_task().await;
@@ -719,10 +763,13 @@ impl Connection {
                 ),
             }
         }
-        let resp = connection
-            .send_request(NewSessionRequest::new(self.cwd.clone()))
-            .block_task()
-            .await?;
+        let mut new_session = NewSessionRequest::new(self.cwd.clone());
+        if let Some(profile) = self.ctx.agents.session_profiles.get(&self.agent) {
+            new_session = new_session
+                .mcp_servers(profile.mcp_servers.clone())
+                .meta(profile.meta.clone());
+        }
+        let resp = connection.send_request(new_session).block_task().await?;
         let session_id = resp.session_id.clone();
         // A fresh session has no memory of the Chat: reset the cursor so the next prompt
         // carries the whole thread as a handoff.
@@ -979,11 +1026,25 @@ impl Connection {
         let mut guard = self.live.lock().unwrap_or_else(|e| e.into_inner());
         let Some(live) = guard.as_mut() else {
             drop(guard);
+            // Raw SDK user messages replay during session/load. Their normalized Artifact
+            // events are already part of the stored Message, so do not duplicate them as
+            // task-level events when restoring an Agent session.
+            if self.loading.load(Ordering::SeqCst) && kind == "_claude/sdkMessage" {
+                return;
+            }
             self.store_event(&kind, data);
             return;
         };
-        let index = live.event(kind, data);
-        self.changed(live, index);
+        // Keep the provider envelope for fidelity, then append any common host events it
+        // declares. Renderer code consumes only artifact.* and never inspects Claude tool
+        // names, raw SDK messages, or prose output.
+        let normalized = crate::artifacts::from_adapter_event(&kind, &data, &live.parts);
+        let raw_index = live.event(kind, data);
+        self.changed(live, raw_index);
+        for (event_kind, event_data) in normalized {
+            let index = live.event(event_kind, event_data);
+            self.changed(live, index);
+        }
     }
 
     /// A part of the streaming reply changed: tell the app and write it through.
@@ -1037,6 +1098,37 @@ impl Connection {
             };
             if let Err(e) = responder.respond(RequestPermissionResponse::new(outcome)) {
                 warn!("permission response: {}", error_text(&e));
+            }
+        });
+    }
+
+    fn on_elicitation(
+        &self,
+        req: CreateElicitationRequest,
+        responder: agent_client_protocol::Responder<CreateElicitationResponse>,
+    ) {
+        let request_id = new_id();
+        let (tx, rx) = oneshot::channel();
+        self.ctx.register_elicitation(request_id.clone(), tx);
+        let mut params = serde_json::to_value(&req).unwrap_or(Value::Null);
+        if let Value::Object(fields) = &mut params {
+            fields.insert("request_id".into(), json!(request_id));
+            fields.insert("task_id".into(), json!(self.task_id));
+            fields.insert("agent".into(), json!(self.agent));
+        }
+        self.ctx
+            .out
+            .request(&request_id, "elicitation.request", params);
+        let ctx = self.ctx.clone();
+        tokio::spawn(async move {
+            let value = rx.await.unwrap_or_else(|_| json!({ "action": "cancel" }));
+            ctx.forget_elicitation(&request_id);
+            let response = serde_json::from_value(value).unwrap_or_else(|e| {
+                warn!("invalid elicitation response: {e}");
+                CreateElicitationResponse::new(ElicitationAction::Cancel)
+            });
+            if let Err(e) = responder.respond(response) {
+                warn!("elicitation response: {}", error_text(&e));
             }
         });
     }
@@ -1511,6 +1603,7 @@ mod tests {
             agents: AgentPool::default(),
             projectless_dir: String::new(),
             permissions: Mutex::default(),
+            elicitations: Mutex::default(),
         });
         (ctx, rx)
     }
@@ -1521,6 +1614,28 @@ mod tests {
 
     fn chunk(s: &str) -> ContentChunk {
         ContentChunk::new(ContentBlock::Text(TextContent::new(s)))
+    }
+
+    #[test]
+    fn client_advertises_only_elicitation_capabilities_it_implements() {
+        let value = serde_json::to_value(client_capabilities()).unwrap();
+        assert_eq!(value["elicitation"], json!({ "form": {}, "url": {} }));
+        assert_eq!(value["terminal"], false);
+        assert_eq!(
+            value["fs"],
+            json!({ "readTextFile": false, "writeTextFile": false })
+        );
+    }
+
+    #[test]
+    fn session_profiles_are_acp_native_and_keep_provider_meta_opaque() {
+        let profile: SessionProfile = serde_json::from_value(json!({
+            "mcpServers": [{ "name": "host", "command": "/opt/host-mcp", "args": [], "env": [] }],
+            "_meta": { "provider": { "futureOption": true } }
+        }))
+        .unwrap();
+        assert_eq!(profile.mcp_servers.len(), 1);
+        assert_eq!(profile.meta.unwrap()["provider"]["futureOption"], true);
     }
 
     fn phased_chunk(s: &str, phase: &str) -> ContentChunk {
@@ -1958,6 +2073,68 @@ mod tests {
         assert_eq!(line["params"]["part_index"], 1);
         assert_eq!(line["params"]["part"]["kind"], "_codex/status");
         assert_eq!(line["params"]["part"]["data"]["n"], 2);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn official_artifact_result_is_followed_by_a_normalized_chat_event() {
+        let (ctx, mut rx) = test_ctx();
+        let p = ctx.store.create_project("demo", "/tmp/demo").unwrap();
+        let t = ctx.store.create_task(Some(&p.id), "chat").unwrap();
+        let conn = Connection {
+            ctx,
+            task_id: t.id,
+            agent: "claude".into(),
+            cwd: "/tmp/demo".into(),
+            live: Arc::new(Mutex::new(Some(Live::new("m".into())))),
+            options: Arc::default(),
+            loading: Arc::default(),
+        };
+        conn.on_update(SessionUpdate::ToolCall(
+            ToolCall::new("tool-1", "Publish artifact")
+                .raw_input(json!({ "file_path": "/tmp/report.html" }))
+                .meta(Meta::from_iter([(
+                    "claudeCode".into(),
+                    json!({ "toolName": "Artifact" }),
+                )])),
+        ));
+        assert_eq!(next_line(&mut rx)["params"]["part_index"], 0);
+
+        let payload = json!({
+            "sessionId": "session-1",
+            "message": {
+                "type": "user",
+                "message": { "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": "tool-1",
+                    "content": "Published prose is not inspected"
+                }]},
+                "tool_use_result": {
+                    "url": "https://claude.ai/code/artifact/abc",
+                    "path": "/tmp/report.html",
+                    "artifact_id": "abc",
+                    "title": "Report",
+                    "updated": false
+                }
+            }
+        });
+        let params = serde_json::value::RawValue::from_string(payload.to_string()).unwrap();
+        conn.on_ext(ExtNotification::new("claude/sdkMessage", Arc::from(params)));
+
+        let raw = next_line(&mut rx);
+        assert_eq!(raw["params"]["part_index"], 1);
+        assert_eq!(raw["params"]["part"]["kind"], "_claude/sdkMessage");
+        let normalized = next_line(&mut rx);
+        assert_eq!(normalized["params"]["part_index"], 2);
+        assert_eq!(normalized["params"]["part"]["kind"], "artifact.created");
+        assert_eq!(
+            normalized["params"]["part"]["data"]["artifact"]["id"],
+            "abc"
+        );
+        assert_eq!(
+            normalized["params"]["part"]["data"]["artifact"]["path"],
+            "/tmp/report.html"
+        );
         assert!(rx.try_recv().is_err());
     }
 

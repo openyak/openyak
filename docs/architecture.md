@@ -22,7 +22,7 @@ you already have installed (Claude Code, Codex, more later) through the
   stream. Owns no agent logic. Talks only to core (`docs/core-protocol.md`).
 - **core/** — `openyak-core`, a Rust binary. Owns the SQLite transcript store, spawns one
   ACP agent process per `(task, agent)` on demand, translates ACP session updates into
-  `chat.update` notifications, and forwards permission requests to the app.
+  `chat.update` notifications, and forwards permission and elicitation requests to the app.
 - **agents** — ACP adapters bundled with the app and run with Electron's own Node:
   `@agentclientprotocol/claude-agent-acp` (on the official Claude Agent SDK, which ships
   Claude Code) and `@agentclientprotocol/codex-acp` (which ships Codex). The app hands
@@ -41,11 +41,16 @@ you already have installed (Claude Code, Codex, more later) through the
 
 ## What stays thin
 
-The app is a chat interface, a transcript store, and an ACP client. Everything else is
-the agent's: its tools, shell, file access, permissions, sandboxing, agent loop, and
-login. When Codex or Claude Code asks for permission, core forwards that exact request
-to the app and the user's answer straight back; OpenYak keeps no allowlist and makes no
-safety decision of its own. Likewise the options an agent exposes for its session
+The app is a chat interface, a transcript store, an ACP client, and a desktop capability
+host. It does not reimplement an agent loop or copy provider prompt/skill contents. Core
+passes an ACP-native session profile (`mcpServers` and opaque `_meta`) from the desktop
+host to both `session/new` and `session/load`. Provider-specific public SDK options live
+only at that host boundary; core does not interpret them.
+
+When Codex or Claude Code asks for permission or input, core forwards the exact request
+to the app and the user's answer straight back. OpenYak keeps no allowlist and makes no
+safety decision of its own. Form elicitation is rendered from the agent's ACP JSON Schema,
+not from provider-specific field names. Likewise the options an agent exposes for its session
 (model, reasoning effort, permission mode, …) are shown as the agent advertises them
 over ACP and the user's choice is passed back untouched.
 
@@ -99,9 +104,33 @@ start a fresh session for that pair, so a model picked for a task survives a res
 The app opens the agent's session as soon as it is selected (`agent.connect`) so the
 options are visible before the first prompt.
 
+## Host capabilities
+
+The Claude profile selects the public `claude_code` system/tool presets, enables all
+discovered skills, requests the SDK's Artifact feature, and forwards the public `--chrome`
+flag. This keeps prompt text, tool definitions, skill contents, account gates, and feature
+rollouts owned by the bundled Claude Code/Agent SDK. See
+[`docs/claude-host-capabilities.md`](claude-host-capabilities.md).
+
+Standard ACP MCP server declarations can be added to a host profile without changing core.
+OpenYak does not copy Claude Desktop private resources or pretend to advertise a capability
+it cannot serve.
+
+Codex conversations continue to use ACP, while the Electron host uses the public Codex
+App Server for the Desktop layer that ACP does not model: plugin inventory/installation,
+Skills configuration, MCP status, and app discovery. Both are backed by the same bundled
+Codex package and user configuration. The renderer builds its command palette from ACP
+`available_commands_update` events. For Artifacts, the Claude host asks the official adapter to
+forward only structured SDK user/tool-result messages; core normalizes the public
+`ArtifactOutput` at the adapter ingress boundary into provider-neutral `artifact.*` Parts. The
+renderer consumes only that contract and never guesses from tool names, file locations, prose,
+or code fences. See
+[`docs/claude-host-capabilities.md`](claude-host-capabilities.md) and
+[`docs/codex-host-capabilities.md`](codex-host-capabilities.md).
+
 ## Non-goals for v2
 
-No built-in tools, no provider API keys, no Computer Use, no office document pipeline, no
-plugins, no remote access, no permission engine, no automatic routing between agents.
-Anything an agent can do is the agent's job. Anything that is not Project → Task → Chat
-is out of scope until the core loop is excellent.
+No independently implemented agent loop, provider API-key store, provider tool clones,
+private Desktop API reverse engineering, office document pipeline, remote access,
+permission engine, or automatic routing between agents. Unsupported upstream capabilities
+remain unavailable until there is a public SDK, ACP, or MCP integration point.

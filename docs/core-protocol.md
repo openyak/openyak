@@ -5,7 +5,7 @@ newline-delimited JSON-RPC 2.0**. One JSON object per line. Core writes nothing 
 to stdout; logs go to stderr.
 
 Both directions are JSON-RPC 2.0: the app sends requests, core replies; core sends
-notifications and one request (`permission.request`) that the app must answer.
+notifications plus permission and elicitation requests that the app must answer.
 
 ## Identifiers
 
@@ -46,6 +46,10 @@ type Part =
 // streaming for the (task, agent) pair, e.g. the slash-command list sent when a session
 // opens. Stored by core, listed with `chat.events`, announced with `chat.event`.
 interface AgentEvent { id: string; task_id: string; agent: AgentId; kind: string; data: unknown; created_at: string }
+
+// The renderer presents these exactly as an `available_commands_update` advertises them.
+// Codex skill command names already carry `$`; ordinary command names receive `/`.
+interface AvailableCommand { name: string; description: string; input?: { hint?: string }; _meta?: Record<string, unknown> }
 
 // What the app attaches to a message. Images become ACP image blocks; files and folders
 // become `file://` resource links the agent can open itself.
@@ -135,6 +139,72 @@ whenever it has to start a fresh session for that pair.
 | method               | params | result |
 |----------------------|--------|--------|
 | `permission.request` | `{ request_id, task_id, agent, title, options: { id, label, kind, _meta? }[], tool_call: unknown, _meta?: Record<string, unknown> }` — `tool_call` is the ACP `ToolCallUpdate` of the request verbatim (title, kind, status, content incl. diffs, locations, rawInput, rawOutput, _meta); `_meta` is the request's own meta | `{ option_id: string \| null }` (`null` = cancel) |
+| `elicitation.request` | ACP `elicitation/create` params verbatim, plus `{ request_id, task_id, agent }`. Form requests carry `mode: "form"`, `message`, and `requestedSchema`; URL requests are handled by the Electron main process. | ACP `CreateElicitationResponse`: `{ action: "accept", content? }`, `{ action: "decline" }`, or `{ action: "cancel" }` |
+
+Core advertises ACP form and URL elicitation only because the desktop host implements both.
+The renderer builds forms from the schema's primitive properties, requirements, and enum
+options; it does not interpret provider-specific field names. For URL mode it displays the
+target host and asks for consent; the main process opens only HTTPS URLs after acceptance.
+
+## Artifact events
+
+ACP does not currently define an Artifact update. Provider adapters may expose their public,
+structured Artifact result through an extension notification; core normalizes that result at
+the adapter ingress boundary and appends a second `event` Part. The renderer consumes only this
+common contract and never inspects provider tool names, display titles, prose, Markdown, or code
+fences.
+
+All common event kinds start with `artifact.`. The currently normalized lifecycle is:
+
+- `artifact.created` / `artifact.updated`
+- `artifact.listed` / `artifact.read`
+- `artifact.watch.updated` / `artifact.watches.listed`
+- `artifact.asset.created` / `artifact.assets.listed`
+- `artifact.asset.read` / `artifact.asset.deleted`
+- `artifact.operation.completed` for a successful future operation whose structured variant is
+  not known yet
+
+Every event has this stable envelope; operation-specific fields may be added alongside it:
+
+```ts
+interface ArtifactReference {
+  id?: string; path?: string; url?: string; title?: string; version?: string;
+  contract?: string; audience?: string; live_subscription?: string; capabilities?: unknown;
+}
+interface ArtifactEventData {
+  schema_version: 1;
+  tool_call_id: string;
+  operation: string;
+  artifact?: ArtifactReference | null;
+  artifacts?: ArtifactReference[];
+  _meta?: { source?: string; provider_payload?: unknown };
+  [key: string]: unknown;
+}
+```
+
+The raw provider extension remains beside the normalized event under the fidelity rule. Artifact
+paths outside the active Project are not generally readable by the App: the Electron host grants
+only exact paths declared by a normalized Artifact event, and scopes relative resources to that
+file's directory.
+
+## Session host profiles
+
+The app starts core with `--session-profiles`, a JSON map keyed by agent id. Each value has
+the same extensibility surfaces as ACP session setup:
+
+```json
+{
+  "claude": {
+    "mcpServers": [],
+    "_meta": {}
+  }
+}
+```
+
+Core attaches the selected profile to both ACP `session/new` and `session/load`. It parses
+`mcpServers` as the ACP schema and otherwise treats `_meta` as opaque provider data. This is
+the only provider-capability injection boundary; prompt text, skill definitions, and tool
+schemas are not maintained in core.
 
 ## Fidelity rule
 
@@ -150,6 +220,9 @@ extension notification the agent sends is kept in one of two places:
   `available_commands_update`, an extension notification such as `_claude/sdkMessage`)
   becomes an `event` part whose `kind` is the ACP `sessionUpdate` discriminator (or the
   extension method name) and whose `data` is the update object verbatim.
+  A public provider extension may additionally produce a normalized host event. Today
+  `_claude/sdkMessage` tool results from the official Artifact tool produce the `artifact.*`
+  events described above; both the raw and normalized Parts are stored.
 - **Outside a reply**: it is stored as an `AgentEvent` and announced with `chat.event`.
   The transcript an agent replays while core resumes its session with `session/load` is
   not stored again, because core already holds those turns as Messages; other updates

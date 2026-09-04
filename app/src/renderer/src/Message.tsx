@@ -10,7 +10,7 @@ import {
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
-import type { Attachment, Message, Part } from '../../shared/protocol'
+import type { ArtifactReference, Attachment, Message, Part } from '../../shared/protocol'
 import {
   draftsFromFiles,
   draftsFromParts,
@@ -47,6 +47,8 @@ import {
   initialStreamingText,
   isContextCompaction,
   latestActiveToolId,
+  latestLiveReasoning,
+  latestLiveToolId,
   liveActivityLabel,
   partitionAssistantParts,
   shouldShowThinking,
@@ -59,6 +61,8 @@ import {
   type WorkActivity,
   type ToolPart,
 } from './messagePresentation'
+import { artifactName, artifactsFromParts } from './artifactPresentation'
+import { toolRichContent } from './toolContentPresentation'
 
 interface Props {
   message: Message
@@ -70,6 +74,7 @@ interface Props {
   onSubmitEdit: (message: Message, text: string, attachments: Attachment[]) => Promise<boolean>
   onRetry: (message: Message) => void
   onContinue: () => void
+  onOpenArtifact?: (artifact: ArtifactReference) => void
 }
 
 type TextPart = Extract<Part, { type: 'text' }>
@@ -86,6 +91,7 @@ export function MessageItem({
   onSubmitEdit,
   onRetry,
   onContinue,
+  onOpenArtifact,
 }: Props) {
   // Parts arrive by index and can be sparse for a moment.
   const parts = message.parts.filter((p): p is Part => Boolean(p))
@@ -159,11 +165,12 @@ export function MessageItem({
   const { workParts, visibleParts } = partitionAssistantParts(parts, streaming)
   const showWorkStatus = shouldShowWorkStatus(workParts, streaming)
   const showThinking = shouldShowThinking(parts, streaming)
-  const activeToolId = streaming ? latestActiveToolId(parts) : null
+  const activeToolId = latestLiveToolId(parts, streaming)
   const copyableText = visibleParts
     .filter((part): part is TextPart => part.type === 'text')
     .map((part) => part.text)
     .join('\n\n')
+  const artifacts = artifactsFromParts(parts)
   return (
     <div className={`msg msg-assistant status-${message.status}`}>
       <div className="msg-body">
@@ -190,6 +197,23 @@ export function MessageItem({
             />
           )
         })}
+        {artifacts.length > 0 && onOpenArtifact && (
+          <div className="message-artifacts" aria-label="Files created or changed">
+            {artifacts.map(({ key, artifact }) => (
+              <button
+                key={key}
+                type="button"
+                className="artifact-chip"
+                title={artifact.path ?? artifact.url}
+                onClick={() => onOpenArtifact(artifact)}
+              >
+                <IconFile size={14} />
+                <span>{artifactName(artifact)}</span>
+                <IconChevronRight size={12} />
+              </button>
+            ))}
+          </div>
+        )}
         {message.status === 'cancelled' && <div className="msg-note">Stopped</div>}
         {!streaming && (
           <div className="msg-actions">
@@ -614,7 +638,16 @@ function ToolTitle({ part }: { part: ToolPart }) {
 }
 
 function ToolCall({ part }: { part: ToolPart }) {
-  const [open, setOpen] = useState(false)
+  const richContent = toolRichContent(part)
+  const hasRichContent =
+    richContent.texts.length +
+      richContent.images.length +
+      richContent.audio.length +
+      richContent.resources.length >
+    0
+  const [openOverride, setOpenOverride] = useState<boolean | null>(null)
+  const open = openOverride ?? hasRichContent
+
   if (isContextCompaction(part)) {
     const active = part.status === 'pending' || part.status === 'in_progress'
     return (
@@ -628,7 +661,7 @@ function ToolCall({ part }: { part: ToolPart }) {
       </div>
     )
   }
-  const expandable = shouldExposeToolOutput(part)
+  const expandable = shouldExposeToolOutput(part) || hasRichContent
   const statusLabel =
     part.status === 'failed' ? 'Failed' : null
   return (
@@ -636,7 +669,7 @@ function ToolCall({ part }: { part: ToolPart }) {
       <button
         type="button"
         className="tool-row"
-        onClick={() => expandable && setOpen((o) => !o)}
+        onClick={() => expandable && setOpenOverride(!open)}
         disabled={!expandable}
         aria-label={`${part.title}: ${part.status}${expandable ? '. View output' : ''}`}
         title={expandable ? 'View tool output' : undefined}
@@ -652,6 +685,53 @@ function ToolCall({ part }: { part: ToolPart }) {
         )}
       </button>
       {open && part.output && <pre className="tool-output">{unfence(part.output)}</pre>}
+      {open && !part.output && richContent.texts.map((text, index) => (
+        <pre className="tool-output" key={`text-${index}`}>{text}</pre>
+      ))}
+      {open && richContent.images.length > 0 && (
+        <div className="tool-rich-images">
+          {richContent.images.map((image, index) => (
+            <AttachmentImage
+              key={`${image.mimeType}-${image.uri ?? index}`}
+              mimeType={image.mimeType}
+              data={image.data}
+              index={index}
+            />
+          ))}
+        </div>
+      )}
+      {open && richContent.audio.map((audio, index) => (
+        <audio
+          className="tool-rich-audio"
+          controls
+          key={`${audio.mimeType}-${index}`}
+          src={`data:${audio.mimeType};base64,${audio.data}`}
+        >
+          Audio output from this tool
+        </audio>
+      ))}
+      {open && richContent.resources.length > 0 && (
+        <div className="tool-rich-resources">
+          {richContent.resources.map((resource) =>
+            resource.uri.startsWith('https://') ? (
+              <button
+                type="button"
+                key={resource.uri}
+                onClick={() => void window.openyak.openExternal(resource.uri)}
+                title={resource.uri}
+              >
+                <IconFile size={13} />
+                {resource.name}
+              </button>
+            ) : (
+              <span key={resource.uri} title={resource.uri}>
+                <IconFile size={13} />
+                {resource.name}
+              </span>
+            ),
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -771,8 +851,8 @@ function WorkDetails({
   const duration = streaming ? liveDuration : message.duration_ms
   const summary = summarizeWorkDetails(duration, streaming)
   const timeline = buildWorkTimeline(parts)
-  const activeToolId = streaming ? latestActiveToolId(parts) : null
-  const latestTimelineEntry = timeline[timeline.length - 1]
+  const activeToolId = latestLiveToolId(parts, streaming && Boolean(active))
+  const liveReasoning = latestLiveReasoning(parts, streaming && Boolean(active))
 
   if (timeline.length === 0) {
     return (
@@ -780,7 +860,7 @@ function WorkDetails({
         <div className="work-details-summary" role="status" aria-live="polite">
           {summary}
         </div>
-        {thinking && <ThinkingActivity />}
+        {liveReasoning ? <WorkStatus part={liveReasoning} active /> : thinking && <ThinkingActivity />}
       </div>
     )
   }
@@ -808,19 +888,6 @@ function WorkDetails({
               />
             )
           }
-          if (entry.type === 'status') {
-            return (
-              <WorkStatus
-                key={`status:${entry.partIndex}`}
-                part={entry.part}
-                active={
-                  streaming &&
-                  activeToolId == null &&
-                  latestTimelineEntry === entry
-                }
-              />
-            )
-          }
           const part = entry.part
           if (part.type === 'error') {
             return (
@@ -839,6 +906,7 @@ function WorkDetails({
             </div>
           )
         })}
+        {liveReasoning && <WorkStatus part={liveReasoning} active />}
         {thinking && <ThinkingActivity />}
       </AnimatedDisclosure>
     </div>

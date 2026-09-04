@@ -2,18 +2,139 @@ import { ArrowsOutSimpleIcon as ArrowsOutSimple } from '@phosphor-icons/react/di
 import { CodeIcon as Code } from '@phosphor-icons/react/dist/csr/Code'
 import { DownloadSimpleIcon as DownloadSimple } from '@phosphor-icons/react/dist/csr/DownloadSimple'
 import {
+  createContext,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
+  useContext,
   type CSSProperties,
   type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
 import type { Components } from 'react-markdown'
 import { IconCheck, IconClose, IconCopy, IconWarning } from './icons'
-import { draggedScrollPosition, inlineDiagramMinWidth } from './diagramPresentation'
+import {
+  diagramOverflows,
+  diagramViewBoxSize,
+  draggedScrollPosition,
+  inlineDiagramStyle,
+} from './diagramPresentation'
 import { codeBlockPresentation, type CodeBlockPresentation } from './markdownPresentation'
+import type { ProjectFileReference, ResolvedProjectFile } from '../../shared/protocol'
+import { inlineFileReference, markdownFileReference } from './fileReferencePresentation'
+
+interface ProjectFileReferenceContextValue {
+  projectPath: string
+  onOpen: (reference: ProjectFileReference) => void
+}
+
+const ProjectFileReferenceContext = createContext<ProjectFileReferenceContextValue | null>(null)
+
+export function ProjectFileReferenceProvider({
+  projectPath,
+  onOpen,
+  children,
+}: {
+  projectPath: string | null
+  onOpen: (reference: ProjectFileReference) => void
+  children: ReactNode
+}) {
+  const value = useMemo(
+    () => (projectPath ? { projectPath, onOpen } : null),
+    [onOpen, projectPath],
+  )
+  return (
+    <ProjectFileReferenceContext.Provider value={value}>
+      {children}
+    </ProjectFileReferenceContext.Provider>
+  )
+}
+
+function MarkdownFileLink({
+  href,
+  children,
+  ...props
+}: Omit<React.ComponentPropsWithoutRef<'a'>, 'href'> & { href?: string }) {
+  const context = useContext(ProjectFileReferenceContext)
+  const reference = href ? markdownFileReference(href) : null
+  if (!reference) {
+    const sameDocument = href?.startsWith('#')
+    return (
+      <a {...props} href={href} target={sameDocument ? undefined : '_blank'} rel={sameDocument ? undefined : 'noreferrer'}>
+        {children}
+      </a>
+    )
+  }
+  return (
+    <a
+      {...props}
+      href={href}
+      className={`${props.className ?? ''} md-file-link`.trim()}
+      aria-disabled={!context}
+      onClick={(event) => {
+        event.preventDefault()
+        if (context) context.onOpen(reference)
+      }}
+    >
+      {children}
+    </a>
+  )
+}
+
+function MarkdownInlineCode({ children, className, ...props }: React.ComponentPropsWithoutRef<'code'>) {
+  const context = useContext(ProjectFileReferenceContext)
+  const element = useRef<HTMLElement>(null)
+  const text = typeof children === 'string' ? children.replace(/\n$/, '') : ''
+  const candidate = inlineFileReference(text)
+  const projectPath = context?.projectPath
+  const candidatePath = candidate?.path
+  const candidateLine = candidate?.line
+  const candidateColumn = candidate?.column
+  const lookupKey = projectPath && candidatePath
+    ? `${projectPath}\0${candidatePath}\0${candidateLine ?? ''}\0${candidateColumn ?? ''}`
+    : null
+  const [resolution, setResolution] = useState<{
+    key: string
+    file: ResolvedProjectFile | null
+  } | null>(null)
+  const resolved = resolution?.key === lookupKey ? resolution.file : null
+
+  useEffect(() => {
+    let current = true
+    if (!projectPath || !candidatePath || !lookupKey || element.current?.closest('pre')) {
+      return () => { current = false }
+    }
+    void window.openyak.resolveProjectFile(projectPath, {
+      path: candidatePath,
+      ...(candidateLine ? { line: candidateLine } : {}),
+      ...(candidateColumn ? { column: candidateColumn } : {}),
+    })
+      .then((file) => {
+        if (current) setResolution({ key: lookupKey, file })
+      })
+      .catch(() => {
+        if (current) setResolution({ key: lookupKey, file: null })
+      })
+    return () => { current = false }
+  }, [candidateColumn, candidateLine, candidatePath, lookupKey, projectPath])
+
+  if (resolved && context && candidate) {
+    const location = `${resolved.relativePath}${resolved.line ? `:${resolved.line}` : ''}${resolved.column ? `:${resolved.column}` : ''}`
+    return (
+      <button
+        type="button"
+        className="md-inline-file"
+        title={`Open ${location}`}
+        onClick={() => context.onOpen(candidate)}
+      >
+        {children}
+      </button>
+    )
+  }
+  return <code {...props} ref={element} className={className}>{children}</code>
+}
 
 type HastNode = {
   type?: string
@@ -114,7 +235,7 @@ function CodeBlock({
   )
 }
 
-function useDarkAppearance(): boolean {
+export function useDarkAppearance(): boolean {
   const [dark, setDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches)
 
   useEffect(() => {
@@ -381,10 +502,12 @@ function MermaidFullscreen({
 function MermaidDiagram({ source }: { source: string }) {
   const dark = useDarkAppearance()
   const reactId = useId()
+  const inlineCanvas = useRef<HTMLDivElement>(null)
   const renderId = `mermaid-${reactId.replace(/[^a-zA-Z0-9_-]/g, '')}`
   const renderKey = `${dark ? 'dark' : 'light'}:${source}`
   const [rendered, setRendered] = useState({ key: '', svg: '', error: false })
   const [expanded, setExpanded] = useState(false)
+  const [overflowing, setOverflowing] = useState(false)
   const svg = rendered.key === renderKey ? rendered.svg : ''
   const error = rendered.key === renderKey && rendered.error
 
@@ -402,6 +525,42 @@ function MermaidDiagram({ source }: { source: string }) {
     }
   }, [dark, renderId, renderKey, source])
 
+  useEffect(() => {
+    const canvas = inlineCanvas.current
+    const naturalWidth = diagramViewBoxSize(svg)?.width
+    if (!canvas || naturalWidth == null) return
+
+    let frame = 0
+    const update = () => {
+      const style = window.getComputedStyle(canvas)
+      const horizontalPadding =
+        (Number.parseFloat(style.paddingLeft) || 0) + (Number.parseFloat(style.paddingRight) || 0)
+      const availableWidth = Math.max(0, canvas.clientWidth - horizontalPadding)
+      setOverflowing((current) => {
+        const next = diagramOverflows(naturalWidth, availableWidth)
+        return current === next ? current : next
+      })
+    }
+    const scheduleUpdate = () => {
+      window.cancelAnimationFrame(frame)
+      frame = window.requestAnimationFrame(update)
+    }
+
+    // A freshly rendered diagram should always start from its fitted, centred position.
+    canvas.scrollLeft = 0
+    canvas.scrollTop = 0
+    scheduleUpdate()
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(scheduleUpdate)
+    observer?.observe(canvas)
+    if (canvas.parentElement) observer?.observe(canvas.parentElement)
+    if (!observer) window.addEventListener('resize', scheduleUpdate)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      observer?.disconnect()
+      if (!observer) window.removeEventListener('resize', scheduleUpdate)
+    }
+  }, [svg])
+
   if (error) {
     return (
       <div className="mermaid-error">
@@ -416,27 +575,28 @@ function MermaidDiagram({ source }: { source: string }) {
   }
 
   return (
-    <figure className="mermaid-block">
+    <figure className="mermaid-block" data-mermaid-overflow={overflowing ? '' : undefined}>
       <div className="mermaid-inline-actions">
-        <button
-          type="button"
-          className="markdown-block-action"
-          onClick={() => setExpanded(true)}
-          disabled={!svg}
-          aria-label="Open diagram"
-          title="Open diagram"
-        >
-          <ArrowsOutSimple size={16} aria-hidden="true" />
-        </button>
+        {svg && overflowing && (
+          <button
+            type="button"
+            className="markdown-block-action"
+            onClick={() => setExpanded(true)}
+            aria-label="Open diagram"
+            title="Open diagram"
+          >
+            <ArrowsOutSimple size={16} aria-hidden="true" />
+          </button>
+        )}
         <ClipboardButton value={source} />
       </div>
       {svg ? (
         !expanded && (
-          <div className="mermaid-inline-scroll">
+          <div className="mermaid-inline-scroll" ref={inlineCanvas}>
             <DiagramSvg
               svg={svg}
               className="mermaid-inline-svg"
-              style={{ minWidth: `${inlineDiagramMinWidth(svg)}px` }}
+              style={inlineDiagramStyle(svg)}
             />
           </div>
         )
@@ -453,7 +613,11 @@ function MermaidDiagram({ source }: { source: string }) {
 export const markdownComponents: Components = {
   a: ({ node, ...props }) => {
     void node
-    return <a {...props} target="_blank" rel="noreferrer" />
+    return <MarkdownFileLink {...props} />
+  },
+  code: ({ node, ...props }) => {
+    void node
+    return <MarkdownInlineCode {...props} />
   },
   pre: ({ node, children }) => {
     const block = codeBlockFromPre(node as HastNode | undefined)

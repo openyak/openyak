@@ -2,8 +2,10 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { codeBlockPresentation } from '../src/renderer/src/markdownPresentation.ts'
 import {
+  diagramOverflows,
+  diagramViewBoxSize,
   draggedScrollPosition,
-  inlineDiagramMinWidth,
+  inlineDiagramStyle,
 } from '../src/renderer/src/diagramPresentation.ts'
 
 test('fenced code gets a readable language label', () => {
@@ -55,8 +57,15 @@ test('diagram drag translates pointer motion into bounded canvas scrolling', () 
   )
 })
 
-test('wide diagrams retain a readable inline scale instead of fitting the prose column', () => {
-  assert.equal(inlineDiagramMinWidth('<svg viewBox="0 0 2400 700"></svg>'), 1872)
-  assert.equal(inlineDiagramMinWidth('<svg viewBox="0 0 620 420"></svg>'), 720)
-  assert.equal(inlineDiagramMinWidth('<svg></svg>'), 720)
+test('inline diagrams use their natural viewBox without growing beyond the container', () => {
+  const wide = '<svg viewBox="0 0 2400 700"></svg>'
+  assert.deepEqual(diagramViewBoxSize(wide), { width: 2400, height: 700 })
+  assert.deepEqual(inlineDiagramStyle(wide), { width: '2400px', maxWidth: '100%' })
+  assert.deepEqual(inlineDiagramStyle('<svg></svg>'), { width: 'auto', maxWidth: '100%' })
+})
+
+test('intrinsic Mermaid overflow is detected independently of its fitted display width', () => {
+  assert.equal(diagramOverflows(2400, 1180), true)
+  assert.equal(diagramOverflows(620, 1180), false)
+  assert.equal(diagramOverflows(1180, 1180), false)
 })

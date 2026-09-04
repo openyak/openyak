@@ -154,16 +154,16 @@
 
       <rect class="box" x="36" y="70" width="308" height="150"/>
       <text class="t" x="48" y="90">Main 进程 · index.ts / core-client.ts</text>
-      <text class="s" x="48" y="110">spawn openyak-core（--data-dir、--adapters）</text>
+      <text class="s" x="48" y="110">spawn core（--data-dir、--adapters、--session-profiles）</text>
       <text class="s" x="48" y="128">IPC：core:request · core:notification</text>
-      <text class="s" x="48" y="146">　　　core:permission-request / -response</text>
+      <text class="s" x="48" y="146">　　　permission / elicitation request + response</text>
       <text class="s" x="48" y="164">选目录/文件对话框 · 只开 https 外链 · 主题</text>
       <text class="s" x="48" y="182">PATH 取自登录 shell，agent 才找得到 git 等工具</text>
       <text class="s" x="48" y="200">把两个适配器的启动命令交给 core</text>
 
       <rect class="box" x="36" y="260" width="308" height="60"/>
       <text class="t" x="48" y="280">preload · contextBridge → window.openyak</text>
-      <text class="m" x="48" y="298">request · onNotification · onPermissionRequest</text>
+      <text class="m" x="48" y="298">request · onNotification · permission / elicitation</text>
       <text class="m" x="48" y="312">pickDirectory · pickFiles · setTheme</text>
 
       <rect class="box" x="36" y="360" width="308" height="210"/>
@@ -236,7 +236,7 @@
       <text class="lbl-brand" x="415" y="143" text-anchor="middle">通知 chat.update</text>
       <text class="lbl-brand" x="415" y="164" text-anchor="middle">chat.done · agent.*</text>
       <line class="arrow-brand" x1="486" y1="200" x2="344" y2="200" marker-end="url(#ahb)"/>
-      <text class="lbl-brand" x="415" y="193" text-anchor="middle">permission.request</text>
+      <text class="lbl-brand" x="415" y="193" text-anchor="middle">permission · elicitation</text>
       <text class="lbl" x="415" y="220" text-anchor="middle">stdin/stdout · NDJSON</text>
       <text class="lbl" x="415" y="234" text-anchor="middle">JSON-RPC 2.0</text>
 
@@ -412,7 +412,7 @@
       <line class="arrow" x1="885" y1="432" x2="645" y2="432" marker-end="url(#ah3)"/>
       <text class="lbl" x="765" y="425" text-anchor="middle">request_permission（选项原样带上）</text>
       <line class="arrow-brand" x1="645" y1="462" x2="125" y2="462" marker-end="url(#ah3b)"/>
-      <text class="lbl-brand" x="385" y="455" text-anchor="middle">permission.request　← core→app 的唯一"请求"</text>
+      <text class="lbl-brand" x="385" y="455" text-anchor="middle">permission.request / elicitation.request</text>
       <line class="arrow" x1="125" y1="492" x2="645" y2="492" marker-end="url(#ah3)"/>
       <text class="lbl" x="385" y="485" text-anchor="middle">用户点选 → permission.respond {option_id | null}（经 rpc 解锁等待中的 Connection）</text>
       <line class="arrow" x1="645" y1="522" x2="885" y2="522" marker-end="url(#ah3)"/>
@@ -476,8 +476,8 @@ npm run check   # cargo test + node --test + tsc + eslint</pre>
     <div class="card">
       <h3>v2 明确不做</h3>
       <ul>
-        <li>内置工具、provider API key、Computer Use、办公文档流水线</li>
-        <li>插件、远程访问、自己的权限引擎</li>
+        <li>自研 agent loop、provider tool clone、私有 Desktop API</li>
+        <li>provider API key 存储、远程访问、自己的权限引擎</li>
         <li>自动在 agent 之间路由（目前按每条消息手选）</li>
       </ul>
       <p style="margin:10px 0 0;color:var(--text-3);font-size:13px">v1 完整保留在 <code>legacy/v1</code> 分支。</p>

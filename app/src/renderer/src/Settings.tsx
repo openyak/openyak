@@ -1,4 +1,11 @@
-import type { Agent, AgentId, AgentStatus, ThemePreference } from '../../shared/protocol'
+import { useCallback, useEffect, useState } from 'react'
+import type {
+  Agent,
+  AgentId,
+  AgentStatus,
+  CodexHostCapabilities,
+  ThemePreference,
+} from '../../shared/protocol'
 
 interface Props {
   agents: Agent[]
@@ -13,6 +20,7 @@ interface Props {
   onRescan: () => void
   onOpenSetup: (id: AgentId) => void
   onThemeChange: (theme: ThemePreference) => void
+  projectPath: string | null
 }
 
 function providerDescription(agent: Agent) {
@@ -46,8 +54,44 @@ export function Settings({
   onRescan,
   onOpenSetup,
   onThemeChange,
+  projectPath,
 }: Props) {
   const defaultChoices = agents.filter((agent) => agent.available && enabled[agent.id])
+  const [capabilities, setCapabilities] = useState<CodexHostCapabilities | null>(null)
+  const [capabilityError, setCapabilityError] = useState<string | null>(null)
+  const [loadingCapabilities, setLoadingCapabilities] = useState(false)
+  const [changingCapability, setChangingCapability] = useState<string | null>(null)
+
+  const refreshCapabilities = useCallback(async () => {
+    setLoadingCapabilities(true)
+    setCapabilityError(null)
+    try {
+      setCapabilities(await window.openyak.codexCapabilities(projectPath))
+    } catch (error) {
+      setCapabilityError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setLoadingCapabilities(false)
+    }
+  }, [projectPath])
+
+  useEffect(() => {
+    if (!agents.some((agent) => agent.id === 'codex' && agent.available)) return
+    const timer = window.setTimeout(() => void refreshCapabilities(), 0)
+    return () => window.clearTimeout(timer)
+  }, [agents, refreshCapabilities])
+
+  const mutate = async (key: string, action: () => Promise<unknown>) => {
+    setChangingCapability(key)
+    setCapabilityError(null)
+    try {
+      await action()
+      await refreshCapabilities()
+    } catch (error) {
+      setCapabilityError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setChangingCapability(null)
+    }
+  }
 
   return (
     <div className="settings-page">
@@ -182,6 +226,83 @@ export function Settings({
             </div>
           </div>
         </section>
+
+        {agents.some((agent) => agent.id === 'codex' && agent.available) && (
+          <section className="settings-section" aria-labelledby="settings-codex-host-heading">
+            <div className="settings-section-heading">
+              <div>
+                <h2 id="settings-codex-host-heading">Codex host capabilities</h2>
+                <p>Loaded from the official Codex App Server and your installed configuration.</p>
+              </div>
+              <button
+                type="button"
+                className={`settings-action settings-rescan${loadingCapabilities ? ' is-loading' : ''}`}
+                disabled={loadingCapabilities || changingCapability !== null}
+                onClick={() => void refreshCapabilities()}
+              >
+                {loadingCapabilities ? <span className="settings-action-spinner" /> : 'Refresh'}
+              </button>
+            </div>
+
+            {capabilityError && <div className="settings-inline-error">{capabilityError}</div>}
+            {capabilities && (
+              <>
+                <div className="capability-summary" aria-label="Codex capability summary">
+                  <span><strong>{capabilities.skills.length}</strong> skills</span>
+                  <span><strong>{capabilities.mcpServers.length}</strong> MCP servers</span>
+                  <span><strong>{capabilities.appCount}</strong> apps</span>
+                </div>
+
+                <details className="capability-details">
+                  <summary>Skills ({capabilities.skills.length})</summary>
+                  <div className="settings-card capability-card">
+                    {capabilities.skills.map((skill) => (
+                      <div className="settings-row provider-row" key={skill.path}>
+                        <div className="settings-copy">
+                          <strong>${skill.name}</strong>
+                          <span>{skill.description}</span>
+                          {skill.pluginId && <span className="capability-source">{skill.pluginId}</span>}
+                        </div>
+                        <button
+                          type="button"
+                          role="switch"
+                          className={`settings-switch${skill.enabled ? ' is-on' : ''}`}
+                          aria-checked={skill.enabled}
+                          disabled={changingCapability !== null}
+                          onClick={() => void mutate(
+                            `skill:${skill.path}`,
+                            () => window.openyak.setCodexSkillEnabled(skill.path, !skill.enabled),
+                          )}
+                        >
+                          <span className="settings-switch-knob" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+
+                <details className="capability-details">
+                  <summary>MCP servers ({capabilities.mcpServers.length})</summary>
+                  <div className="settings-card capability-card">
+                    {capabilities.mcpServers.map((server) => (
+                      <div className="settings-row" key={server.name}>
+                        <div className="settings-copy">
+                          <strong>{server.name}</strong>
+                          <span>{server.toolCount} tools{server.pluginId ? ` · ${server.pluginId}` : ''}</span>
+                        </div>
+                        <span className="provider-status">{server.status}</span>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+
+                {capabilities.errors.length > 0 && (
+                  <div className="settings-inline-error">Some capability sources could not load: {capabilities.errors.join(' · ')}</div>
+                )}
+              </>
+            )}
+          </section>
+        )}
       </div>
     </div>
   )

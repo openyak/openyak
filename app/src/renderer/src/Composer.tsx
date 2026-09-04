@@ -5,6 +5,7 @@ import type {
   AgentId,
   AgentStatus,
   Attachment,
+  AvailableCommand,
   Project,
 } from '../../shared/protocol'
 import {
@@ -28,8 +29,14 @@ import {
   IconPlus,
   IconShield,
   IconStop,
+  IconTools,
   IconWarning,
 } from './icons'
+import {
+  filterCommands,
+  hasCommandQuery,
+  insertedCommand,
+} from './commandPresentation'
 
 type SelectOption = Extract<AgentConfigOption, { type: 'select' }>
 
@@ -64,6 +71,7 @@ interface Props {
   statusByAgent: Partial<Record<AgentId, AgentStatus | null>>
   settingConfig: string | null
   onSetConfig: (agent: AgentId, configId: string, value: string | boolean) => void
+  commands: AvailableCommand[]
   streaming: boolean
   cancelling: boolean
   onSend: (text: string, attachments: Attachment[], interrupt: boolean) => Promise<boolean>
@@ -84,6 +92,7 @@ export function Composer({
   statusByAgent,
   settingConfig,
   onSetConfig,
+  commands,
   streaming,
   cancelling,
   onSend,
@@ -101,10 +110,23 @@ export function Composer({
   const [dragging, setDragging] = useState(false)
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null)
   const [addOpen, setAddOpen] = useState(false)
+  const [commandOpen, setCommandOpen] = useState(false)
+  const [commandIndex, setCommandIndex] = useState(0)
   const composerAreaRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  useDismiss(composerAreaRef, addOpen, () => setAddOpen(false))
+  useDismiss(composerAreaRef, addOpen || commandOpen, () => {
+    setAddOpen(false)
+    setCommandOpen(false)
+  })
+
+  const visibleCommands = filterCommands(commands, hasCommandQuery(text) ? text : '')
+  const showCommands = commands.length > 0 && (commandOpen || hasCommandQuery(text))
+  const chooseCommand = (command: AvailableCommand) => {
+    setText(insertedCommand(command))
+    setCommandOpen(false)
+    requestAnimationFrame(() => textareaRef.current?.focus())
+  }
 
   const agentInfo = agents.find((a) => a.id === agent) ?? null
   const noAgent = !agents.some((a) => a.available)
@@ -237,10 +259,11 @@ export function Composer({
       className="composer-area"
       ref={composerAreaRef}
       onMouseDownCapture={(event) => {
-        if (!addOpen) return
+        if (!addOpen && !commandOpen) return
         const target = event.target as Element
-        if (target.closest('.composer-add-panel, .composer-add-trigger')) return
+        if (target.closest('.composer-add-panel, .composer-command-panel, .composer-add-trigger')) return
         setAddOpen(false)
+        setCommandOpen(false)
       }}
     >
       {draft && (
@@ -270,6 +293,49 @@ export function Composer({
             <span className="composer-add-label">Files and folders</span>
             <span className="composer-add-description">Or paste and drop them here</span>
           </button>
+          {commands.length > 0 && (
+            <button
+              type="button"
+              className="composer-add-item"
+              role="menuitem"
+              onClick={() => {
+                setAddOpen(false)
+                setCommandOpen(true)
+                requestAnimationFrame(() => textareaRef.current?.focus())
+              }}
+            >
+              <IconTools size={17} />
+              <span className="composer-add-label">Skills and commands</span>
+              <span className="composer-add-description">From the active agent</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {showCommands && (
+        <div className="composer-command-panel" role="listbox" aria-label="Agent skills and commands">
+          {visibleCommands.length > 0 ? (
+            visibleCommands.map((command, index) => {
+              const name = command.name.startsWith('$') ? command.name : `/${command.name}`
+              return (
+                <button
+                  key={command.name}
+                  type="button"
+                  role="option"
+                  aria-selected={index === commandIndex}
+                  className={`composer-command${index === commandIndex ? ' is-selected' : ''}`}
+                  onMouseEnter={() => setCommandIndex(index)}
+                  onClick={() => chooseCommand(command)}
+                >
+                  <code>{name}</code>
+                  <span>{command.description}</span>
+                  {command.input?.hint && <small>{command.input.hint}</small>}
+                </button>
+              )
+            })
+          ) : (
+            <div className="composer-command-empty">No matching skills or commands</div>
+          )}
         </div>
       )}
 
@@ -332,10 +398,34 @@ export function Composer({
           value={text}
           disabled={noAgent}
           onFocus={() => setAddOpen(false)}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value)
+            setCommandIndex(0)
+          }}
           onPaste={onPaste}
           onKeyDown={(e) => {
+            if (showCommands && visibleCommands.length > 0) {
+              if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                e.preventDefault()
+                const direction = e.key === 'ArrowDown' ? 1 : -1
+                setCommandIndex((index) =>
+                  (index + direction + visibleCommands.length) % visibleCommands.length,
+                )
+                return
+              }
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault()
+                chooseCommand(visibleCommands[commandIndex] ?? visibleCommands[0])
+                return
+              }
+            }
             if (e.key === 'Escape') {
+              if (showCommands) {
+                e.preventDefault()
+                setCommandOpen(false)
+                if (hasCommandQuery(text)) setText('')
+                return
+              }
               if (streaming) {
                 e.preventDefault()
                 onCancel()

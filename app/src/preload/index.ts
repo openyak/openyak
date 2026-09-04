@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type {
   CoreExit,
+  ElicitationRequest,
+  ElicitationResponse,
   Notification,
   OpenYakApi,
   PermissionRequest,
@@ -32,6 +34,20 @@ const api: OpenYakApi = {
     return () => ipcRenderer.off('core:permission-request', listener)
   },
 
+  onElicitationRequest(cb) {
+    const listener = (
+      _e: Electron.IpcRendererEvent,
+      msg: { key: string; params: ElicitationRequest },
+    ) => {
+      void cb(msg.params)
+        .then((res: ElicitationResponse | null) => res ?? { action: 'cancel' })
+        .catch(() => ({ action: 'cancel' as const }))
+        .then((result) => ipcRenderer.send('core:elicitation-response', { key: msg.key, result }))
+    }
+    ipcRenderer.on('core:elicitation-request', listener)
+    return () => ipcRenderer.off('core:elicitation-request', listener)
+  },
+
   onCoreExited(cb) {
     const listener = (_e: Electron.IpcRendererEvent, exit: CoreExit) => cb(exit)
     ipcRenderer.on('core:exited', listener)
@@ -56,6 +72,42 @@ const api: OpenYakApi = {
 
   openExternal(url: string): Promise<void> {
     return ipcRenderer.invoke('shell:open-external', url) as Promise<void>
+  },
+
+  resolveProjectFile(projectPath, reference) {
+    return ipcRenderer.invoke('file:resolve', projectPath, reference)
+  },
+
+  inspectProjectFile(projectPath, reference) {
+    return ipcRenderer.invoke('file:inspect', projectPath, reference)
+  },
+
+  openProjectFile(projectPath, reference) {
+    return ipcRenderer.invoke('file:open', projectPath, reference) as Promise<void>
+  },
+
+  revealProjectFile(projectPath, reference) {
+    return ipcRenderer.invoke('file:reveal', projectPath, reference) as Promise<void>
+  },
+
+  codexCapabilities(projectPath = null) {
+    return ipcRenderer.invoke('codex:capabilities', projectPath)
+  },
+
+  setCodexSkillEnabled(path, enabled) {
+    return ipcRenderer.invoke('codex:skill-enabled', path, enabled) as Promise<boolean>
+  },
+
+  inspectArtifact(taskId, projectPath, artifact) {
+    return ipcRenderer.invoke('artifact:inspect', taskId, projectPath, artifact)
+  },
+
+  openArtifact(taskId, projectPath, filePath) {
+    return ipcRenderer.invoke('artifact:open', taskId, projectPath, filePath) as Promise<void>
+  },
+
+  revealArtifact(taskId, projectPath, filePath) {
+    return ipcRenderer.invoke('artifact:reveal', taskId, projectPath, filePath) as Promise<void>
   },
 
   setTheme(theme): Promise<void> {
