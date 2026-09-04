@@ -84,12 +84,6 @@ export function ModelPicker({
         : false
   const canToggleFast =
     fast?.type === 'boolean' || (fast?.type === 'select' && !!fastOn && !!fastOff)
-  const effortIndex = effort
-    ? Math.max(
-        0,
-        effort.options.findIndex((v) => v.value === effort.current_value),
-      )
-    : 0
 
   const title = (
     <>
@@ -170,10 +164,9 @@ export function ModelPicker({
               </div>
               {effort && effort.options.length > 1 ? (
                 <EffortSlider
-                  count={effort.options.length}
-                  index={effortIndex}
-                  labels={effort.options.map((o) => o.description ?? o.name)}
-                  onChange={(i) => onSetConfig(agent, effort.id, effort.options[i].value)}
+                  option={effort}
+                  busy={busy}
+                  onChange={(value) => onSetConfig(agent, effort.id, value)}
                 />
               ) : (
                 <div className="mp-note">
@@ -283,79 +276,70 @@ function ModelItem({
 }
 
 // Deterministic particles keep the energy field alive without reflow or random flicker.
-const SPARKS = [
-  { x: 0.07, y: 0.68, size: 2, dx: 5, dy: -3, delay: -0.4, duration: 2.8 },
-  { x: 0.14, y: 0.29, size: 3, dx: -3, dy: 4, delay: -1.9, duration: 3.5 },
-  { x: 0.22, y: 0.52, size: 2, dx: 6, dy: 2, delay: -2.6, duration: 4.1 },
-  { x: 0.31, y: 0.72, size: 2, dx: -5, dy: -4, delay: -1.1, duration: 3.1 },
-  { x: 0.4, y: 0.34, size: 2, dx: 4, dy: 4, delay: -3.2, duration: 4.4 },
-  { x: 0.49, y: 0.59, size: 3, dx: -4, dy: -3, delay: -0.8, duration: 3.7 },
-  { x: 0.58, y: 0.25, size: 2, dx: 5, dy: 3, delay: -2.2, duration: 3.3 },
-  { x: 0.66, y: 0.7, size: 2, dx: -6, dy: -2, delay: -1.5, duration: 4.2 },
-  { x: 0.74, y: 0.42, size: 3, dx: 4, dy: -4, delay: -3.5, duration: 3.8 },
-  { x: 0.82, y: 0.65, size: 2, dx: -3, dy: 3, delay: -0.2, duration: 3 },
-  { x: 0.89, y: 0.28, size: 2, dx: 5, dy: 4, delay: -2.9, duration: 4.5 },
-  { x: 0.95, y: 0.53, size: 3, dx: -4, dy: -3, delay: -1.7, duration: 3.4 },
-]
 
+/**
+ * The effort slider. Every stop is one value the agent advertised for its effort option,
+ * in the agent's order; nothing about the scale is assumed. The thumb, the fill and the
+ * stop marks share one geometry, so a stop's mark is exactly where the thumb lands on it.
+ * The real <input type="range"> sits on top, invisible, for pointer and keyboard; a drag
+ * is previewed locally and sent to the agent once, when it ends.
+ */
 function EffortSlider({
-  count,
-  index,
-  labels,
+  option,
+  busy,
   onChange,
 }: {
-  count: number
-  index: number
-  labels: string[]
-  onChange: (index: number) => void
+  option: SelectOption
+  busy: boolean
+  onChange: (value: string) => void
 }) {
-  const pct = count > 1 ? index / (count - 1) : 1
+  const stops = option.options
+  const count = stops.length
+  const current = Math.max(
+    0,
+    stops.findIndex((o) => o.value === option.current_value),
+  )
+  const [preview, setPreview] = useState<number | null>(null)
+  const index = preview ?? current
+  const commit = () => {
+    if (preview !== null && preview !== current) onChange(stops[preview].value)
+    setPreview(null)
+  }
+  const at = (i: number) => (count > 1 ? i / (count - 1) : 1)
+  const label = (i: number) => stops[i]?.name ?? ''
+
   return (
-    <div
-      className="slider"
-      style={{ '--pct': `${pct * 100}%` } as React.CSSProperties}
-      title={labels[index]}
-    >
-      <div className="slider-track">
-        <div className="slider-ticks" aria-hidden="true">
-          {Array.from({ length: count }, (_, i) => (
-            <span key={i} />
-          ))}
-        </div>
-        <div className="slider-fill">
-          {SPARKS.map((s, i) => (
-            <span
-              key={i}
-              className="slider-spark"
-              style={
-                {
-                  left: `${s.x * 100}%`,
-                  top: `${s.y * 100}%`,
-                  '--spark-size': `${s.size}px`,
-                  '--spark-x': `${s.dx}px`,
-                  '--spark-y': `${s.dy}px`,
-                  animationDelay: `${s.delay}s`,
-                  animationDuration: `${s.duration}s`,
-                } as React.CSSProperties
-              }
-            />
-          ))}
-        </div>
-        <div className="slider-thumb" />
+    <div className="effort" style={{ '--pct': at(index) } as React.CSSProperties}>
+      <div className="effort-track" aria-hidden="true">
+        <div className="effort-fill" />
+        {stops.map((o, i) => (
+          <span
+            key={o.value}
+            className={`effort-stop${i <= index ? ' is-reached' : ''}${i === index ? ' is-current' : ''}`}
+            style={{ '--at': at(i) } as React.CSSProperties}
+          />
+        ))}
+        <div className="effort-thumb" />
       </div>
       <input
         type="range"
         min={0}
-        max={count - 1}
+        max={Math.max(0, count - 1)}
         step={1}
         value={index}
-        aria-label="Effort"
-        aria-valuetext={labels[index]}
-        onChange={(e) => {
-          const i = Number(e.target.value)
-          if (i !== index) onChange(i)
-        }}
+        disabled={busy}
+        aria-label={option.name}
+        aria-valuetext={stops[index]?.description ?? label(index)}
+        title={stops[index]?.description ?? label(index)}
+        onChange={(e) => setPreview(Number(e.target.value))}
+        onPointerUp={commit}
+        onKeyUp={commit}
+        onBlur={commit}
       />
+      <div className="effort-ends" aria-hidden="true">
+        <span>{label(0)}</span>
+        <span>{label(count - 1)}</span>
+      </div>
     </div>
   )
 }

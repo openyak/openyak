@@ -16,6 +16,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{error, warn};
 
+use agent_client_protocol::AcpAgentConfig;
 use agents::AgentPool;
 use rpc::Outbound;
 use store::Store;
@@ -29,6 +30,11 @@ struct Args {
     /// Directory holding openyak.db; created if missing.
     #[arg(long)]
     data_dir: PathBuf,
+    /// JSON map from agent id to how to launch its ACP adapter:
+    /// `{"claude": {"command": "...", "args": [...], "env": {...}}, ...}`.
+    /// Agents not listed fall back to an adapter binary on PATH.
+    #[arg(long)]
+    adapters: Option<String>,
 }
 
 /// Everything shared between request handlers and agent connections.
@@ -97,6 +103,10 @@ async fn run() -> Result<()> {
     std::fs::create_dir_all(&projectless_dir)
         .with_context(|| format!("create {}", projectless_dir.display()))?;
     let store = Store::open(&args.data_dir.join("openyak.db"))?;
+    let adapters: HashMap<String, AcpAgentConfig> = match &args.adapters {
+        Some(json) => serde_json::from_str(json).context("parse --adapters")?,
+        None => HashMap::new(),
+    };
 
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<String>();
     let writer = tokio::spawn(async move {
@@ -112,7 +122,7 @@ async fn run() -> Result<()> {
     let ctx = Arc::new(Ctx {
         store,
         out: Outbound(out_tx),
-        agents: AgentPool::default(),
+        agents: AgentPool::new(adapters),
         projectless_dir: projectless_dir.to_string_lossy().into_owned(),
         permissions: Mutex::default(),
     });

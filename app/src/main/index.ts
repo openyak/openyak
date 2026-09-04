@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron'
+import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { CoreClient, CoreError } from './core-client'
@@ -13,11 +14,54 @@ function resolveCoreBinary(): string {
   return path.join(process.resourcesPath, 'openyak-core')
 }
 
+/**
+ * PATH as the user's login shell sees it. An app launched from the Dock or Finder gets a
+ * bare one, which is where the agents look for `git` and the tools they run.
+ */
+function shellPath(): string | null {
+  if (process.platform === 'win32') return null
+  const sh = process.env.SHELL || '/bin/zsh'
+  try {
+    const out = execFileSync(sh, ['-ilc', 'echo -n "$PATH"'], {
+      encoding: 'utf8',
+      timeout: 5000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
+    return out || null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The ACP adapters bundled with the app, one per agent, run with Electron's own Node.
+ * Claude Code and Codex themselves ship inside the adapters; they use the sign-in the
+ * user already has on this machine.
+ */
+function adapters(): Record<string, { command: string; args: string[]; env: Record<string, string> }> {
+  const env = { ELECTRON_RUN_AS_NODE: '1' }
+  return {
+    claude: {
+      command: process.execPath,
+      args: [require.resolve('@agentclientprotocol/claude-agent-acp/dist/index.js')],
+      env,
+    },
+    codex: {
+      command: process.execPath,
+      args: [require.resolve('@agentclientprotocol/codex-acp/dist/index.js')],
+      env,
+    },
+  }
+}
+
 function startCore(): CoreClient {
   const binary = resolveCoreBinary()
   const dataDir = app.getPath('userData')
-  if (import.meta.env.DEV) console.log(`[main] spawning core: ${binary} --data-dir ${dataDir}`)
-  const client = new CoreClient(binary, ['--data-dir', dataDir])
+  const shPath = shellPath()
+  if (shPath) process.env.PATH = shPath
+  const args = ['--data-dir', dataDir, '--adapters', JSON.stringify(adapters())]
+  if (import.meta.env.DEV) console.log(`[main] spawning core: ${binary} ${args.join(' ')}`)
+  const client = new CoreClient(binary, args)
 
   client.on('notification', (method: string, params: unknown) => {
     win?.webContents.send('core:notification', { method, params })
@@ -48,7 +92,7 @@ function startCore(): CoreClient {
 
 // Window chrome matches the renderer's theme so there is no flash on launch and the
 // title-bar area (macOS traffic lights sit over the sidebar) blends in.
-const windowBackground = () => (nativeTheme.shouldUseDarkColors ? '#171717' : '#f9f9f9')
+const windowBackground = () => (nativeTheme.shouldUseDarkColors ? '#141515' : '#f4f3e8')
 
 function createWindow(): void {
   win = new BrowserWindow({

@@ -23,9 +23,12 @@ you already have installed (Claude Code, Codex, more later) through the
 - **core/** — `openyak-core`, a Rust binary. Owns the SQLite transcript store, spawns one
   ACP agent process per `(task, agent)` on demand, translates ACP session updates into
   `chat.update` notifications, and forwards permission requests to the app.
-- **agents** — external ACP adapters resolved from `PATH` or run through `npx`:
-  `@agentclientprotocol/claude-agent-acp`, `@agentclientprotocol/codex-acp`. They use the user's
-  existing Claude Code and Codex logins; OpenYak stores no provider credentials.
+- **agents** — ACP adapters bundled with the app and run with Electron's own Node:
+  `@agentclientprotocol/claude-agent-acp` (on the official Claude Agent SDK, which ships
+  Claude Code) and `@agentclientprotocol/codex-acp` (which ships Codex). The app hands
+  core their launch commands via `--adapters`; core alone falls back to an adapter binary
+  on `PATH`. They use the user's existing Claude Code and Codex sign-ins on this machine;
+  OpenYak stores no provider credentials.
 
 ## Domain
 

@@ -53,8 +53,9 @@ v2 是 alpha：能跑，还不精致，形态会变。已可用：
 
 ## 运行
 
-前提：Node 26 与 Rust 1.90（`mise install` 一次装好），以及至少一个已登录的
-[Claude Code](https://docs.anthropic.com/en/docs/claude-code) 或 [Codex CLI](https://github.com/openai/codex)。
+前提：Node 26 与 Rust 1.90（`mise install` 一次装好），以及本机已登录的
+[Claude Code](https://docs.anthropic.com/en/docs/claude-code)（运行过一次 `claude`）和/或
+[Codex](https://github.com/openai/codex)（`codex login`）。agent 本身随 app 内置，只借用你的登录。
 
 ```bash
 git clone https://github.com/openyak/openyak.git

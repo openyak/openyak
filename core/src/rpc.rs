@@ -184,7 +184,7 @@ pub async fn dispatch(ctx: Arc<Ctx>, id: Value, method: String, params: Value) {
 async fn handle(ctx: &Arc<Ctx>, method: &str, params: Value) -> Result<Value, RpcError> {
     let store = &ctx.store;
     let v = match method {
-        "agent.list" => json!(agents::list()),
+        "agent.list" => json!(ctx.agents.list()),
         "project.list" => json!(store.list_projects()?),
         "project.create" => {
             let p: ProjectCreate = parse(params)?;

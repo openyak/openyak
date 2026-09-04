@@ -24,33 +24,25 @@ use tracing::{info, warn};
 use crate::handoff;
 use crate::store::{new_id, Part};
 use crate::Ctx;
+use agent_client_protocol::AcpAgentConfig;
 
 struct Spec {
     id: &'static str,
     name: &'static str,
-    /// The user's own CLI; `available` means it is on PATH.
-    cli: &'static str,
-    /// Adapter binaries to look for on PATH, in order of preference.
+    /// Adapter binaries to look for on PATH when the app did not hand core one.
     adapters: &'static [&'static str],
-    /// npm package to run through `npx` when no adapter binary is installed.
-    /// The `@zed-industries/*` packages are deprecated in favour of these.
-    package: &'static str,
 }
 
 const SPECS: &[Spec] = &[
     Spec {
         id: "claude",
         name: "Claude Code",
-        cli: "claude",
         adapters: &["claude-agent-acp", "claude-code-acp"],
-        package: "@agentclientprotocol/claude-agent-acp",
     },
     Spec {
         id: "codex",
         name: "Codex",
-        cli: "codex",
         adapters: &["codex-acp"],
-        package: "@agentclientprotocol/codex-acp",
     },
 ];
 
@@ -60,6 +52,27 @@ pub struct AgentInfo {
     name: &'static str,
     available: bool,
     command: String,
+    /// Why the agent cannot be used right now, when it cannot.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hint: Option<String>,
+}
+
+/// What stops the agent from serving a prompt on this machine, if anything. The adapters
+/// bring Claude Code and Codex themselves; what they need is the user's sign-in.
+fn hint(id: &str) -> Option<String> {
+    match id {
+        "codex" => {
+            let home = std::env::var_os("CODEX_HOME")
+                .map(std::path::PathBuf::from)
+                .or_else(|| {
+                    std::env::var_os("HOME")
+                        .or_else(|| std::env::var_os("USERPROFILE"))
+                        .map(|h| std::path::PathBuf::from(h).join(".codex"))
+                })?;
+            (!home.join("auth.json").is_file()).then(|| "Sign in first: run `codex login`".into())
+        }
+        _ => None,
+    }
 }
 
 fn spec(id: &str) -> Option<&'static Spec> {
@@ -70,25 +83,6 @@ pub fn is_known(id: &str) -> bool {
     spec(id).is_some()
 }
 
-/// argv for the adapter: the binary on PATH if present, else npx.
-fn command(s: &Spec) -> Vec<String> {
-    match s.adapters.iter().find_map(|a| which::which(a).ok()) {
-        Some(path) => vec![path.to_string_lossy().into_owned()],
-        None => vec!["npx".into(), "-y".into(), s.package.into()],
-    }
-}
-
-pub fn list() -> Vec<AgentInfo> {
-    SPECS
-        .iter()
-        .map(|s| AgentInfo {
-            id: s.id,
-            name: s.name,
-            available: which::which(s.cli).is_ok(),
-            command: command(s).join(" "),
-        })
-        .collect()
-}
 
 /// A prompt to serve: the user Message to send and the assistant Message to stream into.
 pub struct Job {
@@ -117,6 +111,8 @@ struct Handle {
 
 #[derive(Default)]
 pub struct AgentPool {
+    /// Adapter launch config per agent id, as handed to core by the app.
+    adapters: HashMap<String, AcpAgentConfig>,
     handles: Mutex<HashMap<(String, String), Handle>>,
     next_generation: Mutex<u64>,
 }
@@ -126,6 +122,49 @@ const SET_CONFIG_TIMEOUT: Duration = Duration::from_secs(30);
 const SET_CONFIG_TIMED_OUT: &str = "agent did not answer in time";
 
 impl AgentPool {
+    pub fn new(adapters: HashMap<String, AcpAgentConfig>) -> Self {
+        Self {
+            adapters,
+            ..Self::default()
+        }
+    }
+
+    /// How to launch the adapter for `agent`: the app's config, else a binary on PATH.
+    fn adapter(&self, agent: &str) -> Option<AcpAgentConfig> {
+        if let Some(c) = self.adapters.get(agent) {
+            return Some(c.clone());
+        }
+        let s = spec(agent)?;
+        let path = s.adapters.iter().find_map(|a| which::which(a).ok())?;
+        Some(AcpAgentConfig::new(path))
+    }
+
+    pub fn list(&self) -> Vec<AgentInfo> {
+        SPECS
+            .iter()
+            .map(|s| {
+                let adapter = self.adapter(s.id);
+                let hint = match &adapter {
+                    Some(_) => hint(s.id),
+                    None => Some(format!("No adapter for {}", s.name)),
+                };
+                AgentInfo {
+                    id: s.id,
+                    name: s.name,
+                    available: hint.is_none(),
+                    command: adapter
+                        .map(|c| {
+                            let mut parts = vec![c.command().to_string_lossy().into_owned()];
+                            parts.extend(c.arguments().iter().cloned());
+                            parts.join(" ")
+                        })
+                        .unwrap_or_default(),
+                    hint,
+                }
+            })
+            .collect()
+    }
+
     /// The command channel for `(task, agent)`, spawning the adapter on first use or after
     /// the previous one exited. The flag says whether this call spawned it.
     fn ensure(
@@ -499,13 +538,14 @@ impl Connection {
         mut commands: mpsc::UnboundedReceiver<Command>,
         mut cancels: mpsc::UnboundedReceiver<()>,
     ) {
-        let argv = command(spec(&self.agent).expect("agent validated by caller"));
-        info!(agent = %self.agent, task = %self.task_id, command = ?argv, "starting agent");
+        let adapter = self.ctx.agents.adapter(&self.agent);
+        info!(agent = %self.agent, task = %self.task_id, adapter = ?adapter, "starting agent");
         self.status("starting", None);
 
-        let result = match AcpAgent::from_args(argv) {
-            Ok(adapter) => {
-                let adapter = adapter.with_debug(|line, dir| tracing::debug!(?dir, "{line}"));
+        let result = match adapter {
+            Some(config) => {
+                let adapter =
+                    AcpAgent::new(config).with_debug(|line, dir| tracing::debug!(?dir, "{line}"));
                 let commands = &mut commands;
                 let cancels = &mut cancels;
                 let updates = self.clone();
@@ -530,11 +570,12 @@ impl Connection {
                         self.serve(connection, commands, cancels).await
                     })
                     .await
+                    .map_err(|e| error_text(&e))
             }
-            Err(e) => Err(e),
+            None => Err(format!("no adapter configured for {}", self.agent)),
         };
 
-        let detail = result.err().map(|e| error_text(&e));
+        let detail = result.err();
         if let Some(d) = &detail {
             warn!(agent = %self.agent, task = %self.task_id, "agent exited: {d}");
         }

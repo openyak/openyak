@@ -65,9 +65,10 @@ ACP); picking the agent for you; Linux and Windows testing.
 
 ## Run it
 
-Prerequisites: Node 26 and Rust 1.90 (`mise install` sets both up), plus at least one of
-[Claude Code](https://docs.anthropic.com/en/docs/claude-code) or
-[Codex CLI](https://github.com/openai/codex) on your `PATH` and logged in.
+Prerequisites: Node 26 and Rust 1.90 (`mise install` sets both up), and a sign-in to
+[Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude` once) and/or
+[Codex](https://github.com/openai/codex) (`codex login`) on this machine. The agents
+themselves ship inside the app; only the sign-in is yours.
 
 ```bash
 git clone https://github.com/openyak/openyak.git

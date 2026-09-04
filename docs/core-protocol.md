@@ -16,7 +16,7 @@ All ids are ULID strings. Timestamps are RFC 3339 UTC strings.
 ```ts
 type AgentId = "claude" | "codex";          // more later
 
-interface Agent   { id: AgentId; name: string; available: boolean; command: string }
+interface Agent   { id: AgentId; name: string; available: boolean; hint?: string; command: string }
 interface Project { id: string; name: string; path: string; created_at: string }
 interface Task    { id: string; project_id: string | null; title: string; created_at: string; updated_at: string;
                     message_count: number }   // 0 = a chat that has not started

@@ -10,9 +10,12 @@
     "check": "tsc --noEmit -p tsconfig.json && eslint ."
   },
   "dependencies": {
+    "@agentclientprotocol/claude-agent-acp": "0.73.0",
+    "@agentclientprotocol/codex-acp": "1.8.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",
+    "rehype-highlight": "7.0.2",
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {

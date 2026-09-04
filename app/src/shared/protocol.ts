@@ -7,6 +7,8 @@ export interface Agent {
   name: string
   available: boolean
   command: string
+  /** Why the agent cannot be used right now, e.g. not signed in. */
+  hint?: string
 }
 
 export interface Project {

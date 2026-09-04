@@ -1,6 +1,7 @@
 import { useRef, useState, type ClipboardEvent, type DragEvent } from 'react'
 import Markdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import rehypeHighlight from 'rehype-highlight'
 import type { Attachment, Message, Part } from '../../shared/protocol'
 import {
   draftsFromFiles,
@@ -420,7 +421,11 @@ function PartView({ part, live }: { part: Part; live: boolean }) {
     case 'text':
       return (
         <div className={`md${live ? ' md-live' : ''}`}>
-          <Markdown remarkPlugins={[remarkGfm]} components={components}>
+          <Markdown
+            remarkPlugins={[remarkGfm]}
+            rehypePlugins={[rehypeHighlight]}
+            components={components}
+          >
             {part.text}
           </Markdown>
         </div>
@@ -444,6 +449,12 @@ function PartView({ part, live }: { part: Part; live: boolean }) {
       // Attachments belong to user messages; nothing to show on an assistant turn.
       return null
   }
+}
+
+/** Tool output is shown verbatim in a monospace box; a wrapping code fence is noise. */
+function unfence(text: string): string {
+  const m = /^```[^\n]*\n([\s\S]*?)\n?```\s*$/.exec(text.trim())
+  return m ? m[1] : text
 }
 
 function ToolCall({ part }: { part: Extract<Part, { type: 'tool_call' }> }) {
@@ -474,7 +485,7 @@ function ToolCall({ part }: { part: Extract<Part, { type: 'tool_call' }> }) {
           <IconChevronRight size={12} className={`tool-caret${open ? ' open' : ''}`} />
         )}
       </button>
-      {open && part.output && <pre className="tool-output">{part.output}</pre>}
+      {open && part.output && <pre className="tool-output">{unfence(part.output)}</pre>}
     </div>
   )
 }
