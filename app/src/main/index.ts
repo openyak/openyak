@@ -230,7 +230,7 @@ function startCore(): CoreClient {
 
 // Window chrome matches the renderer's theme so there is no flash on launch and the
 // title-bar area (macOS traffic lights sit over the sidebar) blends in.
-const windowBackground = () => (nativeTheme.shouldUseDarkColors ? '#171717' : '#f4f3e8')
+const windowBackground = () => (nativeTheme.shouldUseDarkColors ? '#171717' : '#f7f7f8')
 
 function createWindow(): void {
   win = new BrowserWindow({

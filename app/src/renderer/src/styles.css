@@ -3,21 +3,21 @@
 :root {
   color-scheme: light dark;
 
-  /* OpenYak paper & ink, from open-yak.com */
-  --bg: #fffdf1;
-  --bg-sidebar: #f4f3e8;
-  --bg-elevated: #fffdf1;
+  /* Neutral workspace surfaces; brand color is reserved for accents. */
+  --bg: #ffffff;
+  --bg-sidebar: #f7f7f8;
+  --bg-elevated: #ffffff;
   --bg-hover: rgba(17, 19, 20, 0.055);
   --bg-selected: rgba(17, 19, 20, 0.09);
-  --bg-bubble: #f1ead7;
-  --bg-composer: #fff9e8;
-  --composer-border: rgba(17, 19, 20, 0.16);
-  --bg-code: #f1ead7;
+  --bg-bubble: #f2f3f5;
+  --bg-composer: #ffffff;
+  --composer-border: #e4e4e7;
+  --bg-code: #f2f3f5;
   --border: rgba(17, 19, 20, 0.09);
   --border-strong: rgba(17, 19, 20, 0.32);
-  --text: #101314;
-  --text-secondary: #3f4544;
-  --text-tertiary: #727b78;
+  --text: #18181b;
+  --text-secondary: #62626a;
+  --text-tertiary: #6d6d76;
   --accent: #0177aa;
   --accent-fg: #ffffff;
   --brand: #0177aa;
@@ -31,13 +31,13 @@
   --scroll-thumb: rgba(17, 19, 20, 0.2);
   --scroll-thumb-hover: rgba(17, 19, 20, 0.34);
   --scroll-thumb-active: rgba(17, 19, 20, 0.46);
-  --shadow: 3px 3px 0 rgba(17, 19, 20, 0.12), 0 0 0 1px rgba(17, 19, 20, 0.16);
-  --compact-menu-bg: #fffdf1;
-  --compact-menu-border: rgba(17, 19, 20, 0.22);
+  --shadow: 0 8px 28px rgba(17, 19, 20, 0.08), 0 2px 6px rgba(17, 19, 20, 0.04);
+  --compact-menu-bg: #ffffff;
+  --compact-menu-border: #e4e4e7;
   --compact-menu-hover: rgba(17, 19, 20, 0.06);
   --compact-menu-separator: rgba(17, 19, 20, 0.14);
-  --compact-menu-shadow: 3px 3px 0 rgba(17, 19, 20, 0.12);
-  --settings-card-bg: #fffdf1;
+  --compact-menu-shadow: 0 6px 20px rgba(17, 19, 20, 0.08);
+  --settings-card-bg: #ffffff;
 
   --titlebar: 52px;
   --sidebar: 260px;
