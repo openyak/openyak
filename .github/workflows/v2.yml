@@ -91,7 +91,9 @@ jobs:
         run: node app/scripts/native-core-smoke.mjs fake
       - name: Electron — file links, rendering, tabs and filesystem boundaries
         timeout-minutes: 3
-        run: node app/scripts/file-preview-gui-smoke.mjs
+        run: |
+          node app/scripts/file-preview-gui-smoke.mjs
+          node app/scripts/file-preview-gui-smoke.mjs --narrow
       - name: Electron — bundled icons, startup and window lifecycle
         timeout-minutes: 2
         run: node app/scripts/desktop-icons-acceptance.mjs

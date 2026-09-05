@@ -1,5 +1,5 @@
 // Deterministic real Electron/Core regression. Uses only isolated fixture files/SQLite.
-/* global window, localStorage */
+/* global window, localStorage, getComputedStyle */
 import { createRequire } from 'node:module'
 import { DatabaseSync } from 'node:sqlite'
 import { mkdtemp, mkdir, writeFile, symlink } from 'node:fs/promises'
@@ -22,6 +22,10 @@ let app
 try {
   app = await _electron.launch({ executablePath: require('electron'), args: [join(root, 'app')], env })
   assert.equal(await app.evaluate(({ app }) => app.getPath('userData')), directory)
+  // Exercise the responsive overlay used on smaller CI displays as well as laptops.
+  if (process.argv.includes('--narrow')) {
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1024, 768))
+  }
   const page = await app.firstWindow()
   page.setDefaultTimeout(15000)
   const errors = []
@@ -78,6 +82,13 @@ try {
   await page.frameLocator('iframe[title="preview.html"]').getByRole('heading', { name: 'Rendered HTML' }).waitFor()
   assert.equal(await page.frameLocator('iframe[title="preview.html"]').locator('body').getAttribute('data-unsafe'), null)
   assert.equal(await page.getByRole('tab').count(), 3)
+  if (process.argv.includes('--narrow')) {
+    assert.equal(await page.locator('.workbench-panel').evaluate(panel => getComputedStyle(panel).position), 'absolute')
+  }
+  // In the responsive layout the preview intentionally covers the Chat. Return via
+  // its real UI before clicking a Chat link; never force-click through an iframe.
+  await page.getByRole('button', { name: 'Hide preview panel', exact: true }).click()
+  await page.locator('.workbench-panel').waitFor({ state: 'detached' })
   await page.getByRole('link', { name: 'Missing', exact: true }).click()
   await page.getByRole('alert').filter({ hasText: 'File is not available' }).waitFor()
   await page.getByRole('button', { name: 'Dismiss', exact: true }).click()
@@ -91,6 +102,10 @@ try {
     return results
   }, projectless.id)
   assert.deepEqual(safety, [null, null, null, 'rejected'])
+  await link.click()
+  await page.locator('.workbench-markdown h1').filter({ hasText: 'Rendered report' }).waitFor()
+  assert.equal(await page.getByRole('tab').count(), 3, 'Hiding the panel must retain its open tabs')
+  await page.getByRole('tab', { name: 'preview.html', exact: true }).click()
   await page.getByRole('button', { name: projectTask.title, exact: true }).click()
   await page.getByRole('link', { name: 'Project report', exact: true }).click()
   await page.locator('.workbench-markdown h1').filter({ hasText: 'Project report' }).waitFor()
@@ -124,7 +139,8 @@ try {
     await page.screenshot({ path: join(directory, 'live-preview.png') })
     console.log('Live Codex write → Core file.output → automatic preview → file card reopen passed')
   }
-  console.log(JSON.stringify({ passed: true, directory, checks: ['legacy auto-preview', 'encoded report click', 'Markdown table', 'nested file links', 'syntax and line target', 'HTML sandbox', 'multiple tabs', 'visible missing-file error', 'traversal and symlink denial', 'task-scoped IPC', 'project context', 'task switching'] }))
+  const viewport = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }))
+  console.log(JSON.stringify({ passed: true, directory, viewport, narrow: process.argv.includes('--narrow'), checks: ['legacy auto-preview', 'encoded report click', 'Markdown table', 'nested file links', 'syntax and line target', 'HTML sandbox', 'multiple tabs', 'hide and restore preview tabs', 'visible missing-file error', 'traversal and symlink denial', 'task-scoped IPC', 'project context', 'task switching'] }))
 } catch (error) {
   console.error(error)
   if (app) {
