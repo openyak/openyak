@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/images/banner-v2.png" alt="OpenYak — One chat. Every agent." /></p>
+<p align="center"><img src="brandkit/banners/readme-dark.png" alt="OpenYak — One chat. Every agent." /></p>
 
 <p align="center"><a href="README.md">English</a> · <a href="#本地运行">本地运行</a> · <a href="docs/native-agent-runtime.md">运行时架构</a> · <a href="CONTRIBUTING.md">参与贡献</a></p>
 <p align="center"><img src="https://img.shields.io/badge/status-v2%20alpha-orange?style=flat-square" alt="v2 alpha" /> <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" alt="Apache-2.0" /></a></p>
@@ -82,6 +82,8 @@ docs/                 — 架构、协议和集成边界
 
 参阅[原生运行时设计](docs/native-agent-runtime.md)、[App/Core 协议](docs/core-protocol.md)、[截图来源与复现说明](docs/images/README.md)。
 
+Logo、Banner 和视觉设计规范统一收录在 [OpenYak brandkit](brandkit/README.md)。
+
 ### Alpha 阶段的边界
 
 安装包、更多 Agent 支持以及 Linux/Windows GUI 验证仍在推进。子 Agent 活动展示不等于完整工作流编排 UI。Claude 已接入，但本页浏览器截图验证的是 Codex，不是 Claude 浏览器验收。私有 Desktop 工具和完整 Computer Use 能力对齐不作保证。
@@ -95,7 +97,7 @@ npm run check
 npm run build
 ```
 
-仓库 CI 工作流已移除，提交修改前请在本地执行以上检查。
+[v2 CI 工作流](docs/ci.md) 检查运行时协议、生产构建及真实桌面/浏览器回归，不调用付费模型。纯文档改动跳过重量级检查。
 
 ## 许可证
 

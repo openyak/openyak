@@ -1,5 +1,9 @@
 # OpenYak desktop branding
 
+Brand reference copies, the current banner and design guidance live in
+[`brandkit/`](../../../../brandkit/README.md). Keep these runtime copies here for
+electron-vite asset bundling; sync explicitly if the source logo changes.
+
 Original, unmodified assets from `origin/legacy/v1` commit
 `8ecb61f80c351402182340be3790dd03fb016f2a`:
 

@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/images/banner-v2.png" alt="OpenYak — One chat. Every agent." /></p>
+<p align="center"><img src="brandkit/banners/readme-dark.png" alt="OpenYak — One chat. Every agent." /></p>
 
 <p align="center">
   <a href="README.zh-CN.md">简体中文</a> · <a href="#run-locally">Run locally</a> · <a href="docs/native-agent-runtime.md">Runtime architecture</a> · <a href="CONTRIBUTING.md">Contribute</a>
@@ -87,6 +87,8 @@ OpenYak stores its conversation data locally. That does not mean offline inferen
 
 See the [native runtime design](docs/native-agent-runtime.md), [app/core protocol](docs/core-protocol.md), and [screenshot provenance and reproduction guide](docs/images/README.md).
 
+For logos, banners and visual guidelines, start with the [OpenYak brandkit](brandkit/README.md).
+
 ### Alpha boundaries
 
 Packaged installers, broader agent support, and Linux/Windows GUI validation are still work in progress. Runtime-reported subagents are not a complete workflow-orchestration UI. Claude integration exists, but the browser screenshots here validate Codex, not a Claude browser acceptance run. Private Desktop-only tools and full computer-use parity are not guaranteed.
@@ -100,7 +102,7 @@ npm run check
 npm run build
 ```
 
-The repository's CI workflow has been removed; run these checks locally before submitting changes.
+The [v2 CI workflow](docs/ci.md) checks runtime contracts, production builds, and real desktop/browser regressions without paid model calls. Documentation-only changes skip the heavy checks.
 
 ## License
 

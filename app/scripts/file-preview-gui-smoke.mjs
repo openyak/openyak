@@ -14,13 +14,14 @@ const require = createRequire(import.meta.url)
 const { _electron } = require(process.env.OPENYAK_PLAYWRIGHT_MODULE || 'playwright')
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const directory = await mkdtemp(join(tmpdir(), 'openyak-file-gui-'))
-const env = { ...process.env, OPENYAK_DATA_DIR: directory, OPENYAK_CORE_BIN: join(root, 'core/target/debug/openyak-core') }
+const env = { ...process.env, OPENYAK_DATA_DIR: directory, OPENYAK_CORE_BIN: process.env.OPENYAK_CORE_BIN || join(root, 'core/target/debug/openyak-core') }
 delete env.ELECTRON_RUN_AS_NODE
 delete env.ELECTRON_RENDERER_URL
 delete env.OPENYAK_AGENT_TRANSPORT
 let app
 try {
   app = await _electron.launch({ executablePath: require('electron'), args: [join(root, 'app')], env })
+  assert.equal(await app.evaluate(({ app }) => app.getPath('userData')), directory)
   const page = await app.firstWindow()
   page.setDefaultTimeout(15000)
   const errors = []

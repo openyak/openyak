@@ -59,7 +59,7 @@ let child,
 function start() {
   notifications = []
   child = spawn(
-    join(root, 'core/target/debug/openyak-core'),
+    process.env.OPENYAK_CORE_BIN || join(root, 'core/target/debug/openyak-core'),
     ['--data-dir', directory, '--runtimes', JSON.stringify({ [agent]: spec })],
     { stdio: ['pipe', 'pipe', 'inherit'] },
   )

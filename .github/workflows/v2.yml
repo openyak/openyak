@@ -1,0 +1,135 @@
+name: V2 checks
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v2-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scope:
+    name: Select v2 checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.scope.outputs.code }}
+      node: ${{ steps.scope.outputs.node }}
+      rust: ${{ steps.scope.outputs.rust }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify change selection cannot silently skip runtime changes
+        run: python3 -m unittest discover -s .github/ci -p 'test_*.py'
+      - id: scope
+        name: Detect runtime/build changes; read the shared toolchain versions
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 .github/ci/scope.py
+
+  verify:
+    name: macOS runtime and desktop
+    needs: scope
+    if: needs.scope.outputs.code == 'true'
+    runs-on: macos-15
+    timeout-minutes: 25
+    env:
+      CI: 'true'
+      CARGO_TERM_COLOR: always
+      # Run smoke tests against the same release binary the real app loads.
+      OPENYAK_CORE_BIN: ${{ github.workspace }}/core/target/release/openyak-core
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ needs.scope.outputs.node }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install the Rust version from mise.toml
+        env:
+          RUST_VERSION: ${{ needs.scope.outputs.rust }}
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup override set "$RUST_VERSION"
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            core/target
+          key: v2-rust-${{ runner.os }}-${{ runner.arch }}-${{ needs.scope.outputs.rust }}-${{ hashFiles('core/Cargo.lock') }}-${{ hashFiles('core/src/**') }}
+          restore-keys: |
+            v2-rust-${{ runner.os }}-${{ runner.arch }}-${{ needs.scope.outputs.rust }}-${{ hashFiles('core/Cargo.lock') }}-
+      - name: Install exactly the locked JavaScript dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Keep isolated test files in the runner diagnostics directory
+        run: printf 'TMPDIR=%s/\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Protocol, persistence, permissions and presentation regressions
+        run: |
+          cargo test --locked --manifest-path core/Cargo.toml
+          npm run test -w app
+          npm run check -w app
+      - name: Build the production app and native worker
+        run: |
+          cargo build --locked --release --manifest-path core/Cargo.toml
+          npm run build -w app
+      - name: Core process — restart, resume, concurrent questions, cancel and crash
+        timeout-minutes: 3
+        run: node app/scripts/native-core-smoke.mjs fake
+      - name: Electron — file links, rendering, tabs and filesystem boundaries
+        timeout-minutes: 3
+        run: node app/scripts/file-preview-gui-smoke.mjs
+      - name: Electron — bundled icons, startup and window lifecycle
+        timeout-minutes: 2
+        run: node app/scripts/desktop-icons-acceptance.mjs
+      - name: Shared browser — authorization, takeover, isolation and HiDPI frames
+        timeout-minutes: 3
+        # Uses runner Chrome and a loopback fixture, never a model or external site.
+        run: node app/scripts/browser-host-acceptance.mjs
+      - name: Keep only failed-run GUI diagnostics, not test databases or profiles
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: v2-gui-diagnostics
+          path: |
+            ${{ runner.temp }}/openyak-file-gui-*/failure.png
+            ${{ runner.temp }}/openyak-icons-app-*/app.png
+          if-no-files-found: ignore
+          retention-days: 7
+
+  result:
+    # Require only this stable check in branch protection. A failed scope job or
+    # cancelled/failed verification must never look like a successful skipped job.
+    name: V2 CI
+    needs: [scope, verify]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require the selected checks to pass
+        env:
+          SCOPE_RESULT: ${{ needs.scope.result }}
+          CODE: ${{ needs.scope.outputs.code }}
+          VERIFY_RESULT: ${{ needs.verify.result }}
+        run: |
+          test "$SCOPE_RESULT" = success
+          if [ "$CODE" = true ]; then
+            test "$VERIFY_RESULT" = success
+          else
+            test "$CODE" = false
+            test "$VERIFY_RESULT" = skipped
+            echo 'Documentation-only change: no runtime tests needed.'
+          fi

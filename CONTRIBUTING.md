@@ -45,8 +45,10 @@ captures for private information before publishing. README product screenshots
 must come from the real app; identify fictional fixtures and keep generated brand
 art separate. See `docs/images/README.md` for provenance.
 
-The CI workflow has been removed at the maintainers' request. Local checks remain
-required; their absence from GitHub Actions does not make verification optional.
+The [v2 CI workflow](docs/ci.md) runs deterministic runtime and real desktop/browser
+regressions on macOS without model inference or account secrets. Documentation-only
+changes skip the expensive checks. `V2 CI` is the stable required-check name; local
+checks remain useful before opening a pull request.
 
 ## Pull requests
 
