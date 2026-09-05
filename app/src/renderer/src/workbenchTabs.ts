@@ -7,16 +7,32 @@ interface WorkbenchTabBase {
 }
 
 export type WorkbenchTab =
+  | (WorkbenchTabBase & { kind: 'browser'; pageId: string; url: string })
   | (WorkbenchTabBase & { kind: 'artifact'; preview: ArtifactPreview })
   | (WorkbenchTabBase & { kind: 'project-file'; preview: ProjectFilePreview })
 
 export interface WorkbenchState {
+  hiddenByTask?: Record<string, boolean>
   tabs: WorkbenchTab[]
   activeByTask: Record<string, string | undefined>
 }
 
 export function emptyWorkbenchState(): WorkbenchState {
   return { tabs: [], activeByTask: {} }
+}
+
+export function syncBrowserTabs(state: WorkbenchState, browser: import('../../shared/browser').BrowserState): WorkbenchState {
+  const pages = new Set(browser.pages.map(page => page.id))
+  let next = state
+  for (const tab of state.tabs) {
+    if (tab.taskId === browser.taskId && tab.kind === 'browser' && !pages.has(tab.pageId)) next = closeWorkbenchTab(next, tab.key)
+  }
+  for (const page of browser.pages) {
+    const key = `${browser.taskId}:browser:${page.id}`
+    const isNew = !state.tabs.some(tab => tab.key === key)
+    next = openWorkbenchTab(next, { key, taskId: browser.taskId, label: page.title, kind: 'browser', pageId: page.id, url: page.url }, isNew)
+  }
+  return next
 }
 
 export function projectFileTab(taskId: string, preview: ProjectFilePreview): WorkbenchTab {
@@ -47,7 +63,7 @@ export function activeTabForTask(
   state: WorkbenchState,
   taskId: string | null,
 ): WorkbenchTab | null {
-  if (!taskId) return null
+  if (!taskId || state.hiddenByTask?.[taskId]) return null
   const tabs = tabsForTask(state, taskId)
   const activeKey = state.activeByTask[taskId]
   return tabs.find((tab) => tab.key === activeKey) ?? tabs.at(-1) ?? null
@@ -63,6 +79,7 @@ export function openWorkbenchTab(
     ? [...state.tabs, tab]
     : state.tabs.map((candidate, candidateIndex) => candidateIndex === index ? tab : candidate)
   return {
+    hiddenByTask: activate ? { ...state.hiddenByTask, [tab.taskId]: false } : state.hiddenByTask,
     tabs,
     activeByTask: activate
       ? { ...state.activeByTask, [tab.taskId]: tab.key }
@@ -75,6 +92,7 @@ export function activateWorkbenchTab(state: WorkbenchState, key: string): Workbe
   if (!tab) return state
   return {
     ...state,
+    hiddenByTask: { ...state.hiddenByTask, [tab.taskId]: false },
     activeByTask: { ...state.activeByTask, [tab.taskId]: tab.key },
   }
 }
@@ -92,7 +110,7 @@ export function closeWorkbenchTab(state: WorkbenchState, key: string): Workbench
   const activeByTask = { ...state.activeByTask }
   if (next) activeByTask[closing.taskId] = next.key
   else delete activeByTask[closing.taskId]
-  return { tabs, activeByTask }
+  return { ...state, tabs, activeByTask }
 }
 
 export function removeTaskWorkbenchTabs(state: WorkbenchState, taskIds: ReadonlySet<string>): WorkbenchState {
@@ -100,5 +118,6 @@ export function removeTaskWorkbenchTabs(state: WorkbenchState, taskIds: Readonly
   const activeByTask = Object.fromEntries(
     Object.entries(state.activeByTask).filter(([taskId]) => !taskIds.has(taskId)),
   )
-  return { tabs, activeByTask }
+  const hiddenByTask = Object.fromEntries(Object.entries(state.hiddenByTask ?? {}).filter(([taskId]) => !taskIds.has(taskId)))
+  return { tabs, activeByTask, hiddenByTask }
 }

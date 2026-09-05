@@ -1,10 +1,15 @@
 import { useEffect, useId, useRef } from 'react'
 import { ArtifactPanel } from './ArtifactPanel'
-import { IconClose, IconFile, IconFolder } from './icons'
+import { IconClose, IconFile, IconFolder, IconDesktop, IconPlus } from './icons'
+import { BrowserPanel } from './BrowserPanel'
+import type { BrowserState } from '../../shared/browser'
 import { ProjectFilePanel } from './ProjectFilePanel'
 import type { WorkbenchTab } from './workbenchTabs'
 
 interface Props {
+  onHide?: () => void
+  browserState?: BrowserState
+  onNewBrowser?: () => void
   tabs: WorkbenchTab[]
   active: WorkbenchTab
   onSelect: (key: string) => void
@@ -22,12 +27,15 @@ export function WorkbenchPanel({
   onOpen,
   onReveal,
   onOpenPublished,
+  browserState,
+  onNewBrowser,
+  onHide,
 }: Props) {
   const activeElement = useRef<HTMLDivElement>(null)
   const tabbar = useRef<HTMLDivElement>(null)
   const focusSelection = useRef(false)
   const id = useId()
-  const bytes = active.preview.size
+  const bytes = active.kind === 'browser' ? 0 : active.preview.size
   const size = bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024
     ? `${Math.round(bytes / 1024)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   const metadata = active.kind === 'artifact' && active.preview.version
@@ -62,13 +70,13 @@ export function WorkbenchPanel({
   }
 
   return (
-    <aside className="workbench-panel" aria-label={`File preview: ${active.label}`}>
+    <aside className="workbench-panel" aria-label={`${active.kind === 'browser' ? 'Browser' : 'File preview'}: ${active.label}`}>
       <header className="workbench-header titlebar">
       <div
         className="workbench-tabbar"
         ref={tabbar}
         role="tablist"
-        aria-label="Open files"
+        aria-label="Open files and browsers"
         onKeyDown={(event) => {
           if (event.key === 'Home' || event.key === 'End') {
             event.preventDefault()
@@ -91,7 +99,7 @@ export function WorkbenchPanel({
               className={`workbench-tab${selected ? ' is-active' : ''}`}
               key={tab.key}
               ref={selected ? activeElement : undefined}
-              title={tab.preview.path}
+              title={tab.kind === 'browser' ? tab.url : tab.preview.path}
             >
               <button
                 type="button"
@@ -103,12 +111,14 @@ export function WorkbenchPanel({
                 tabIndex={selected ? 0 : -1}
                 onClick={() => onSelect(tab.key)}
               >
-                <IconFile size={14} />
+                {tab.kind === 'browser' ? <IconDesktop size={14} /> : <IconFile size={14} />}
                 <span>{tab.label}</span>
               </button>
               <button
                 type="button"
                 className="workbench-tab-close"
+                disabled={tab.kind === 'browser' && browserState?.control !== 'user'}
+                title={tab.kind === 'browser' && browserState?.control !== 'user' ? 'Take control before closing a browser tab' : undefined}
                 onClick={() => { focusSelection.current = true; onClose(tab.key) }}
                 aria-label={`Close ${tab.label}`}
               >
@@ -117,7 +127,9 @@ export function WorkbenchPanel({
             </div>
           )
         })}
+        {onNewBrowser && <button type="button" className="icon-btn no-drag" aria-label="New browser tab" onClick={onNewBrowser}><IconPlus size={16} /></button>}
       </div>
+      {active.kind !== 'browser' && (
       <div className="workbench-actions">
         <span className="workbench-file-meta" title={`${active.preview.path} · ${metadata}`}>{metadata}</span>
         {active.kind === 'artifact' && active.preview.sourceUrl && (
@@ -128,6 +140,8 @@ export function WorkbenchPanel({
         </button>
         <button type="button" className="workbench-open" onClick={() => onOpen(active)}>Open</button>
       </div>
+      )}
+      {onHide && <button type="button" className="icon-btn no-drag" aria-label="Hide preview panel" onClick={onHide}><IconClose size={16} /></button>}
       </header>
       <div className="workbench-tabpanels">
         <section
@@ -137,7 +151,7 @@ export function WorkbenchPanel({
           aria-labelledby={`${id}-tab-${tabs.findIndex((tab) => tab.key === active.key)}`}
           key={active.key}
         >
-          {active.kind === 'artifact' ? (
+          {active.kind === 'browser' ? <BrowserPanel taskId={active.taskId} pageId={active.pageId} state={browserState} /> : active.kind === 'artifact' ? (
             <ArtifactPanel
               artifact={active.preview}
               onOpen={() => onOpen(active)}

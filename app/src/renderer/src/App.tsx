@@ -25,7 +25,8 @@ import { request } from './api'
 import { Sidebar } from './Sidebar'
 import { Thread } from './Thread'
 import { Composer } from './Composer'
-import { IconClose, IconSidebarToggle } from './icons'
+import { IconClose, IconSidebarToggle, IconDesktop } from './icons'
+import type { BrowserState } from '../../shared/browser'
 import { titleFrom } from './format'
 import { ButtonTooltip } from './ButtonTooltip'
 import { Settings } from './Settings'
@@ -45,6 +46,7 @@ import {
   projectFileTab,
   removeTaskWorkbenchTabs,
   tabsForTask,
+  syncBrowserTabs,
 } from './workbenchTabs'
 
 export interface PendingPermission {
@@ -155,6 +157,24 @@ export function App() {
   const [error, setError] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(readSidebar)
   const [workbench, setWorkbench] = useState(emptyWorkbenchState)
+  const [browsers, setBrowsers] = useState<Record<string, BrowserState>>({})
+  useEffect(() => {
+    if (!window.openyak.onBrowserState) return
+    const previousActive = new Map<string, string | null>()
+    const update = (state: BrowserState) => {
+      setBrowsers(previous => ({ ...previous, [state.taskId]: state }))
+      const changed = previousActive.get(state.taskId) !== state.activePageId
+      previousActive.set(state.taskId, state.activePageId)
+      setWorkbench(previous => {
+        const next = syncBrowserTabs(previous, state)
+        return changed && state.control === 'agent' && state.activePageId
+          ? activateWorkbenchTab(next, `${state.taskId}:browser:${state.activePageId}`) : next
+      })
+    }
+    const off = window.openyak.onBrowserState(update)
+    void window.openyak.browserList().then(states => states.forEach(update)).catch(error => setError(String(error)))
+    return off
+  }, [])
   const autoPreviewedFiles = useRef(new Set<string>())
   const previewRequestSequence = useRef(0)
 
@@ -1181,6 +1201,11 @@ export function App() {
       <div className="main-title">
         {activeView === 'settings' ? 'Settings' : task && !draft ? task.title : 'New chat'}
       </div>
+      {taskId && activeView === 'chat' && <button type="button" className="icon-btn no-drag" aria-label="Open browser" title="Open task browser" onClick={() => {
+        const browser = tabsForTask(workbench, taskId).find(tab => tab.kind === 'browser')
+        if (browser) setWorkbench(previous => activateWorkbenchTab(previous, browser.key))
+        else void window.openyak.browserCreate(taskId).catch(fail)
+      }}><IconDesktop size={17} /></button>}
     </header>
   )
   const taskWorkbenchTabs = tabsForTask(workbench, taskId)
@@ -1294,19 +1319,29 @@ export function App() {
                   )}
                 </div>
               </section>
-              {activeWorkbenchTab && (
+              {activeWorkbenchTab && workbenchOpen && (
                 <WorkbenchPanel
                   tabs={taskWorkbenchTabs}
                   active={activeWorkbenchTab}
+                  browserState={taskId ? browsers[taskId] : undefined}
+                  onHide={() => { if (taskId) setWorkbench(previous => ({ ...previous, hiddenByTask: { ...previous.hiddenByTask, [taskId]: true } })) }}
+                  onNewBrowser={() => { if (taskId) void window.openyak.browserCreate(taskId).catch(fail) }}
                   onSelect={(key) => setWorkbench((current) => activateWorkbenchTab(current, key))}
-                  onClose={(key) => setWorkbench((current) => closeWorkbenchTab(current, key))}
+                  onClose={(key) => {
+                    const tab = taskWorkbenchTabs.find(tab => tab.key === key)
+                    if (tab?.kind === 'browser') {
+                      void window.openyak.browserCommand(tab.taskId, { type: 'close', pageId: tab.pageId }).catch(fail)
+                    } else setWorkbench((current) => closeWorkbenchTab(current, key))
+                  }}
                   onOpen={(tab) => {
+                    if (tab.kind === 'browser') return
                     const operation = tab.kind === 'artifact'
                       ? window.openyak.openArtifact(tab.taskId, tab.preview.path)
                       : window.openyak.openProjectFile(tab.taskId, tab.preview)
                     void operation.catch(fail)
                   }}
                   onReveal={(tab) => {
+                    if (tab.kind === 'browser') return
                     const operation = tab.kind === 'artifact'
                       ? window.openyak.revealArtifact(tab.taskId, tab.preview.path)
                       : window.openyak.revealProjectFile(tab.taskId, tab.preview)

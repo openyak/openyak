@@ -202,7 +202,7 @@ impl Connection {
             Duration::from_secs(90),
             client.request(
                 "session.open",
-                json!({"cwd":self.cwd,"sessionId":saved,"config":configs}),
+                json!({"taskId":self.task_id,"cwd":self.cwd,"sessionId":saved,"config":configs}),
             ),
         )
         .await

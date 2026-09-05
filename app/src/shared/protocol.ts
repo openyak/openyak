@@ -373,6 +373,11 @@ export interface CoreExit {
 }
 
 export interface OpenYakApi {
+  browserList(): Promise<import('./browser').BrowserState[]>
+  browserCreate(taskId: string): Promise<import('./browser').BrowserState>
+  browserCommand(taskId: string, command: import('./browser').BrowserCommand): Promise<import('./browser').BrowserState>
+  onBrowserState(cb: (state: import('./browser').BrowserState) => void): () => void
+  onBrowserFrame(cb: (frame: import('./browser').BrowserFrame) => void): () => void
   request<T = unknown>(method: string, params?: unknown): Promise<T>
   onNotification(cb: (n: Notification) => void): () => void
   onPermissionRequest(cb: (req: PermissionRequest) => Promise<PermissionResponse | null>): () => void

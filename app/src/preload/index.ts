@@ -10,6 +10,19 @@ import type {
 } from '../shared/protocol'
 
 const api: OpenYakApi = {
+  browserList: () => ipcRenderer.invoke('browser:list'),
+  browserCreate: taskId => ipcRenderer.invoke('browser:create', taskId),
+  browserCommand: (taskId, command) => ipcRenderer.invoke('browser:command', taskId, command),
+  onBrowserState(cb) {
+    const listener = (_event: Electron.IpcRendererEvent, state: import('../shared/browser').BrowserState) => cb(state)
+    ipcRenderer.on('browser:state', listener)
+    return () => ipcRenderer.off('browser:state', listener)
+  },
+  onBrowserFrame(cb) {
+    const listener = (_event: Electron.IpcRendererEvent, frame: import('../shared/browser').BrowserFrame) => cb(frame)
+    ipcRenderer.on('browser:frame', listener)
+    return () => ipcRenderer.off('browser:frame', listener)
+  },
   request<T>(method: string, params: unknown = {}): Promise<T> {
     return ipcRenderer.invoke('core:request', method, params) as Promise<T>
   },

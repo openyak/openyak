@@ -8,6 +8,8 @@ import { saveDiagramSvg } from './save-diagram'
 import { saveImageAttachment } from './save-image'
 import { agentHostProfiles } from './agent-host-profiles'
 import { CodexHostClient } from './codex-host'
+import { BrowserHost } from './browser-host'
+import type { BrowserCommand } from '../shared/browser'
 import { resolveProjectFile } from './project-file-host'
 import { taskFileRoot } from './task-file-context'
 import {
@@ -32,6 +34,10 @@ import type {
 let win: BrowserWindow | null = null
 let core: CoreClient | null = null
 const codexHost = new CodexHostClient()
+const browserHost = new BrowserHost(
+  state => win?.webContents.send('browser:state', state),
+  frame => win?.webContents.send('browser:frame', frame),
+)
 
 // Allows isolated desktop integration tests without touching the user's Chats.
 if (process.env.OPENYAK_DATA_DIR) app.setPath('userData', path.resolve(process.env.OPENYAK_DATA_DIR))
@@ -66,6 +72,24 @@ function grantFromHistory(result: unknown): void {
     }
   }
 }
+
+// Only the application main frame can control browsers; never preview iframes.
+function assertBrowserSender(event: Electron.IpcMainInvokeEvent) {
+  if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame)
+    throw new Error('Untrusted browser controller')
+}
+ipcMain.handle('browser:list', event => { assertBrowserSender(event); return browserHost.list() })
+ipcMain.handle('browser:create', async (event, taskId: string) => {
+  assertBrowserSender(event)
+  const root = await fileRoot(taskId)
+  browserHost.ensure(taskId, root)
+  await browserHost.command(taskId, { type: 'takeover' })
+  return browserHost.command(taskId, { type: 'new' })
+})
+ipcMain.handle('browser:command', async (event, taskId: string, command: BrowserCommand) => {
+  assertBrowserSender(event)
+  return browserHost.command(taskId, command)
+})
 
 function resolveCoreBinary(): string {
   if (process.env.OPENYAK_CORE_BIN) return process.env.OPENYAK_CORE_BIN
@@ -131,7 +155,7 @@ function startCore(): CoreClient {
       ['codex', 'claude'].map(agent => [agent, {
         command: process.execPath,
         args: [path.join(__dirname, 'runtime-worker.js'), agent],
-        env: { ELECTRON_RUN_AS_NODE: '1' },
+        env: { ELECTRON_RUN_AS_NODE: '1', ...browserHost.environment() },
       }]),
     )),
   ]
@@ -237,7 +261,9 @@ function createWindow(): void {
 
   win.on('closed', () => {
     win = null
+    void browserHost.unwatchAll()
   })
+  win.webContents.on('render-process-gone', () => { void browserHost.unwatchAll() })
 
   if (process.env.ELECTRON_RENDERER_URL) {
     void win.loadURL(process.env.ELECTRON_RENDERER_URL)
@@ -257,6 +283,8 @@ ipcMain.handle('core:request', async (_e, method: string, params: unknown) => {
     if (method === 'chat.history') grantFromHistory(result)
     if (method === 'task.delete' && params != null && typeof params === 'object') {
       forgetArtifactGrants((params as { task_id?: unknown }).task_id)
+      const taskId = (params as { task_id?: unknown }).task_id
+      if (typeof taskId === 'string') await browserHost.forget(taskId)
     }
     return result
   } catch (err) {
@@ -434,7 +462,8 @@ ipcMain.handle('theme:set', (_event, value: unknown) => {
   nativeTheme.themeSource = value
 })
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  await browserHost.start()
   installArtifactProtocol()
   installProjectFileProtocol()
   core = startCore()
@@ -451,7 +480,12 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin' || !app.isPackaged) app.quit()
 })
 
-app.on('before-quit', () => {
+let shuttingDown = false
+app.on('before-quit', event => {
+  if (shuttingDown) return
+  shuttingDown = true
+  event.preventDefault()
   core?.kill()
   codexHost.kill()
+  void browserHost.close().finally(() => app.quit())
 })

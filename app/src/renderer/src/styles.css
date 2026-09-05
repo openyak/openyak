@@ -4199,3 +4199,21 @@ body.sidebar-resize-active * {
 .runtime-agent-status { opacity: .6; margin-left: 12px; font-size: .85em; }
 .runtime-agent-id { opacity: .6; overflow-wrap: anywhere; margin-top: 8px; font-size: .8em; }
 .runtime-activity pre { max-height: 300px; overflow: auto; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Shared task browser: compact chrome, same surface as the file workbench. */
+.browser-panel { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+.browser-toolbar { display: flex; align-items: center; gap: 4px; padding: 7px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.browser-toolbar input { min-width: 40px; flex: 1; border: 1px solid var(--border); background: transparent; color: inherit; border-radius: 8px; padding: 6px 10px; font: inherit; font-size: 12px; }
+.browser-back svg { transform: rotate(180deg); }
+.browser-control { display: flex; align-items: center; gap: 5px; white-space: nowrap; background: transparent; color: inherit; border: 1px solid var(--border); padding: 6px 8px; border-radius: 7px; font: inherit; font-size: 11px; }
+.browser-surface { flex: 1; min-height: 0; position: relative; overflow: hidden; background: white; }
+.browser-surface canvas { width: 100%; height: 100%; display: block; }
+.browser-surface canvas.is-interactive { cursor: default; touch-action: none; }
+.browser-empty { position: absolute; inset: 0; display: grid; place-items: center; color: #666; font-size: 13px; pointer-events: none; }
+.browser-keyboard { position: absolute; bottom: 0; left: 0; width: 1px; height: 1px; opacity: 0; padding: 0; border: 0; resize: none; }
+.browser-status { display: flex; justify-content: space-between; gap: 8px; padding: 5px 12px; font-size: 11px; color: var(--text-tertiary); border-top: 1px solid var(--border); flex-shrink: 0; }
+.browser-error { padding: 8px 12px; font-size: 12px; overflow-wrap: anywhere; }
+.browser-error button { margin-left: 8px; }
+.browser-dialog { position: absolute; left: 10%; right: 10%; top: 30%; background: var(--bg); color: var(--text); padding: 20px; border: 1px solid var(--border-strong); border-radius: 12px; box-shadow: var(--shadow); }
+.browser-dialog p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.browser-dialog button { margin-right: 8px; }
+.browser-dialog small { display: block; margin-top: 10px; }

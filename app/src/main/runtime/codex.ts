@@ -80,6 +80,7 @@ export class CodexDriver implements NativeDriver {
       {
         ...(p.sessionId ? { threadId: p.sessionId } : {}),
         cwd: p.cwd,
+        ...(p.browserMcpUrl ? { config: { 'mcp_servers.openyak_browser': { url: p.browserMcpUrl } } } : {}),
         ...this.threadOptions(),
       },
     )

@@ -74,6 +74,7 @@ export class ClaudeDriver implements NativeDriver {
         : { sessionId: this.sessionId }),
       systemPrompt: { type: 'preset', preset: 'claude_code', snapshot: true },
       ...claudeHostOptions(),
+      ...(p.browserMcpUrl ? { mcpServers: { openyak_browser: { type: 'http' as const, url: p.browserMcpUrl } } } : {}),
       settingSources: ['user', 'project', 'local'],
       includePartialMessages: true,
       forwardSubagentText: true,

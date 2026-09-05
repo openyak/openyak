@@ -14,6 +14,11 @@ const provider = process.argv[2]
 if (provider !== 'codex' && provider !== 'claude')
   throw new Error('Unknown native runtime')
 const epoch = randomUUID()
+// Never pass the host-wide registration secret into agent subprocesses/tools.
+const browserHostOrigin = process.env.OPENYAK_BROWSER_HOST
+const browserHostSecret = process.env.OPENYAK_BROWSER_SECRET
+delete process.env.OPENYAK_BROWSER_HOST
+delete process.env.OPENYAK_BROWSER_SECRET
 let sequence = 0
 const pending = new Map<
   string,
@@ -81,8 +86,20 @@ lines.on('line', (line) => {
   const run = async () => {
     const p = object(m.params)
     switch (m.method) {
-      case 'session.open':
+      case 'session.open': {
+        const host = browserHostOrigin
+        if (host && p.taskId) {
+          const response = await fetch(`${host}/session`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${browserHostSecret}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ taskId: p.taskId, cwd: p.cwd }),
+            signal: AbortSignal.timeout(10_000),
+          })
+          if (!response.ok) throw new Error('Cannot connect the task browser host')
+          p.browserMcpUrl = object(await response.json()).url
+        }
         return driver.open(p as unknown as OpenParams)
+      }
       case 'session.configure':
         await driver.configure(string(p.id), p.value)
         return {}

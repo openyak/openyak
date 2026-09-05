@@ -13,6 +13,8 @@ export function string(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
 export interface OpenParams {
+  taskId?: string
+  browserMcpUrl?: string
   cwd: string
   sessionId?: string
   config?: Record<string, unknown>

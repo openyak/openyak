@@ -10,7 +10,30 @@ import {
   openWorkbenchTab,
   projectFileTab,
   tabsForTask,
+  syncBrowserTabs,
 } from '../src/renderer/src/workbenchTabs.ts'
+
+test('browser updates coexist with files, hidden panels and task-owned tabs', () => {
+  const fileTab = projectFileTab('a', file('report.md'))
+  let state = openWorkbenchTab(emptyWorkbenchState(), fileTab)
+  const browser = { taskId: 'a', control: 'agent' as const, activePageId: 'page1', pages: [{ id: 'page1', title: 'Example', url: 'https://example.com' }] }
+  state = syncBrowserTabs(state, browser)
+  assert.equal(state.tabs.length, 2)
+  const browserKey = activeTabForTask(state, 'a')!.key
+  state = activateWorkbenchTab(state, fileTab.key)
+  state = syncBrowserTabs(state, { ...browser, pages: [{ ...browser.pages[0], title: 'Updated' }] })
+  assert.equal(activeTabForTask(state, 'a')!.key, fileTab.key)
+  state = { ...state, hiddenByTask: { a: true } }
+  assert.equal(activeTabForTask(state, 'a'), null)
+  state = syncBrowserTabs(state, browser)
+  assert.equal(activeTabForTask(state, 'a'), null)
+  assert.equal(tabsForTask(state, 'a').length, 2)
+  state = activateWorkbenchTab(state, browserKey)
+  assert.equal(activeTabForTask(state, 'a')!.kind, 'browser')
+  state = syncBrowserTabs(state, { ...browser, activePageId: null, pages: [] })
+  assert.equal(activeTabForTask(state, 'a')!.key, fileTab.key)
+  assert.equal(tabsForTask(state, 'b').length, 0)
+})
 
 function file(path: string): ProjectFilePreview {
   const name = path.split('/').at(-1) ?? path
