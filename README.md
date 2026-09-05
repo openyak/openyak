@@ -1,74 +1,68 @@
-# OpenYak
+<p align="center"><img src="docs/images/banner-v2.png" alt="OpenYak — One chat. Every agent." /></p>
 
 <p align="center">
-  <a href="README.zh-CN.md"><img src="https://img.shields.io/badge/lang-中文-blue?style=flat-square" alt="中文" /></a>
-  <a href="https://github.com/openyak/openyak/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/openyak/openyak/ci.yml?branch=main&style=flat-square&label=CI" alt="CI" /></a>
-  <a href="https://github.com/openyak/openyak/blob/main/LICENSE"><img src="https://img.shields.io/github/license/openyak/openyak?style=flat-square" alt="License" /></a>
-  <img src="https://img.shields.io/badge/status-v2%20alpha-orange?style=flat-square" alt="Status: v2 alpha" />
+  <a href="README.zh-CN.md">简体中文</a> · <a href="#run-locally">Run locally</a> · <a href="docs/native-agent-runtime.md">Runtime architecture</a> · <a href="CONTRIBUTING.md">Contribute</a>
 </p>
-
-<h3 align="center">One chat. Every agent.</h3>
-
 <p align="center">
-  A universal interface for AI agents running on your computer.
+  <img src="https://img.shields.io/badge/status-v2%20alpha-orange?style=flat-square" alt="v2 alpha" />
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" alt="Apache-2.0" /></a>
 </p>
 
----
+**Your agents. Your conversation. One desktop workspace.**
 
-> **OpenYak is being rebuilt.** This branch is v2, an early alpha with a new direction.
-> The v1 line (local-first desktop agent with its own runtime, Computer Use, and office
-> workflows) is preserved unchanged on the [`legacy/v1`](https://github.com/openyak/openyak/tree/legacy/v1)
-> branch and the [v1.5.0 release](https://github.com/openyak/openyak/releases/tag/v1.5.0).
-> See the [announcement](https://github.com/openyak/openyak/discussions/190) for why.
+OpenYak is a local desktop GUI for Codex and Claude Code. Keep the conversation, inspect the files, and work alongside your agent in a shared browser—without making the terminal your workspace.
 
-## The idea
+> **This is v2, on `main`, and still alpha.** The original v1 is preserved on [`legacy/v1`](https://github.com/openyak/openyak/tree/legacy/v1) and in the [v1.5.0 release](https://github.com/openyak/openyak/releases/tag/v1.5.0). OpenYak integrates supported runtime interfaces; it does not reproduce every private feature of Codex Desktop or Claude Desktop.
 
-**You shouldn't have to choose an AI app. Just say what you want done.**
+## See the work, not just the answer
 
-Claude Code, Codex, Gemini, and whatever ships next month each want to be the app you
-live in. OpenYak treats them as what they are becoming: **runtime providers**. Each one
-brings its own model, tools, permissions, and login. What none of them gives you is the
-layer above: one conversation that belongs to you, that any of them can pick up, and
-that does not end when you change your mind about who should do the work.
+![Dark-mode chat beside a rendered Markdown report](docs/images/workbench-dark.png)
 
-That is the whole product. Not an aggregator of AI apps, but the place where the AI app
-stops mattering.
+*Real OpenYak v2, dark mode. The fictional Orbit project is isolated demo data; Codex generated the report during capture.*
 
-- **The chat is yours.** OpenYak keeps the transcript. Agents come and go; the thread
-  does not.
-- **Agents are runtimes.** OpenYak ships no model, no tools, no keys, and no permission
-  engine. It drives the agents you already installed and logged into, through the open
-  [Agent Client Protocol](https://agentclientprotocol.com), and shows their options and
-  their permission prompts exactly as they expose them.
-- **Switching is free.** Hand a task from Codex to Claude Code mid-thread. The new agent
-  gets the turns it missed and continues. No copy-paste, no new chat, no terminal.
-- **Where this goes.** Today you pick the agent per message. The direction is that you
-  stop noticing which one did the work, the way you never think about which CPU core your
-  browser used.
+- **A conversation that stays yours.** Projects, tasks, and transcripts live locally. Switch providers within a task; OpenYak replays conversation context, not a provider's private internal state.
+- **Native runtimes by default.** Codex App Server and Claude Agent SDK drive the agents. ACP remains an explicit compatibility option.
+- **Files you can actually open.** Persistent tabs for Markdown, HTML, PDF, DOCX, and syntax-highlighted code.
+- **Visible progress and decisions.** Streaming activity, runtime-reported subagents, scoped approvals, and structured questions.
+- **A browser you can share.** Watch the agent, take control of the same page, then return control.
+- **A desktop home.** Light and dark appearance, resizable workbench panels, a macOS Dock icon, and a menu-bar shortcut.
 
-## Status
+## Files are part of the conversation
 
-v2 is an alpha. It runs, it is not yet polished, and the shape will change. What works:
+![HTML dashboard rendered alongside the conversation and Markdown tab](docs/images/artifacts-dark.png)
 
-- One persistent chat per task, kept by OpenYak, not by any agent. Tasks live inside a
-  Project (a directory on disk that the agents run in).
-- Chat served by `claude` (via `@agentclientprotocol/claude-agent-acp`) or `codex`
-  (via `@agentclientprotocol/codex-acp`), selectable per message
-- Streaming text, thoughts, tool calls, and permission prompts from the agent
-- Agent handoff: switch agents inside a task and keep the context, including across
-  restarts
-- The agent's own session options (model, reasoning effort, permission mode, …) in the
-  chat header, exactly as the agent exposes them, remembered per task
+Open file references directly from a response. Read Markdown as a document, preview sandboxed HTML, view PDFs and DOCX documents, or inspect code with highlighting and line numbers. Opening another file keeps existing tabs available.
 
-Not yet: packaged installers; more agents (Gemini CLI, Grok, anything else that speaks
-ACP); picking the agent for you; Linux and Windows testing.
+The runtime boundary normalizes supported structured artifact and file outputs; the frontend does not need to guess tool names or turn arbitrary code blocks into artifacts. Ordinary file references are resolved through a separate file-opening path.
 
-## Run it
+*The dashboard above is a hand-authored fixture rendered by the real app—not a generated screenshot or a claim that the agent built the dashboard.*
 
-Prerequisites: Node 26 and Rust 1.90 (`mise install` sets both up), and a sign-in to
-[Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude` once) and/or
-[Codex](https://github.com/openai/codex) (`codex login`) on this machine. The agents
-themselves ship inside the app; only the sign-in is yours.
+## Pick the runtime, keep the workspace
+
+![Agent and model selector in the dark-mode app](docs/images/providers-dark.png)
+
+Use your existing provider authentication. Choose the models and session options the runtime exposes, without copying private Desktop system prompts into OpenYak.
+
+| Provider | Default integration | Optional compatibility path |
+| --- | --- | --- |
+| Codex | Native App Server over stdio | Codex ACP adapter |
+| Claude Code | Claude Agent SDK driving its CLI | Claude ACP adapter |
+
+Model availability, usage limits, and provider features depend on your account and installed runtime versions. OpenYak does not supply model access.
+
+## Browse together
+
+![Shared browser with the Orbit dashboard and user control enabled](docs/images/browser-dark.png)
+
+The shared browser uses Playwright MCP and a dedicated Chrome session. The agent and the user operate the same page. Taking control blocks new agent browser actions and waits for in-flight work; resuming returns browser access without sending another chat prompt.
+
+The panel uses lossless HiDPI frames. It is a shared remote view, not an embedded native browser or a promise of 60 fps. The pictured flow was exercised through Codex in the real GUI. External computer-use tools and native desktop control are separate capabilities; this screenshot does not certify those integrations.
+
+Read the [shared-browser architecture and boundaries](docs/shared-browser.md).
+
+## Run locally
+
+Prerequisites: **Node 26**, **Rust 1.90** (`mise install` installs the pinned toolchains), and an existing [Codex](https://github.com/openai/codex) and/or [Claude Code](https://code.claude.com/docs/en/overview) sign-in. Install Google Chrome to use the shared browser.
 
 ```bash
 git clone https://github.com/openyak/openyak.git
@@ -77,25 +71,37 @@ npm install
 npm run dev
 ```
 
-`npm run dev` builds the Rust core and launches the Electron app in development mode.
+This builds the Rust core and launches Electron with hot reload. Agent dependencies are pinned in the app; authentication remains yours. `OPENYAK_CODEX_BIN` and `OPENYAK_CLAUDE_BIN` can select compatible local CLI binaries—see the [runtime documentation](docs/native-agent-runtime.md).
 
-## How it is built
+For an isolated test instance, set `OPENYAK_DATA_DIR` to a new, empty directory. To opt into ACP, use `OPENYAK_AGENT_TRANSPORT=acp`; native host integrations such as the shared browser are not automatically available on that path.
 
+## Under the hood
+
+```text
+app/   Electron + React — chat, file workbench, native workers, host integrations
+core/  Rust + SQLite   — projects, tasks, transcripts, normalized runtime events
+docs/                  — architecture, contracts, and integration boundaries
 ```
-app/    Electron + React     — the chat, plus Projects and Tasks around it. Talks only to core.
-core/   Rust (openyak-core)  — SQLite transcript store + ACP client that spawns agents.
-docs/   architecture.md, core-protocol.md
+
+OpenYak stores its conversation data locally. That does not mean offline inference: provider requests and browser navigation can use the network.
+
+See the [native runtime design](docs/native-agent-runtime.md), [app/core protocol](docs/core-protocol.md), and [screenshot provenance and reproduction guide](docs/images/README.md).
+
+### Alpha boundaries
+
+Packaged installers, broader agent support, and Linux/Windows GUI validation are still work in progress. Runtime-reported subagents are not a complete workflow-orchestration UI. Claude integration exists, but the browser screenshots here validate Codex, not a Claude browser acceptance run. Private Desktop-only tools and full computer-use parity are not guaranteed.
+
+## Contribute
+
+Try a real task, switch agents, inspect the output, and tell us what breaks. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+```bash
+npm run check
+npm run build
 ```
 
-Read [`docs/architecture.md`](docs/architecture.md) for the process model and how
-agent switching keeps the transcript coherent, and [`docs/core-protocol.md`](docs/core-protocol.md)
-for the app ⇄ core contract.
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md). The fastest way to help right now is to use it for
-something real, switch agents in the middle, and file what breaks.
+The repository's CI workflow has been removed; run these checks locally before submitting changes.
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
+[Apache-2.0](LICENSE).

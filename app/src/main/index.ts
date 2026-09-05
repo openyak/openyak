@@ -9,6 +9,7 @@ import { saveImageAttachment } from './save-image'
 import { agentHostProfiles } from './agent-host-profiles'
 import { CodexHostClient } from './codex-host'
 import { BrowserHost } from './browser-host'
+import { createDesktopShell } from './desktop-shell'
 import type { BrowserCommand } from '../shared/browser'
 import { resolveProjectFile } from './project-file-host'
 import { taskFileRoot } from './task-file-context'
@@ -33,6 +34,7 @@ import type {
 
 let win: BrowserWindow | null = null
 let core: CoreClient | null = null
+let desktopShell: ReturnType<typeof createDesktopShell> | null = null
 const codexHost = new CodexHostClient()
 const browserHost = new BrowserHost(
   state => win?.webContents.send('browser:state', state),
@@ -237,6 +239,7 @@ function createWindow(): void {
     minWidth: 760,
     minHeight: 520,
     title: 'OpenYak',
+    icon: desktopShell?.icon,
     backgroundColor: windowBackground(),
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: { x: 16, y: 18 },
@@ -270,6 +273,13 @@ function createWindow(): void {
   } else {
     void win.loadFile(path.join(__dirname, '../renderer/index.html'))
   }
+}
+
+function showWindow(): void {
+  if (!win || win.isDestroyed()) createWindow()
+  if (win!.isMinimized()) win!.restore()
+  win!.show()
+  win!.focus()
 }
 
 nativeTheme.on('updated', () => {
@@ -467,11 +477,10 @@ app.whenReady().then(async () => {
   installArtifactProtocol()
   installProjectFileProtocol()
   core = startCore()
+  desktopShell = createDesktopShell(showWindow)
   createWindow()
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
-  })
+  app.on('activate', showWindow)
 })
 
 app.on('window-all-closed', () => {
@@ -485,6 +494,8 @@ app.on('before-quit', event => {
   if (shuttingDown) return
   shuttingDown = true
   event.preventDefault()
+  desktopShell?.dispose()
+  desktopShell = null
   core?.kill()
   codexHost.kill()
   void browserHost.close().finally(() => app.quit())
